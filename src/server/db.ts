@@ -757,54 +757,98 @@ class AtelierDatabase {
         const numCmdClean = (ofObj.numCommande || r.num_commande || '').trim().toLowerCase();
         const clientClean = (ofObj.nomClient || r.nom_client || '').trim().toLowerCase();
 
+        // 0. Vérification immédiate sur le numéro de commande et le titre de section
+        const cmdUpper = (ofObj.numCommande || r.num_commande || '').toUpperCase();
+        const titreUpper = (ofObj.titreSection || r.titre_section || '').toUpperCase();
+
+        if (cmdUpper.includes('PRC') || cmdUpper.includes('PRECADRE') || cmdUpper.includes('PRÉCADRE') || cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE') || titreUpper.includes('PRC')) {
+          vraieFamille = 'PRECADRE';
+        } else if (cmdUpper.includes('MSTQ') || cmdUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ') || titreUpper.includes('MAILLE')) {
+          vraieFamille = 'MOUSTIQUAIRE';
+        } else if (cmdUpper.includes('TABLIER') || cmdUpper.includes('VOLET') || titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) {
+          vraieFamille = 'TABLIER';
+        }
+
         // 1. Croisement prioritaire avec le dossier de commande correspondant
-        const dossierAssocie = dossiers.find(d => {
-          const dRef = (d.refCommande || '').trim().toLowerCase();
-          const dNumTab = (d.numCommandeTablier || '').trim().toLowerCase();
-          const dNumMstq = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
-          const dNumCais = (d.numCommandeCaisson || '').trim().toLowerCase();
-          const dNumPrc = (d.numCommandePrecadre || '').trim().toLowerCase();
-          const dClient = (d.nomClientFinal || '').trim().toLowerCase();
+        if (!vraieFamille) {
+          const dossierAssocie = dossiers.find(d => {
+            const dRef = (d.refCommande || '').trim().toLowerCase();
+            const dNumTab = (d.numCommandeTablier || '').trim().toLowerCase();
+            const dNumMstq = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
+            const dNumCais = (d.numCommandeCaisson || '').trim().toLowerCase();
+            const dNumPrc = (d.numCommandePrecadre || '').trim().toLowerCase();
+            const dClient = (d.nomClientFinal || '').trim().toLowerCase();
 
-          const matchesRef = numCmdClean && (
-            dRef === numCmdClean ||
-            dNumTab === numCmdClean ||
-            dNumMstq === numCmdClean ||
-            dNumCais === numCmdClean ||
-            dNumPrc === numCmdClean ||
-            (dRef.length > 2 && numCmdClean.includes(dRef)) ||
-            (numCmdClean.length > 2 && dRef.includes(numCmdClean))
-          );
+            const matchesRef = numCmdClean && (
+              dRef === numCmdClean ||
+              dNumTab === numCmdClean ||
+              dNumMstq === numCmdClean ||
+              dNumCais === numCmdClean ||
+              dNumPrc === numCmdClean ||
+              (dRef.length > 2 && numCmdClean.includes(dRef)) ||
+              (numCmdClean.length > 2 && dRef.includes(numCmdClean))
+            );
 
-          const matchesClient = clientClean && dClient && (
-            dClient === clientClean ||
-            dClient.includes(clientClean) ||
-            clientClean.includes(dClient)
-          );
+            const matchesClient = clientClean && dClient && (
+              dClient === clientClean ||
+              dClient.includes(clientClean) ||
+              clientClean.includes(dClient)
+            );
 
-          return matchesRef || matchesClient;
-        });
+            return matchesRef || matchesClient;
+          });
 
-        if (dossierAssocie) {
-          const hasTab = (dossierAssocie.articlesTabliers || []).length > 0;
-          const hasMstq = (dossierAssocie.articlesMoustiquaires || []).length > 0;
-          const hasPrc = (dossierAssocie.articlesPrecadres || []).length > 0;
-          const hasCais = (dossierAssocie.articlesCaissons || []).length > 0;
+          if (dossierAssocie) {
+            const dNumTab = (dossierAssocie.numCommandeTablier || '').trim().toLowerCase();
+            const dNumMstq = (dossierAssocie.numCommandeMoustiquaire || '').trim().toLowerCase();
+            const dNumPrc = (dossierAssocie.numCommandePrecadre || '').trim().toLowerCase();
+            const dNumCais = (dossierAssocie.numCommandeCaisson || '').trim().toLowerCase();
 
-          if (hasTab && !hasCais && !hasMstq && !hasPrc) {
-            vraieFamille = 'TABLIER';
-          } else if (hasMstq && !hasCais && !hasTab && !hasPrc) {
-            vraieFamille = 'MOUSTIQUAIRE';
-          } else if (hasPrc && !hasCais && !hasTab && !hasMstq) {
-            vraieFamille = 'PRECADRE';
-          } else if (hasCais && !hasTab && !hasMstq && !hasPrc) {
-            vraieFamille = 'CAISSON';
+            if (numCmdClean && dNumPrc && (numCmdClean === dNumPrc || numCmdClean.includes(dNumPrc) || dNumPrc.includes(numCmdClean))) {
+              vraieFamille = 'PRECADRE';
+            } else if (numCmdClean && dNumMstq && (numCmdClean === dNumMstq || numCmdClean.includes(dNumMstq) || dNumMstq.includes(numCmdClean))) {
+              vraieFamille = 'MOUSTIQUAIRE';
+            } else if (numCmdClean && dNumTab && (numCmdClean === dNumTab || numCmdClean.includes(dNumTab) || dNumTab.includes(numCmdClean))) {
+              vraieFamille = 'TABLIER';
+            } else if (numCmdClean && dNumCais && (numCmdClean === dNumCais || numCmdClean.includes(dNumCais) || dNumCais.includes(numCmdClean))) {
+              vraieFamille = 'CAISSON';
+            } else {
+              const hasTab = (dossierAssocie.articlesTabliers || []).length > 0;
+              const hasMstq = (dossierAssocie.articlesMoustiquaires || []).length > 0;
+              const hasPrc = (dossierAssocie.articlesPrecadres || []).length > 0;
+              const hasCais = (dossierAssocie.articlesCaissons || []).length > 0;
+
+              if (hasTab && !hasCais && !hasMstq && !hasPrc) {
+                vraieFamille = 'TABLIER';
+              } else if (hasMstq && !hasCais && !hasTab && !hasPrc) {
+                vraieFamille = 'MOUSTIQUAIRE';
+              } else if (hasPrc && !hasCais && !hasTab && !hasMstq) {
+                vraieFamille = 'PRECADRE';
+              } else if (hasCais && !hasTab && !hasMstq && !hasPrc) {
+                vraieFamille = 'CAISSON';
+              }
+            }
           }
         }
 
         // 2. Si pas déduit par le dossier, inspecter les lignes de coupe débit (lignesRetour)
         if (!vraieFamille) {
           const lignes = ofObj.lignesRetour || [];
+          const hasPRC = lignes.some((l: any) => {
+            const code = (l.articleCode || '').toUpperCase();
+            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
+            const label = (l.repere || l.labelPiece || '').toUpperCase();
+            return (
+              code.includes('ART007') ||
+              des.includes('PRC') ||
+              des.includes('PRÉCADRE') ||
+              des.includes('PRECADRE') ||
+              label.includes('PRC') ||
+              label.includes('PRECADRE') ||
+              label.startsWith('1R')
+            );
+          });
+
           const hasTBL = lignes.some((l: any) => {
             const code = (l.articleCode || '').toUpperCase();
             const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
@@ -832,32 +876,12 @@ class AtelierDatabase {
               des.includes('MSTQ') ||
               des.includes('MAILLE') ||
               des.includes('MOUSTIQUAIRE') ||
-              des.includes('CADRE') ||
-              label.startsWith('HA-') ||
-              label.startsWith('HB-') ||
-              label.startsWith('LA-') ||
-              label.startsWith('LB-') ||
-              label.startsWith('MSTQ-') ||
-              label.startsWith('BI-') ||
-              label.startsWith('H') ||
-              label.includes('CADRE')
+              des.includes('CADRE MSTQ') ||
+              des.includes('PLISSÉE') ||
+              label.startsWith('MSTQ') ||
+              label.startsWith('BI-')
             );
           }) || (ofObj.chutesMailleReservees && ofObj.chutesMailleReservees.length > 0);
-
-          const hasPRC = lignes.some((l: any) => {
-            const code = (l.articleCode || '').toUpperCase();
-            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
-            const label = (l.repere || l.labelPiece || '').toUpperCase();
-            return (
-              code.includes('ART007') ||
-              des.includes('PRC') ||
-              des.includes('PRÉCADRE') ||
-              des.includes('PRECADRE') ||
-              label.includes('PRC') ||
-              label.includes('PRECADRE') ||
-              label.startsWith('1R')
-            );
-          });
 
           const hasCAIS = lignes.some((l: any) => {
             const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
@@ -872,22 +896,19 @@ class AtelierDatabase {
             );
           });
 
-          if (hasTBL && !hasMSTQ && !hasPRC && !hasCAIS) vraieFamille = 'TABLIER';
+          if (hasPRC && !hasTBL && !hasMSTQ && !hasCAIS) vraieFamille = 'PRECADRE';
+          else if (hasTBL && !hasMSTQ && !hasPRC && !hasCAIS) vraieFamille = 'TABLIER';
           else if (hasMSTQ && !hasTBL && !hasPRC && !hasCAIS) vraieFamille = 'MOUSTIQUAIRE';
-          else if (hasPRC && !hasTBL && !hasMSTQ && !hasCAIS) vraieFamille = 'PRECADRE';
           else if (hasCAIS && !hasTBL && !hasMSTQ && !hasPRC) vraieFamille = 'CAISSON';
         }
 
         // 3. Si toujours pas résolu, inspecter les titres et les préfixes de codification
         if (!vraieFamille) {
-          const cmdUpper = (ofObj.numCommande || r.num_commande || '').toUpperCase();
-          const titreUpper = (ofObj.titreSection || r.titre_section || '').toUpperCase();
-
           if (cmdUpper.startsWith('SA-') || titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) {
             vraieFamille = 'TABLIER';
           } else if (cmdUpper.startsWith('SC-') || cmdUpper.startsWith('D-') || titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ')) {
             vraieFamille = 'MOUSTIQUAIRE';
-          } else if (cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE')) {
+          } else if (cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE') || titreUpper.includes('PRC')) {
             vraieFamille = 'PRECADRE';
           } else if (cmdUpper.startsWith('CT-') || cmdUpper.startsWith('A-') || titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) {
             vraieFamille = 'CAISSON';
@@ -1273,9 +1294,18 @@ class AtelierDatabase {
                   }
                 }
               } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
-                this.db.prepare(
-                  'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
-                ).run(`cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueurMm, quantite);
+                // Recherche d'une chute identique existante pour consolider la quantité
+                const existingSameLg = this.db.prepare(
+                  'SELECT id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 1.0 LIMIT 1'
+                ).get(sheetName, m.longueurMm) as { id?: string; quantite?: number } | undefined;
+
+                if (existingSameLg?.id) {
+                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite + ? WHERE id = ?').run(quantite, existingSameLg.id);
+                } else {
+                  this.db.prepare(
+                    'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
+                  ).run(`cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueurMm, quantite);
+                }
               }
             }
           }

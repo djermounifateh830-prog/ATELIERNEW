@@ -164,7 +164,17 @@ function determinerFamille(sec: SectionDebitOF, fallbackFamille?: FamilleProduit
 
   const titreUpper = (sec.titreSection || sec.article?.designation || '').toUpperCase();
 
-  // Moustiquaire : vérification en priorité absolue pour ne jamais confondre le cadre moustiquaire avec un pré-cadre
+  // 1. Précadre : détection immédiate et prioritaire pour ne jamais être pris pour de la moustiquaire
+  if (
+    titreUpper.includes('PRÉCADRE') ||
+    titreUpper.includes('PRECADRE') ||
+    titreUpper.includes('PRC') ||
+    sec.type === 'PRC'
+  ) {
+    return 'PRECADRE';
+  }
+
+  // 2. Moustiquaire : vérification fiable
   if (
     titreUpper.includes('MOUSTIQUAIRE') ||
     titreUpper.includes('MSTQ') ||
@@ -172,7 +182,7 @@ function determinerFamille(sec: SectionDebitOF, fallbackFamille?: FamilleProduit
     titreUpper.includes('PLISSÉE') ||
     titreUpper.includes('CADRE MSTQ') ||
     titreUpper.includes('BARRE INF') ||
-    sec.type === 'CADRE'
+    (sec.type === 'CADRE' && !titreUpper.includes('PRC') && !titreUpper.includes('PRECADRE') && !titreUpper.includes('PRÉCADRE'))
   ) {
     return 'MOUSTIQUAIRE';
   }
@@ -623,7 +633,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         const qteJoues = nbPieces * 2;
         joueHtmlNotice = `
         <div style="background:#fef3c7;border:1.5px solid #f59e0b;padding:6px 10px;margin-bottom:8px;font-size:12px;font-weight:bold;color:#92400e;display:flex;justify-content:space-between;align-items:center;">
-          <span>🛡️ <strong>ACCESSOIRES JOUES :</strong> 2 Joues par caisson &rarr; Prévoir <strong style="font-size:13px;color:#78350f;background:#fde68a;padding:2px 6px;border-radius:3px;">${qteJoues} pièces</strong> de <strong>${joueInfo.designation}</strong> (${joueInfo.codeArt}) pour les ${nbPieces} caisson(s)</span>
+          <span>🛡️ <strong>ACCESSOIRES JOUES :</strong> 2 Joues par caisson &rarr; Prévoir <strong style="font-size:13px;color:#78350f;background:#fde68a;padding:2px 6px;border-radius:3px;">${qteJoues} pièces</strong> de <strong>${joueInfo.designation}</strong> pour les ${nbPieces} caisson(s)</span>
           <span style="font-size:11px;background:#fde68a;padding:2px 6px;border-radius:3px;color:#78350f;">Article stocké non débité</span>
         </div>`;
       }
@@ -766,7 +776,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         <td style="text-align:center;font-weight:bold;color:#64748b;font-size:13px;padding:5px 6px;">[ &nbsp; ] Prélevé</td>
       </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#64748b;font-style:italic;padding:10px;font-size:13px;">Aucune barre neuve à prélever (fabrication 100% sur chutes du stock).</td></tr>`;
 
-    const chutesADestoquer = syntheseMatieres.flatMap(m => m.chutes.map(c => ({ ...c, codeArt: m.codeArt, designation: m.designation, famille: m.famille })));
+    const chutesADestoquer = syntheseMatieres
+      .flatMap(m => m.chutes.map(c => ({ ...c, codeArt: m.codeArt, designation: m.designation, famille: m.famille })))
+      .sort((a, b) => (a.designation || '').localeCompare(b.designation || '', 'fr', { sensitivity: 'base' }));
     const chutesDestoquerHTML = chutesADestoquer.length > 0 ? chutesADestoquer.map(c => `
       <tr>
         <td style="font-weight:900;color:#1e3a8a;font-size:13px;padding:5px 6px;">${c.famille}</td>
@@ -781,12 +793,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     const accessoiresHTML = syntheseAccessoires.length > 0 ? syntheseAccessoires.map(a => `
       <tr>
         <td style="font-weight:900;color:#92400e;font-size:13px;padding:5px 6px;background:#fffbeb;">${a.famille}</td>
-        <td style="font-family:Consolas,monospace;font-weight:900;color:#0f172a;font-size:13px;padding:5px 6px;">${a.codeArt}</td>
         <td style="font-size:13px;font-weight:900;padding:5px 6px;color:#0f172a;">${a.designation}</td>
         <td style="font-size:12px;color:#475569;padding:5px 6px;">${a.regleCalcul} (${a.detailPieces})</td>
         <td style="text-align:center;font-weight:900;color:#92400e;font-size:15px;background:#fef3c7;padding:5px 6px;font-family:Consolas,monospace;">${a.quantiteRequise} pcs</td>
         <td style="text-align:center;font-weight:bold;color:#64748b;font-size:13px;padding:5px 6px;">[ &nbsp; ] Préparé</td>
-      </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#64748b;font-style:italic;padding:10px;font-size:13px;">Aucun accessoire ou joue requis pour ce dossier.</td></tr>`;
+      </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#64748b;font-style:italic;padding:10px;font-size:13px;">Aucun accessoire ou joue requis pour ce dossier.</td></tr>`;
 
     // 1.d Façonnage Toile Plissée / Maille MSTQ (Placée avec les préparations matière première)
     const mstqToileItems = (lignesMoustiquaires || []).filter(m => m.typeFabrication !== 'PROFILES_SEULS');
@@ -949,18 +960,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <div style="font-weight:900;font-size:13px;margin:10px 0 4px 0;text-transform:uppercase;color:#92400e;">C. Accessoires &amp; Joues de Caisson à Préparer (Articles Stockés non coupés) :</div>
   <table style="table-layout:fixed;width:100%;">
     <colgroup>
-      <col style="width:14%;">
-      <col style="width:14%;">
-      <col style="width:34%;">
       <col style="width:16%;">
+      <col style="width:44%;">
+      <col style="width:18%;">
       <col style="width:11%;">
       <col style="width:11%;">
     </colgroup>
     <thead><tr>
-      <th style="width:14%;">Famille</th>
-      <th style="width:14%;">Code Art</th>
-      <th style="width:34%;">Désignation Article</th>
-      <th style="width:16%;">Règle / Affectation</th>
+      <th style="width:16%;">Famille</th>
+      <th style="width:44%;">Désignation Article</th>
+      <th style="width:18%;">Règle / Affectation</th>
       <th style="width:11%;text-align:center;">Qté Requise</th>
       <th style="width:11%;text-align:center;">Pointage</th>
     </tr></thead>
@@ -1057,7 +1066,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             id: `lr-${Date.now()}-${lineId++}`,
             repere: g.piecesInfo.map(p => p.repere).join(', '),
             typeSupport: 'BARRE_NEUVE',
-            articleCode: sec.article?.code_art,
+            articleCode: sec.article?.code_art || sec.resultat?.articleCode,
+            articleDesignation: sec.article?.designation || sec.resultat?.articleDesignation || sec.titre,
             longueurPrevue: g.longueurBarre,
             restePrevuMm: resteCalc,
             resteReelMesureMm: resteCalc,
@@ -1079,7 +1089,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             id: `lr-${Date.now()}-${lineId++}`,
             repere: g.piecesInfo.map(p => p.repere).join(', '),
             typeSupport: 'CHUTE_BARRE',
-            articleCode: sec.article?.code_art,
+            articleCode: sec.article?.code_art || sec.resultat?.articleCode,
+            articleDesignation: sec.article?.designation || sec.resultat?.articleDesignation || sec.titre,
             longueurPrevue: Math.round(g.support),
             restePrevuMm: resteCalc,
             resteReelMesureMm: resteCalc,
@@ -1099,6 +1110,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         repere: `ACCESSOIRE ${acc.designation}`,
         typeSupport: 'BARRE_NEUVE',
         articleCode: acc.codeArt,
+        articleDesignation: acc.designation,
         longueurPrevue: 0,
         restePrevuMm: 0,
         resteReelMesureMm: 0,
@@ -1799,9 +1811,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   <span>B. Chutes Récupérées à Déstocker des Casiers</span>
                 </div>
                 {(() => {
-                  const chutesADestoquer = syntheseMatieres.flatMap(m =>
-                    m.chutes.map(c => ({ ...c, codeArt: m.codeArt, designation: m.designation, famille: m.famille }))
-                  );
+                  const chutesADestoquer = syntheseMatieres
+                    .flatMap(m => m.chutes.map(c => ({ ...c, codeArt: m.codeArt, designation: m.designation, famille: m.famille })))
+                    .sort((a, b) => (a.designation || '').localeCompare(b.designation || '', 'fr', { sensitivity: 'base' }));
 
                   if (chutesADestoquer.length === 0) {
                     return (
@@ -1865,10 +1877,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     <table className="w-full text-left text-sm border-collapse table-fixed">
                       <thead className="bg-amber-50 text-amber-950 font-black border-b-2 border-amber-300 text-xs sm:text-sm">
                         <tr>
-                          <th className="py-1.5 px-2 border-r border-amber-200 w-[14%]">Famille</th>
-                          <th className="py-1.5 px-2 border-r border-amber-200 w-[14%]">Code Art</th>
-                          <th className="py-1.5 px-2 border-r border-amber-200 w-[34%]">Désignation Article</th>
-                          <th className="py-1.5 px-2 border-r border-amber-200 w-[16%]">Règle / Affectation</th>
+                          <th className="py-1.5 px-2 border-r border-amber-200 w-[16%]">Famille</th>
+                          <th className="py-1.5 px-2 border-r border-amber-200 w-[44%]">Désignation Article</th>
+                          <th className="py-1.5 px-2 border-r border-amber-200 w-[18%]">Règle / Affectation</th>
                           <th className="py-1.5 px-2 text-center border-r border-amber-200 w-[11%] bg-amber-100 text-amber-950 font-black">Qté Requise</th>
                           <th className="py-1.5 px-2 text-center w-[11%]">Pointage</th>
                         </tr>
@@ -1880,9 +1891,6 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                               <span className="px-1.5 py-0.5 rounded text-[11px] font-black bg-amber-100 text-amber-900 inline-block">
                                 {a.famille}
                               </span>
-                            </td>
-                            <td className="py-2 px-2 font-mono font-bold text-slate-900 border-r border-amber-200 text-xs sm:text-sm">
-                              {a.codeArt}
                             </td>
                             <td className="py-2 px-2 font-bold text-slate-950 border-r border-amber-200 text-xs sm:text-sm">
                               {a.designation}

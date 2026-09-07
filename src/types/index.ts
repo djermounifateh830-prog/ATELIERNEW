@@ -337,6 +337,13 @@ export type StatutOF = 'EMIS' | 'RETOUR_EN_ATTENTE' | 'EN_COURS' | 'CLOTURE' | '
  * L'opérateur écrit dans la colonne "Nouvelle Chute" sur le papier.
  * On transcrit ici ce qu'il a écrit.
  */
+export interface ChuteRetourDetail {
+  id: string;
+  longueurMm: number;
+  quantite: number;
+  action: 'A_STOCKER' | 'DECHET';
+}
+
 export interface LigneRetourOF {
   /** Identifiant unique de la ligne */
   id: string;
@@ -345,6 +352,8 @@ export interface LigneRetourOF {
   /** Type de support prévu par l'algorithme */
   typeSupport: 'BARRE_NEUVE' | 'CHUTE_BARRE' | 'CHUTE_MAILLE';
   articleCode?: string;
+  /** Désignation de l'article pour identification claire */
+  articleDesignation?: string;
   /** Longueur/dimension du support prévu (mm) */
   longueurPrevue: number;
   /** Reste prévu après coupe (mm) — calculé par l'optimiseur */
@@ -364,6 +373,8 @@ export interface LigneRetourOF {
   resteReelMesureMm?: number;
   /** Destination de la chute restante */
   actionReste?: 'A_STOCKER' | 'DECHET';
+  /** Décomposition en plusieurs chutes restantes mesurées (ex: 3 chutes de 1m au lieu d'une de 3m) */
+  chutesRestantesMultiples?: ChuteRetourDetail[];
   /** Détails des pièces découpées sur cette barre/chute (ex: "CT-1 (2100mm) + CT-2 (1500mm)") */
   piecesInfoStr?: string;
   /** Remarque libre (optionnel) */

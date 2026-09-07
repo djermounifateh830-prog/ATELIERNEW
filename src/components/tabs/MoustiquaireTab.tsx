@@ -222,6 +222,7 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
     setMoustiquaires([...moustiquaires, newMstq]);
     setLargeur('');
     setHauteur('');
+    setQuantite('1');
     setRepere(`H${moustiquaires.length + 2}`);
   };
 

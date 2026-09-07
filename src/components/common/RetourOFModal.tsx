@@ -5,7 +5,8 @@ import {
   MouvementStock,
   Article,
   ChuteItem,
-  MappingChutes
+  MappingChutes,
+  ChuteRetourDetail
 } from '../../types';
 import { StorageService } from '../../services/storage';
 import {
@@ -97,6 +98,10 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
 
   const [editingNonInventorieIdx, setEditingNonInventorieIdx] = useState<number | null>(null);
   const [nonInventorieTempLg, setNonInventorieTempLg] = useState<string>('');
+
+  // Gestion du remplacement d'une chute par plusieurs chutes plus petites (scission de support)
+  const [splittingSupportIdx, setSplittingSupportIdx] = useState<number | null>(null);
+  const [splitSupportConfigs, setSplitSupportConfigs] = useState<Array<{ id: string; longueur: number; source: 'AUTRE_CHUTE' | 'CHUTE_NON_INVENTORIEE' }>>([]);
 
   if (!isOpen) return null;
 
@@ -281,6 +286,126 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
 
     setLignes(prev => [...prev, newLigne]);
     setLignesVerifiees(prev => ({ ...prev, [lignes.length]: true }));
+  };
+
+  // Ajouter un débit / chute supplémentaire
+  const handleAjouterChuteSupplementaire = (longueur: number = 1000) => {
+    const firstLigne = lignes[0];
+    const articleCode = firstLigne?.articleCode || suivi.titreSection;
+    const articleDesignation = firstLigne?.articleDesignation || '';
+    const newLigne: LigneRetourOF = {
+      id: `suppl-chute-${Date.now()}`,
+      repere: `CHUTE SUPPLÉMENTAIRE #${lignes.length + 1}`,
+      typeSupport: 'CHUTE_BARRE',
+      articleCode,
+      articleDesignation,
+      longueurPrevue: longueur,
+      restePrevuMm: 0,
+      saisieOperateur: `CHUTE DÉBITÉE ${longueur}mm`,
+      sourceReelle: 'AUTRE_CHUTE',
+      longueurSourceReelle: longueur,
+      resteReelMesureMm: 0,
+      actionReste: 'DECHET',
+      piecesInfoStr: 'Débit chute additionnelle en atelier',
+      remarque: 'Chute additionnelle débitée en atelier'
+    };
+
+    setLignes(prev => [...prev, newLigne]);
+    setLignesVerifiees(prev => ({ ...prev, [lignes.length]: true }));
+  };
+
+  // Scinder une chute / remplacer 1 chute par plusieurs chutes plus petites
+  const handleOpenSplitSupport = (idx: number) => {
+    const l = lignes[idx];
+    const lg = l.longueurSourceReelle || l.longueurPrevue || 3000;
+    const count = lg >= 3000 ? 3 : 2;
+    const eachLg = Math.round(lg / count);
+    setSplittingSupportIdx(idx);
+    setSplitSupportConfigs(
+      Array.from({ length: count }, (_, i) => ({
+        id: String(i + 1),
+        longueur: i === count - 1 ? lg - (eachLg * (count - 1)) : eachLg,
+        source: 'AUTRE_CHUTE'
+      }))
+    );
+  };
+
+  const handleApplySplitSupport = (idx: number) => {
+    const oldLigne = lignes[idx];
+    if (!splitSupportConfigs || splitSupportConfigs.length === 0) return;
+
+    const newSubLignes: LigneRetourOF[] = splitSupportConfigs.map((cfg, subIdx) => {
+      const lg = Math.max(10, Math.round(cfg.longueur));
+      return {
+        id: `split-${Date.now()}-${subIdx}-${Math.floor(Math.random() * 1000)}`,
+        repere: `${oldLigne.repere} [Chute ${subIdx + 1}/${splitSupportConfigs.length}]`,
+        typeSupport: 'CHUTE_BARRE',
+        articleCode: oldLigne.articleCode,
+        articleDesignation: oldLigne.articleDesignation,
+        longueurPrevue: lg,
+        longueurSourceReelle: lg,
+        sourceReelle: cfg.source,
+        restePrevuMm: 0,
+        resteReelMesureMm: 0,
+        actionReste: 'DECHET',
+        piecesInfoStr: oldLigne.piecesInfoStr ? `${oldLigne.piecesInfoStr} (Partie ${subIdx + 1})` : '',
+        saisieOperateur: `Remplacement de ${oldLigne.longueurPrevue}mm par chute ${lg}mm (${subIdx + 1}/${splitSupportConfigs.length})`,
+        remarque: `Chute issue du fractionnement (${subIdx + 1}/${splitSupportConfigs.length})`
+      };
+    });
+
+    const nextLignes = [...lignes];
+    nextLignes.splice(idx, 1, ...newSubLignes);
+    setLignes(nextLignes);
+    setSplittingSupportIdx(null);
+  };
+
+  // Multi-chutes restantes après coupe
+  const handleToggleMultiChutesReste = (idx: number) => {
+    const l = lignes[idx];
+    const mesured = l.resteReelMesureMm ?? l.restePrevuMm ?? 3000;
+    if (l.chutesRestantesMultiples && l.chutesRestantesMultiples.length > 0) {
+      updateLigne(idx, { chutesRestantesMultiples: undefined });
+    } else {
+      const count = mesured >= 3000 ? 3 : 2;
+      const each = Math.round(mesured / count);
+      const items: ChuteRetourDetail[] = Array.from({ length: count }, (_, i) => ({
+        id: `cr-${Date.now()}-${i}`,
+        longueurMm: i === count - 1 ? mesured - (each * (count - 1)) : each,
+        quantite: 1,
+        action: 'A_STOCKER'
+      }));
+      updateLigne(idx, {
+        chutesRestantesMultiples: items,
+        actionReste: 'A_STOCKER'
+      });
+    }
+  };
+
+  const handleUpdateChuteMultiItem = (ligneIdx: number, subId: string, updates: Partial<ChuteRetourDetail>) => {
+    const l = lignes[ligneIdx];
+    const current = l.chutesRestantesMultiples || [];
+    const next = current.map(item => item.id === subId ? { ...item, ...updates } : item);
+    updateLigne(ligneIdx, { chutesRestantesMultiples: next });
+  };
+
+  const handleAddChuteMultiItem = (ligneIdx: number) => {
+    const l = lignes[ligneIdx];
+    const current = l.chutesRestantesMultiples || [];
+    const newItem: ChuteRetourDetail = {
+      id: `cr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      longueurMm: 1000,
+      quantite: 1,
+      action: 'A_STOCKER'
+    };
+    updateLigne(ligneIdx, { chutesRestantesMultiples: [...current, newItem] });
+  };
+
+  const handleRemoveChuteMultiItem = (ligneIdx: number, subId: string) => {
+    const l = lignes[ligneIdx];
+    const current = l.chutesRestantesMultiples || [];
+    const next = current.filter(item => item.id !== subId);
+    updateLigne(ligneIdx, { chutesRestantesMultiples: next.length > 0 ? next : undefined });
   };
 
   // Supprimer une ligne ajoutée manuellement
@@ -519,20 +644,42 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         });
       }
 
-      // 2. Entrée de la NOUVELLE CHUTE RÉELLEMENT MESURÉE
-      if (ligne.actionReste === 'A_STOCKER' && realResteMm > 0) {
-        mouvements.push({
-          id: makeId(),
-          date: dateTimeStr,
-          type: 'ENTREE_CHUTE',
-          articleCode: ligne.articleCode,
-          ofId: suivi.id,
-          numCommande: finalNumCmd,
-          nomClient: suivi.nomClient,
-          longueurMm: realResteMm,
-          quantite: 1,
-          remarque: `Chute mesurée après coupe (${realResteMm}mm) — Repère(s): ${repereTxt} — OF ${finalNumCmd}${source === 'CHUTE_NON_INVENTORIEE' ? ' (issue de chute non inventoriée)' : ''}`
-        });
+      // 2. Entrée de la NOUVELLE CHUTE RÉELLEMENT MESURÉE (OU MULTI-CHUTES)
+      if (ligne.actionReste === 'A_STOCKER') {
+        if (Array.isArray(ligne.chutesRestantesMultiples) && ligne.chutesRestantesMultiples.length > 0) {
+          // L'opérateur a découpé le reste en plusieurs chutes plus petites à stocker
+          for (const chuteSub of ligne.chutesRestantesMultiples) {
+            const subLg = Math.round(Number(chuteSub.longueurMm) || 0);
+            const subQte = Math.max(1, Math.round(Number(chuteSub.quantite) || 1));
+            if (subLg > 0 && chuteSub.action !== 'DECHET') {
+              mouvements.push({
+                id: makeId(),
+                date: dateTimeStr,
+                type: 'ENTREE_CHUTE',
+                articleCode: ligne.articleCode,
+                ofId: suivi.id,
+                numCommande: finalNumCmd,
+                nomClient: suivi.nomClient,
+                longueurMm: subLg,
+                quantite: subQte,
+                remarque: `Chute découpée après coupe (${subLg}mm x${subQte}) — Repère(s): ${repereTxt} — OF ${finalNumCmd}${source === 'CHUTE_NON_INVENTORIEE' ? ' (issue de chute non inventoriée)' : ''}`
+              });
+            }
+          }
+        } else if (realResteMm > 0) {
+          mouvements.push({
+            id: makeId(),
+            date: dateTimeStr,
+            type: 'ENTREE_CHUTE',
+            articleCode: ligne.articleCode,
+            ofId: suivi.id,
+            numCommande: finalNumCmd,
+            nomClient: suivi.nomClient,
+            longueurMm: realResteMm,
+            quantite: 1,
+            remarque: `Chute mesurée après coupe (${realResteMm}mm) — Repère(s): ${repereTxt} — OF ${finalNumCmd}${source === 'CHUTE_NON_INVENTORIEE' ? ' (issue de chute non inventoriée)' : ''}`
+          });
+        }
       }
     });
 
@@ -651,10 +798,20 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
               type="button"
               onClick={handleAjouterSupportSupplementaire}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-              title="Ajouter une barre ou chute supplémentaire débitée pour refaire une pièce abîmée"
+              title="Ajouter une barre neuve (6m) supplémentaire débitée pour refaire une pièce abîmée"
             >
               <Plus className="w-3.5 h-3.5 text-amber-400" />
-              <span>➕ Re-débit / Support Supplémentaire</span>
+              <span>➕ Barre Neuve (6m)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleAjouterChuteSupplementaire(1000)}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+              title="Ajouter une chute supplémentaire débitée pour refaire une pièce"
+            >
+              <Plus className="w-3.5 h-3.5 text-sky-400" />
+              <span>➕ Chute Débitée</span>
             </button>
 
             <button
@@ -907,6 +1064,18 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                         </div>
                       </div>
 
+                      {/* Code Article & Désignation claire */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-slate-900 text-amber-300 border border-slate-700">
+                          {ligne.articleCode || suivi.titreSection}
+                        </span>
+                        {(ligne.articleDesignation || article?.designation) && (
+                          <span className="text-xs font-semibold text-slate-200 truncate max-w-[240px]" title={ligne.articleDesignation || article?.designation}>
+                            {ligne.articleDesignation || article?.designation}
+                          </span>
+                        )}
+                      </div>
+
                       {/* Repères & Pièces découpées sur ce support */}
                       <div className="space-y-1">
                         <div className="text-[11px] text-slate-400 font-semibold flex items-center justify-between">
@@ -1106,6 +1275,172 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                             </button>
                           )}
                         </div>
+
+                        {/* Option D : Remplacer par plusieurs chutes plus petites (scission) */}
+                        <div className="pt-1 border-t border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (splittingSupportIdx === originalIdx) {
+                                setSplittingSupportIdx(null);
+                              } else {
+                                handleOpenSplitSupport(originalIdx);
+                                if (editingNonInventorieIdx === originalIdx) setEditingNonInventorieIdx(null);
+                              }
+                            }}
+                            className={`w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left flex items-center justify-between border transition cursor-pointer ${
+                              splittingSupportIdx === originalIdx
+                                ? 'bg-amber-950/80 text-amber-200 border-amber-500 shadow-md ring-1 ring-amber-400/40'
+                                : 'bg-slate-950/70 text-slate-400 border-slate-800 hover:border-amber-600 hover:text-amber-300'
+                            }`}
+                          >
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span>🔀</span>
+                              <span>Remplacer par plusieurs chutes</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-amber-400 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-800/80 shrink-0">
+                              ex: 3×1m
+                            </span>
+                          </button>
+
+                          {splittingSupportIdx === originalIdx && (
+                            <div className="mt-2 bg-slate-950 border border-amber-500/80 rounded-xl p-3 space-y-2.5 shadow-lg animate-in fade-in duration-200">
+                              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <div className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                                  <span>🔀 Remplacer support de {realSupportLg} mm :</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setSplittingSupportIdx(null)}
+                                  className="text-slate-400 hover:text-slate-200 text-xs px-1.5 py-0.5 rounded hover:bg-slate-800"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <p className="text-[11px] text-slate-400 leading-snug">
+                                Spécifiez les chutes plus petites utilisées à la place de cette chute de {realSupportLg} mm (ex: 3 chutes de 1m) :
+                              </p>
+
+                              {/* Raccourcis presets */}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] text-slate-500 font-semibold">Exemples :</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSplitSupportConfigs([
+                                    { id: '1', longueur: 1000, source: 'AUTRE_CHUTE' },
+                                    { id: '2', longueur: 1000, source: 'AUTRE_CHUTE' },
+                                    { id: '3', longueur: 1000, source: 'AUTRE_CHUTE' }
+                                  ])}
+                                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-amber-300 text-[10px] font-mono font-bold rounded border border-amber-800/60 cursor-pointer"
+                                >
+                                  3 × 1000 mm
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSplitSupportConfigs([
+                                    { id: '1', longueur: 1500, source: 'AUTRE_CHUTE' },
+                                    { id: '2', longueur: 1500, source: 'AUTRE_CHUTE' }
+                                  ])}
+                                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-amber-300 text-[10px] font-mono font-bold rounded border border-amber-800/60 cursor-pointer"
+                                >
+                                  2 × 1500 mm
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSplitSupportConfigs([
+                                    { id: '1', longueur: 750, source: 'AUTRE_CHUTE' },
+                                    { id: '2', longueur: 750, source: 'AUTRE_CHUTE' },
+                                    { id: '3', longueur: 750, source: 'AUTRE_CHUTE' },
+                                    { id: '4', longueur: 750, source: 'AUTRE_CHUTE' }
+                                  ])}
+                                  className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-amber-300 text-[10px] font-mono font-bold rounded border border-amber-800/60 cursor-pointer"
+                                >
+                                  4 × 750 mm
+                                </button>
+                              </div>
+
+                              {/* Liste des chutes */}
+                              <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                                {splitSupportConfigs.map((cfg, cfgIdx) => (
+                                  <div key={cfg.id || cfgIdx} className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-lg text-xs">
+                                    <span className="text-[10px] font-mono font-bold text-slate-400 w-14 shrink-0">
+                                      Chute #{cfgIdx + 1}
+                                    </span>
+                                    <div className="relative flex-1">
+                                      <input
+                                        type="number"
+                                        min="10"
+                                        value={cfg.longueur || ''}
+                                        onChange={e => {
+                                          const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                          setSplitSupportConfigs(prev => prev.map((item, i) => i === cfgIdx ? { ...item, longueur: val } : item));
+                                        }}
+                                        placeholder="Longueur (mm)"
+                                        className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs font-mono font-bold text-amber-200"
+                                      />
+                                      <span className="absolute right-2 top-1 text-[9px] text-slate-500 font-mono pointer-events-none">mm</span>
+                                    </div>
+                                    <select
+                                      value={cfg.source}
+                                      onChange={e => {
+                                        const s = e.target.value as 'AUTRE_CHUTE' | 'CHUTE_NON_INVENTORIEE';
+                                        setSplitSupportConfigs(prev => prev.map((item, i) => i === cfgIdx ? { ...item, source: s } : item));
+                                      }}
+                                      className="bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-[11px] text-slate-300 font-mono"
+                                    >
+                                      <option value="AUTRE_CHUTE">Stock</option>
+                                      <option value="CHUTE_NON_INVENTORIEE">Atelier</option>
+                                    </select>
+                                    {splitSupportConfigs.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSplitSupportConfigs(prev => prev.filter((_, i) => i !== cfgIdx))}
+                                        className="p-1 text-rose-400 hover:text-rose-300 cursor-pointer"
+                                        title="Supprimer cette chute"
+                                      >
+                                        ✕
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSplitSupportConfigs(prev => [
+                                    ...prev,
+                                    { id: String(Date.now()), longueur: 1000, source: 'AUTRE_CHUTE' }
+                                  ])}
+                                  className="text-xs font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
+                                >
+                                  + Ajouter une chute
+                                </button>
+                                <div className="text-xs font-mono font-bold text-slate-300">
+                                  Total : <span className="text-amber-400">{splitSupportConfigs.reduce((s, c) => s + (Number(c.longueur) || 0), 0)} mm</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplySplitSupport(originalIdx)}
+                                  className="flex-1 py-1.5 px-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-lg transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>Valider le remplacement ({splitSupportConfigs.length} chutes)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSplittingSupportIdx(null)}
+                                  className="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg cursor-pointer"
+                                >
+                                  Annuler
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1245,6 +1580,163 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                             Déclarer rebut
                           </button>
                         </div>
+                      </div>
+
+                      {/* Option Découper le reste en plusieurs chutes pour le stock (ex: 3 chutes de 1m au lieu d'une de 3m) */}
+                      <div className="pt-2 border-t border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleMultiChutesReste(originalIdx)}
+                          className={`w-full py-1.5 px-2.5 rounded-lg text-xs font-bold flex items-center justify-between border transition cursor-pointer ${
+                            ligne.chutesRestantesMultiples && ligne.chutesRestantesMultiples.length > 0
+                              ? 'bg-purple-950/80 border-purple-500 text-purple-200 shadow-sm'
+                              : 'bg-slate-900/90 border-slate-800 text-slate-400 hover:text-purple-300 hover:border-purple-800'
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <span>🧩</span>
+                            <span>{ligne.chutesRestantesMultiples && ligne.chutesRestantesMultiples.length > 0 ? 'Mode Multi-Chutes Restantes (Actif)' : 'Diviser le reste en plusieurs chutes'}</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-purple-300 bg-purple-900/60 px-1.5 py-0.2 rounded border border-purple-700">
+                            {ligne.chutesRestantesMultiples?.length ? `${ligne.chutesRestantesMultiples.length} chutes` : 'ex: 3×1m'}
+                          </span>
+                        </button>
+
+                        {ligne.chutesRestantesMultiples && ligne.chutesRestantesMultiples.length > 0 && (
+                          <div className="mt-2 bg-slate-950 border border-purple-500/70 rounded-xl p-2.5 space-y-2 shadow-inner animate-in fade-in duration-200">
+                            <div className="text-[11px] font-bold text-purple-300 flex items-center justify-between">
+                              <span>Chutes restituées au stock :</span>
+                              <span className="font-mono text-xs font-black text-amber-300">
+                                Total : {ligne.chutesRestantesMultiples.reduce((sum, c) => sum + (c.action !== 'DECHET' ? (Number(c.longueurMm) * (Number(c.quantite) || 1)) : 0), 0)} mm
+                              </span>
+                            </div>
+
+                            {/* Raccourcis de fractionnement rapide */}
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-[10px] text-slate-500 font-semibold">Répartition :</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const tot = mesuredReste > 0 ? mesuredReste : 3000;
+                                  const each = Math.round(tot / 3);
+                                  updateLigne(originalIdx, {
+                                    chutesRestantesMultiples: [
+                                      { id: `cr-${Date.now()}-1`, longueurMm: each, quantite: 1, action: 'A_STOCKER' },
+                                      { id: `cr-${Date.now()}-2`, longueurMm: each, quantite: 1, action: 'A_STOCKER' },
+                                      { id: `cr-${Date.now()}-3`, longueurMm: tot - (each * 2), quantite: 1, action: 'A_STOCKER' },
+                                    ],
+                                    actionReste: 'A_STOCKER'
+                                  });
+                                }}
+                                className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-purple-300 text-[10px] font-mono font-bold rounded border border-purple-800 cursor-pointer"
+                              >
+                                3 parts égales
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const tot = mesuredReste > 0 ? mesuredReste : 3000;
+                                  const each = Math.round(tot / 2);
+                                  updateLigne(originalIdx, {
+                                    chutesRestantesMultiples: [
+                                      { id: `cr-${Date.now()}-1`, longueurMm: each, quantite: 1, action: 'A_STOCKER' },
+                                      { id: `cr-${Date.now()}-2`, longueurMm: tot - each, quantite: 1, action: 'A_STOCKER' },
+                                    ],
+                                    actionReste: 'A_STOCKER'
+                                  });
+                                }}
+                                className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-purple-300 text-[10px] font-mono font-bold rounded border border-purple-800 cursor-pointer"
+                              >
+                                2 parts égales
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateLigne(originalIdx, {
+                                    chutesRestantesMultiples: [
+                                      { id: `cr-${Date.now()}-1`, longueurMm: 1000, quantite: 1, action: 'A_STOCKER' },
+                                      { id: `cr-${Date.now()}-2`, longueurMm: 1000, quantite: 1, action: 'A_STOCKER' },
+                                      { id: `cr-${Date.now()}-3`, longueurMm: 1000, quantite: 1, action: 'A_STOCKER' },
+                                    ],
+                                    actionReste: 'A_STOCKER'
+                                  });
+                                }}
+                                className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-purple-300 text-[10px] font-mono font-bold rounded border border-purple-800 cursor-pointer"
+                              >
+                                3 × 1000 mm
+                              </button>
+                            </div>
+
+                            {/* Liste des chutes de retour */}
+                            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                              {ligne.chutesRestantesMultiples.map((cSub, sIdx) => (
+                                <div key={cSub.id || sIdx} className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 p-1.5 rounded-lg text-xs">
+                                  <span className="text-[10px] font-mono font-bold text-purple-300 w-12 shrink-0">
+                                    #{sIdx + 1}
+                                  </span>
+                                  <div className="relative flex-1">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={cSub.longueurMm || ''}
+                                      onChange={e => handleUpdateChuteMultiItem(originalIdx, cSub.id, { longueurMm: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+                                      className="w-full bg-slate-950 border border-purple-700/70 rounded px-2 py-0.5 font-mono font-bold text-amber-300 text-xs"
+                                      placeholder="Lg (mm)"
+                                    />
+                                    <span className="absolute right-2 top-0.5 text-[9px] text-slate-500 font-mono pointer-events-none">mm</span>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span className="text-[10px] text-slate-400">×</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      value={cSub.quantite || 1}
+                                      onChange={e => handleUpdateChuteMultiItem(originalIdx, cSub.id, { quantite: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                                      className="w-12 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 font-mono text-center text-xs text-sky-300"
+                                      title="Quantité"
+                                    />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateChuteMultiItem(originalIdx, cSub.id, { action: cSub.action === 'DECHET' ? 'A_STOCKER' : 'DECHET' })}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                                      cSub.action === 'DECHET'
+                                        ? 'bg-rose-950/80 text-rose-300 border-rose-800'
+                                        : 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                                    }`}
+                                  >
+                                    {cSub.action === 'DECHET' ? '🗑️ Rebut' : '📦 Stock'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveChuteMultiItem(originalIdx, cSub.id)}
+                                    className="p-1 text-slate-400 hover:text-rose-400 cursor-pointer"
+                                    title="Supprimer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleAddChuteMultiItem(originalIdx)}
+                                className="text-xs font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1 cursor-pointer"
+                              >
+                                + Ajouter une autre chute
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleMultiChutesReste(originalIdx)}
+                                className="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                              >
+                                Revenir à 1 seule chute
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -134,6 +134,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
 
     setSaisieL('');
     setSaisieH('');
+    setSaisieQte('1');
     setSaisieRepere(`A${cadres.length + 2}`);
   };
 

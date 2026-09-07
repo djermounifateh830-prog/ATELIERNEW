@@ -90,8 +90,25 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   onStockUpdated
 }) => {
   const safeArticles = Array.isArray(articles) ? articles : [];
-  const safeChutesBarres = chutesBarres && typeof chutesBarres === 'object' ? chutesBarres : {};
-  const safeChutesMaille = Array.isArray(chutesMaille) ? chutesMaille : [];
+  const safeChutesBarres = useMemo(() => {
+    if (!chutesBarres || typeof chutesBarres !== 'object') return {};
+    const res: Record<string, ChuteItem[]> = {};
+    for (const [sheet, list] of Object.entries(chutesBarres)) {
+      res[sheet] = (list || []).map((c, idx) => ({
+        ...c,
+        id: c.id || `c-${sheet.replace(/[^a-zA-Z0-9]/g, '_')}-${idx}-${c.longueur}`
+      }));
+    }
+    return res;
+  }, [chutesBarres]);
+
+  const safeChutesMaille = useMemo(() => {
+    if (!Array.isArray(chutesMaille)) return [];
+    return chutesMaille.map((m, idx) => ({
+      ...m,
+      id: m.id || `m-${idx}-${m.dimension_fixe}`
+    }));
+  }, [chutesMaille]);
 
   const [subTab, setSubTab] = useState<'articles' | 'chutes' | 'mapping' | 'historique'>('articles');
 
@@ -521,20 +538,24 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
 
     if (selectedSheet === 'MAILLE MSTQ') {
       const newMaille: ChuteMaille = {
-        id: `m-${Date.now()}`,
+        id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         dimension_fixe: lg,
-        plis: qte
+        plis: qte,
+        plisPhysique: qte,
+        plisReserve: 0
       };
-      const updated = [...chutesMaille, newMaille];
+      const updated = [...safeChutesMaille, newMaille];
       await StorageService.saveChutesMaille(updated);
     } else {
-      const existing = chutesBarres[selectedSheet] || [];
+      const existing = safeChutesBarres[selectedSheet] || [];
       const newItem: ChuteItem = {
-        id: `c-${Date.now()}`,
+        id: `c-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         longueur: lg,
-        quantite: qte
+        quantite: qte,
+        quantitePhysique: qte,
+        reserve: 0
       };
-      const updated = { ...chutesBarres, [selectedSheet]: [...existing, newItem] };
+      const updated = { ...safeChutesBarres, [selectedSheet]: [...existing, newItem] };
       await StorageService.saveChutesBarres(updated);
     }
 
@@ -543,54 +564,74 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     setSaisieChuteQte('1');
   };
 
-  const handleStartEditChute = (idOrIdx: string | number, lg: number, qte: number) => {
-    setEditingChuteId(idOrIdx);
+  const handleStartEditChute = (chuteId: string, lg: number, qte: number) => {
+    setEditingChuteId(chuteId);
     setEditChuteLongueur(String(lg));
     setEditChuteQte(String(qte));
   };
 
-  const handleSaveEditChute = async (idOrIdx: string | number) => {
+  const handleSaveEditChute = async (chuteId: string) => {
     const lg = parseFloat(editChuteLongueur);
     const qte = parseInt(editChuteQte, 10);
-    if (isNaN(lg) || lg <= 0 || isNaN(qte) || qte <= 0) {
-      alert('Dimension et Quantité doivent être positives.');
+    if (isNaN(lg) || lg <= 0 || isNaN(qte) || qte < 0) {
+      alert('Dimension et Quantité doivent être des nombres positifs.');
       return;
     }
 
-    if (selectedSheet === 'MAILLE MSTQ') {
-      const updated = chutesMaille.map((m, idx) => {
-        if (m.id === idOrIdx || idx === idOrIdx) {
-          return { ...m, dimension_fixe: lg, plis: qte };
-        }
-        return m;
-      });
-      await StorageService.saveChutesMaille(updated);
-    } else {
-      const currentList = chutesBarres[selectedSheet] || [];
-      const updated = currentList.map((c, idx) => {
-        if (c.id === idOrIdx || idx === idOrIdx) {
-          return { ...c, longueur: lg, quantite: qte };
-        }
-        return c;
-      });
-      await StorageService.saveChutesBarres({ ...chutesBarres, [selectedSheet]: updated });
-    }
+    try {
+      if (selectedSheet === 'MAILLE MSTQ') {
+        const updated = safeChutesMaille.map((m) => {
+          if (m.id === chuteId) {
+            const res = Number(m.plisReserve) || 0;
+            return {
+              ...m,
+              dimension_fixe: lg,
+              plis: qte,
+              plisPhysique: qte + res
+            };
+          }
+          return m;
+        });
+        await StorageService.saveChutesMaille(updated);
+      } else {
+        const currentList = safeChutesBarres[selectedSheet] || [];
+        const updatedList = currentList.map((c) => {
+          if (c.id === chuteId) {
+            const res = Number(c.reserve) || 0;
+            return {
+              ...c,
+              longueur: lg,
+              quantite: qte,
+              quantitePhysique: qte + res
+            };
+          }
+          return c;
+        });
+        await StorageService.saveChutesBarres({ ...safeChutesBarres, [selectedSheet]: updatedList });
+      }
 
-    onStockUpdated();
-    setEditingChuteId(null);
+      await onStockUpdated();
+      setEditingChuteId(null);
+    } catch (err: any) {
+      alert(`Erreur lors de la sauvegarde : ${err?.message || err}`);
+    }
   };
 
-  const handleSupprimerChute = async (idOrIndex: string | number) => {
-    if (selectedSheet === 'MAILLE MSTQ') {
-      const updated = chutesMaille.filter((m, idx) => m.id !== idOrIndex && idx !== idOrIndex);
-      await StorageService.saveChutesMaille(updated);
-    } else {
-      const currentList = chutesBarres[selectedSheet] || [];
-      const updatedList = currentList.filter((c, idx) => c.id !== idOrIndex && idx !== idOrIndex);
-      const updated = { ...chutesBarres, [selectedSheet]: updatedList };
-      await StorageService.saveChutesBarres(updated);
+  const handleSupprimerChute = async (chuteId: string) => {
+    if (!confirm('Êtes-vous certain de vouloir supprimer cette chute du stock ?')) return;
+    try {
+      if (selectedSheet === 'MAILLE MSTQ') {
+        const updated = safeChutesMaille.filter((m) => m.id !== chuteId);
+        await StorageService.saveChutesMaille(updated);
+      } else {
+        const currentList = safeChutesBarres[selectedSheet] || [];
+        const updatedList = currentList.filter((c) => c.id !== chuteId);
+        await StorageService.saveChutesBarres({ ...safeChutesBarres, [selectedSheet]: updatedList });
+      }
+      await onStockUpdated();
+    } catch (err: any) {
+      alert(`Erreur lors de la suppression : ${err?.message || err}`);
     }
-    onStockUpdated();
   };
 
   const filteredArticles = articles.filter(
@@ -1348,9 +1389,10 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                       </tr>
                     ) : (
                       sortedChutesMailleList.map((m, idx) => {
-                        const isEditingThis = editingChuteId === (m.id || idx);
+                        const chuteId = m.id || `m-${idx}-${m.dimension_fixe}`;
+                        const isEditingThis = editingChuteId === chuteId;
                         return (
-                          <tr key={m.id || idx} className="hover:bg-slate-800/30">
+                          <tr key={chuteId} className="hover:bg-slate-800/30">
                             <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
                             <td className="py-2 px-3 font-bold text-amber-400">
                               {isEditingThis ? (
@@ -1358,7 +1400,12 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                   type="number"
                                   value={editChuteLongueur}
                                   onChange={e => setEditChuteLongueur(e.target.value)}
-                                  className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300"
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                    if (e.key === 'Escape') setEditingChuteId(null);
+                                  }}
+                                  className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                  autoFocus
                                 />
                               ) : (
                                 `${m.dimension_fixe} mm`
@@ -1370,7 +1417,11 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                   type="number"
                                   value={editChuteQte}
                                   onChange={e => setEditChuteQte(e.target.value)}
-                                  className="bg-slate-950 border border-sky-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-sky-300 text-center"
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                    if (e.key === 'Escape') setEditingChuteId(null);
+                                  }}
+                                  className="bg-slate-950 border border-sky-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-sky-300 text-center focus:outline-none focus:ring-1 focus:ring-sky-400"
                                 />
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5 flex-wrap">
@@ -1392,16 +1443,16 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                               {isEditingThis ? (
                                 <div className="flex items-center justify-center gap-1">
                                   <button
-                                    onClick={() => handleSaveEditChute(m.id || idx)}
+                                    onClick={() => handleSaveEditChute(chuteId)}
                                     className="p-1 text-emerald-400 hover:text-emerald-300 cursor-pointer"
-                                    title="Enregistrer"
+                                    title="Enregistrer (ou Entrée)"
                                   >
                                     <Check className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     onClick={() => setEditingChuteId(null)}
                                     className="p-1 text-slate-500 hover:text-slate-300 cursor-pointer"
-                                    title="Annuler"
+                                    title="Annuler (ou Échap)"
                                   >
                                     <X className="w-3.5 h-3.5" />
                                   </button>
@@ -1409,14 +1460,14 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5">
                                   <button
-                                    onClick={() => handleStartEditChute(m.id || idx, m.dimension_fixe, m.plis)}
+                                    onClick={() => handleStartEditChute(chuteId, m.dimension_fixe, m.plis)}
                                     className="p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
                                     title="Modifier"
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
                                   </button>
                                   <button
-                                    onClick={() => handleSupprimerChute(m.id || idx)}
+                                    onClick={() => handleSupprimerChute(chuteId)}
                                     className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
                                     title="Supprimer"
                                   >
@@ -1437,9 +1488,10 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                     </tr>
                   ) : (
                     sortedChutesBarresList.map((c, idx) => {
-                      const isEditingThis = editingChuteId === (c.id || idx);
+                      const chuteId = c.id || `c-${selectedSheet}-${idx}-${c.longueur}`;
+                      const isEditingThis = editingChuteId === chuteId;
                       return (
-                        <tr key={c.id || idx} className="hover:bg-slate-800/30">
+                        <tr key={chuteId} className="hover:bg-slate-800/30">
                           <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
                           <td className="py-2 px-3 font-bold text-amber-400">
                             {isEditingThis ? (
@@ -1447,7 +1499,12 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                 type="number"
                                 value={editChuteLongueur}
                                 onChange={e => setEditChuteLongueur(e.target.value)}
-                                className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300"
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                  if (e.key === 'Escape') setEditingChuteId(null);
+                                }}
+                                className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                autoFocus
                               />
                             ) : (
                               `${c.longueur} mm`
@@ -1459,7 +1516,11 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                 type="number"
                                 value={editChuteQte}
                                 onChange={e => setEditChuteQte(e.target.value)}
-                                className="bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-emerald-300 text-center"
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                  if (e.key === 'Escape') setEditingChuteId(null);
+                                }}
+                                className="bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-emerald-300 text-center focus:outline-none focus:ring-1 focus:ring-emerald-400"
                               />
                             ) : (
                               <div className="flex items-center justify-center gap-1.5 flex-wrap">
@@ -1481,16 +1542,16 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                             {isEditingThis ? (
                               <div className="flex items-center justify-center gap-1">
                                 <button
-                                  onClick={() => handleSaveEditChute(c.id || idx)}
+                                  onClick={() => handleSaveEditChute(chuteId)}
                                   className="p-1 text-emerald-400 hover:text-emerald-300 cursor-pointer"
-                                  title="Enregistrer"
+                                  title="Enregistrer (ou Entrée)"
                                 >
                                   <Check className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setEditingChuteId(null)}
                                   className="p-1 text-slate-500 hover:text-slate-300 cursor-pointer"
-                                  title="Annuler"
+                                  title="Annuler (ou Échap)"
                                 >
                                   <X className="w-3.5 h-3.5" />
                                 </button>
@@ -1498,14 +1559,14 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                             ) : (
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
-                                  onClick={() => handleStartEditChute(c.id || idx, c.longueur, c.quantite)}
+                                  onClick={() => handleStartEditChute(chuteId, c.longueur, c.quantite)}
                                   className="p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
                                   title="Modifier"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
                                 <button
-                                  onClick={() => handleSupprimerChute(c.id || idx)}
+                                  onClick={() => handleSupprimerChute(chuteId)}
                                   className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
                                   title="Supprimer"
                                 >

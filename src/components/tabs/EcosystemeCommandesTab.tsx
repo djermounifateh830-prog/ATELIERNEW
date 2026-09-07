@@ -93,9 +93,9 @@ export interface SectionMultiArticleCaisson {
 export const getSectionFamille = (sec: SectionMultiArticleCaisson): FamilleProduit => {
   if (sec.famille) return sec.famille;
   const des = (sec.articleDesignation || '').toUpperCase();
+  if (sec.type === 'PRC' || des.includes('PRÉCADRE') || des.includes('PRECADRE') || des.includes('PRC')) return 'PRECADRE';
   if (des.includes('MOUST') || des.includes('MSTQ') || des.includes('MAILLE') || des.includes('TOILE')) return 'MOUSTIQUAIRE';
-  if (sec.type === 'CADRE') return 'MOUSTIQUAIRE';
-  if (sec.type === 'PRC' || des.includes('PRÉCADRE') || des.includes('PRECADRE')) return 'PRECADRE';
+  if (sec.type === 'CADRE') return (des.includes('PRÉCADRE') || des.includes('PRECADRE') || des.includes('PRC')) ? 'PRECADRE' : 'MOUSTIQUAIRE';
   if (sec.type === 'LF' || (sec.type === 'GL' && !des.includes('MSTQ')) || des.includes('TABLIER') || des.includes('LAME') || des.includes('VOLET')) return 'TABLIER';
   if (sec.type === 'CT' || sec.type === 'SF' || des.includes('CAISSON') || des.includes('TUNNEL') || des.includes('SOUS-FACE')) return 'CAISSON';
   return 'CAISSON';
@@ -432,6 +432,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [poidsTemps, setPoidsTemps] = useState<number>(5.0);
   const [showAllModalDetails, setShowAllModalDetails] = useState<boolean>(false);
   const [expandedModalSections, setExpandedModalSections] = useState<Record<number, boolean>>({});
+
+  // --- ÉTAT DE PROGRESSION DE L'OPTIMISATION (BARRE DE PROGRESSION & ANTI-BLOCAGE) ---
+  const [optProgress, setOptProgress] = useState<{
+    active: boolean;
+    percent: number;
+    currentTask: string;
+    sectionName: string;
+  } | null>(null);
 
   // --- ÉTATS POUR L'OPTIMISATION DÉDIÉE MOUSTIQUAIRE ---
   const [sectionsMultiMSTQ, setSectionsMultiMSTQ] = useState<SectionMultiArticleCaisson[]>([]);
@@ -2089,7 +2097,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // Traite chaque famille (Caissons & SF, Tabliers & Volets, Moustiquaires, Précadres)
   // de manière isolée et ordonnée pour éviter tout mélange de numéros ou d'articles.
   // =========================================================================
-  const handleOptimiserMultiFamillesDossier = (targetRefs?: string | string[]) => {
+  const handleOptimiserMultiFamillesDossier = async (targetRefs?: string | string[]) => {
     if (!isCommandeEnregistree) {
       showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
       return;
@@ -2126,320 +2134,387 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
     const generatedSections: SectionMultiArticleCaisson[] = [];
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 1. OPTIMISATION CAISSONS TUNNEL (CT) & SOUS-FACES ALU (SF)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (caissonsFiltres.length > 0) {
-      const refsCaissonsInvolved = Array.from(new Set(caissonsFiltres.map(c => (c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
-      const titreRefCaissons = refsCaissonsInvolved.length > 0 ? refsCaissonsInvolved.join(', ') : 'CAISSONS';
-
-      // 1.1 Caissons CT
-      const groupsCT = new Map<string, CommandeCaisson[]>();
-      for (const ligne of caissonsFiltres) {
-        const code = ligne.articleCode || caissonConfig.ctArticleCode;
-        if (!groupsCT.has(code)) groupsCT.set(code, []);
-        groupsCT.get(code)!.push(ligne);
-      }
-      groupsCT.forEach((lignesGroup, artCode) => {
-        const artObj = safeArticles.find(a => a.code_art === artCode) || articlesCT.find(a => a.code_art === artCode) || articlesCT[0];
-        const mappedSheetName = mapping[artObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarre = (ctTechParams.isDirty && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
-        const epScie = (ctTechParams.isDirty && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
-        const debord = (ctTechParams.isDirty && ctTechParams.debordement !== undefined) ? ctTechParams.debordement : (artObj?.debordement || 0);
-        const rMin = (ctTechParams.isDirty && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
-        const rMax = (ctTechParams.isDirty && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
-        const piecesToCut = lignesGroup.map(c => {
-          const cmdTag = (c.refCommande || numCommandeCaisson || '').trim();
-          return {
-            longueur: c.longueur + debord,
-            quantite: c.quantite,
-            label: `${c.repere} (${artObj?.designation || artCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: c.repere,
-            refCommande: cmdTag || 'CMD-01'
-          };
-        });
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = artObj?.code_art || artCode;
-        res.articleDesignation = artObj?.designation || 'Caisson Tunnel';
-        res.refCommande = titreRefCaissons;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        const avecPeintureCT = lignesGroup.some(c => c.avecPeinture);
-        const avecSousFaceCT = lignesGroup.some(c => c.avecSousFace);
-        const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
-
-        generatedSections.push({
-          articleCode: artObj?.code_art || artCode,
-          articleDesignation: `📦 [CAISSON TUNNEL] ${artObj?.designation || 'Caisson Tunnel'}`,
-          articleObj: artObj,
-          resultat: res,
-          type: 'CT',
-          famille: 'CAISSON',
-          commandesInvolved: refsCaissonsInvolved,
-          avecPeinture: avecPeintureCT,
-          avecSousFace: avecSousFaceCT,
-          montageSousFace: montageCT
-        });
-      });
-
-      // 1.2 Sous-Faces SF
-      const lignesAvecSF = caissonsFiltres.filter(c => c.avecSousFace);
-      const groupsSF = new Map<string, CommandeCaisson[]>();
-      for (const ligne of lignesAvecSF) {
-        const code = ligne.sfArticleCode || caissonConfig.sfArticleCode;
-        if (!groupsSF.has(code)) groupsSF.set(code, []);
-        groupsSF.get(code)!.push(ligne);
-      }
-      groupsSF.forEach((lignesGroup, sfCode) => {
-        const sfObj = safeArticles.find(a => a.code_art === sfCode) || articlesSF.find(a => a.code_art === sfCode) || articlesSF[0];
-        const mappedSheetName = mapping[sfObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarreSF = (sfTechParams.isDirty && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
-        const epScieSF = (sfTechParams.isDirty && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
-        const debordSF = (sfTechParams.isDirty && sfTechParams.debordement !== undefined) ? sfTechParams.debordement : (sfObj?.debordement || 0);
-        const rMinSF = (sfTechParams.isDirty && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
-        const rMaxSF = (sfTechParams.isDirty && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
-
-        const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
-        const titreRefSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || titreRefCaissons || 'SOUS-FACES');
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreSF, epaisseurScie: epScieSF, refusMin: rMinSF, refusMax: rMaxSF, mode: optMode, poidsTemps });
-        const piecesToCut = lignesGroup.map((c, i) => {
-          // La sous-face doit porter rigoureusement le MÊME repère que le caisson
-          const repSF = (c.repere || '').trim() || `C-${i + 1}`;
-          const cmdTag = (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim();
-          return {
-            longueur: c.longueur + debordSF,
-            quantite: c.quantite,
-            label: `${repSF} (${sfObj?.designation || sfCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: repSF,
-            refCommande: cmdTag || 'CMD-01'
-          };
-        });
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = sfObj?.code_art || sfCode;
-        res.articleDesignation = sfObj?.designation || 'Sous-Face Alu';
-        res.refCommande = titreRefSF;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        generatedSections.push({
-          articleCode: sfObj?.code_art || sfCode,
-          articleDesignation: `📐 [SOUS-FACE ALU] ${sfObj?.designation || 'Sous-Face Alu'}`,
-          articleObj: sfObj,
-          resultat: res,
-          type: 'SF',
-          famille: 'CAISSON',
-          commandesInvolved: refsSFInvolved
-        });
-      });
+    // Pré-calcul des groupes pour estimer précisément le nombre d'étapes
+    const groupsCT = new Map<string, CommandeCaisson[]>();
+    for (const ligne of caissonsFiltres) {
+      const code = ligne.articleCode || caissonConfig.ctArticleCode;
+      if (!groupsCT.has(code)) groupsCT.set(code, []);
+      groupsCT.get(code)!.push(ligne);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 2. OPTIMISATION VOLETS / TABLIERS (Lames, Lame Finale, Coulisses)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (tabliersFiltres.length > 0) {
-      const refsTabliersInvolved = Array.from(new Set(tabliersFiltres.map(t => (t.refCommande || numCommandeTablier || '').trim()).filter(Boolean)));
-      const titreRefTabliers = refsTabliersInvolved.length > 0 ? refsTabliersInvolved.join(', ') : 'TABLIERS';
-
-      // 2.1 Lames Tablier (TBL)
-      const groupsTBL = new Map<string, CommandeTablier[]>();
-      for (const ligne of tabliersFiltres) {
-        const code = ligne.articleCode || tablierConfig.articleCode;
-        if (!groupsTBL.has(code)) groupsTBL.set(code, []);
-        groupsTBL.get(code)!.push(ligne);
-      }
-      groupsTBL.forEach((lignesGroup, artCode) => {
-        const artObj = safeArticles.find(a => a.code_art === artCode) || articlesTablier.find(a => a.code_art === artCode) || articlesTablier[0];
-        const mappedSheetName = mapping[artObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarre = tblTechParams.longeur || artObj?.longeur || 6000;
-        const epScie = tblTechParams.lame || artObj?.lame || 4.0;
-        const debord = tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0);
-        const rMin = tblTechParams.refus_min ?? artObj?.refus_min ?? 250;
-        const rMax = tblTechParams.refus_max ?? artObj?.refus_max ?? 1000;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
-        const piecesToCut: any[] = [];
-        lignesGroup.forEach(c => {
-          const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
-          const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || artObj?.designation, c.hauteur_lame_tablier);
-          const nLamesPerVolet = Math.ceil(c.hauteur / hLame);
-          const totalLames = nLamesPerVolet * c.quantite;
-          const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
-
-          // Règle Volet : 43mm -> -65mm, 55mm -> -28mm. Tablier seul -> debord standard
-          const dedTablier = isAvecVolet 
-            ? (hLame === 55 ? -28 : -65) 
-            : (tblTechParams.isDirty && tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0));
-          const lenLame = c.largeur + dedTablier;
-
-          piecesToCut.push({
-            longueur: lenLame,
-            quantite: totalLames,
-            label: `${c.repere} (${totalLames} lames ${artObj?.designation || artCode}) [${lenLame}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: c.repere,
-            refCommande: cmdTag || 'CMD-01'
-          });
-        });
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = artObj?.code_art || artCode;
-        res.articleDesignation = artObj?.designation || 'Lame Tablier';
-        res.refCommande = titreRefTabliers;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        generatedSections.push({
-          articleCode: artObj?.code_art || artCode,
-          articleDesignation: `🚪 [LAME TABLIER] ${artObj?.designation || 'Lame Tablier'}`,
-          articleObj: artObj,
-          resultat: res,
-          type: 'CT',
-          famille: 'TABLIER',
-          commandesInvolved: refsTabliersInvolved
-        });
-      });
-
-      // 2.2 Lames Finales (LF)
-      const lignesAvecLF = tabliersFiltres.filter(c => c.avecLameFinale);
-      const groupsLF = new Map<string, CommandeTablier[]>();
-      for (const ligne of lignesAvecLF) {
-        const code = ligne.lfArticleCode || tablierConfig.lfArticleCode;
-        if (!groupsLF.has(code)) groupsLF.set(code, []);
-        groupsLF.get(code)!.push(ligne);
-      }
-      groupsLF.forEach((lignesGroup, lfCode) => {
-        const lfObj = safeArticles.find(a => a.code_art === lfCode) || articlesLameFinale.find(a => a.code_art === lfCode) || articlesLameFinale[0];
-        const mappedSheetName = mapping[lfObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarreLF = lfTechParams.longeur || lfObj?.longeur || 6000;
-        const epScieLF = lfTechParams.lame || lfObj?.lame || 4.0;
-        const debordLF = lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0);
-        const rMinLF = lfTechParams.refus_min ?? lfObj?.refus_min ?? 250;
-        const rMaxLF = lfTechParams.refus_max ?? lfObj?.refus_max ?? 1000;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreLF, epaisseurScie: epScieLF, refusMin: rMinLF, refusMax: rMaxLF, mode: optMode, poidsTemps });
-        const piecesToCut = lignesGroup.map(c => {
-          const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
-          const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || lfObj?.designation, c.hauteur_lame_tablier);
-          
-          // Règle Volet : LF = -65mm pour 43mm, -28mm pour 55mm. Tablier seul -> débord standard
-          const dedLF = isAvecVolet 
-            ? (hLame === 55 ? -28 : -65) 
-            : (lfTechParams.isDirty && lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0));
-          const lenLF = c.largeur + dedLF;
-          const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
-
-          return {
-            longueur: lenLF,
-            quantite: c.quantite,
-            label: `LF-${c.repere} (${lfObj?.designation || lfCode}) [${lenLF}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: `LF-${c.repere}`,
-            refCommande: cmdTag || 'CMD-01'
-          };
-        });
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = lfObj?.code_art || lfCode;
-        res.articleDesignation = lfObj?.designation || 'Lame Finale';
-        res.refCommande = titreRefTabliers;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        generatedSections.push({
-          articleCode: lfObj?.code_art || lfCode,
-          articleDesignation: `🏁 [LAME FINALE] ${lfObj?.designation || 'Lame Finale'}`,
-          articleObj: lfObj,
-          resultat: res,
-          type: 'LF',
-          famille: 'TABLIER',
-          commandesInvolved: refsTabliersInvolved
-        });
-      });
-
-      // 2.3 Coulisses (GL)
-      const lignesAvecGL = tabliersFiltres.filter(c => c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses);
-      const groupsGL = new Map<string, CommandeTablier[]>();
-      for (const ligne of lignesAvecGL) {
-        const code = ligne.glArticleCode || tablierConfig.glArticleCode;
-        if (!groupsGL.has(code)) groupsGL.set(code, []);
-        groupsGL.get(code)!.push(ligne);
-      }
-      groupsGL.forEach((lignesGroup, glCode) => {
-        const glObj = safeArticles.find(a => a.code_art === glCode) || articlesCoulisses.find(a => a.code_art === glCode) || articlesCoulisses[0];
-        const mappedSheetName = mapping[glObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarreGL = glTechParams.longeur || glObj?.longeur || 6000;
-        const epScieGL = glTechParams.lame || glObj?.lame || 4.0;
-        // Règle Volet : Hauteur des deux coulisses = Hauteur saisie dans la commande (déduction 0 mm)
-        const debordGL = (glTechParams.isDirty && glTechParams.debordement !== undefined) ? glTechParams.debordement : 0;
-        const rMinGL = glTechParams.refus_min ?? glObj?.refus_min ?? 300;
-        const rMaxGL = glTechParams.refus_max ?? glObj?.refus_max ?? 1200;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreGL, epaisseurScie: epScieGL, refusMin: rMinGL, refusMax: rMaxGL, mode: optMode, poidsTemps });
-        const piecesToCut: any[] = [];
-        lignesGroup.forEach(c => {
-          const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
-          const lenGL = c.hauteur + debordGL; // = c.hauteur (déduction 0 mm)
-          piecesToCut.push({
-            longueur: lenGL,
-            quantite: 2 * c.quantite,
-            label: `TAB-CS-${c.repere} (2 × TAB COULISSE ${glObj?.designation || glCode}) [${lenGL}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: `TAB-CS-${c.repere}`,
-            refCommande: cmdTag || 'CMD-01'
-          });
-        });
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = glObj?.code_art || glCode;
-        res.articleDesignation = glObj?.designation || 'TAB COULISSE';
-        res.refCommande = titreRefTabliers;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        generatedSections.push({
-          articleCode: glObj?.code_art || glCode,
-          articleDesignation: `📐 [TAB COULISSE] ${glObj?.designation || 'Coulisses'}`,
-          articleObj: glObj,
-          resultat: res,
-          type: 'GL',
-          famille: 'TABLIER',
-          commandesInvolved: refsTabliersInvolved
-        });
-      });
+    const lignesAvecSF = caissonsFiltres.filter(c => c.avecSousFace);
+    const groupsSF = new Map<string, CommandeCaisson[]>();
+    for (const ligne of lignesAvecSF) {
+      const code = ligne.sfArticleCode || caissonConfig.sfArticleCode;
+      if (!groupsSF.has(code)) groupsSF.set(code, []);
+      groupsSF.get(code)!.push(ligne);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 3. OPTIMISATION MOUSTIQUAIRES (Cadre, Coulisses, Barre Inf)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (mstqFiltres.length > 0) {
-      const refsMSTQInvolved = Array.from(new Set(mstqFiltres.map(m => (m.refCommande || numCommandeMoustiquaire || '').trim()).filter(Boolean)));
-      const titreRefMSTQ = refsMSTQInvolved.length > 0 ? refsMSTQInvolved.join(', ') : 'MOUSTIQUAIRES';
+    const groupsTBL = new Map<string, CommandeTablier[]>();
+    for (const ligne of tabliersFiltres) {
+      const code = ligne.articleCode || tablierConfig.articleCode;
+      if (!groupsTBL.has(code)) groupsTBL.set(code, []);
+      groupsTBL.get(code)!.push(ligne);
+    }
 
-      // 3.1 Cadres Moustiquaire
-      const lignesAvecCadre = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE');
-      if (lignesAvecCadre.length > 0) {
-        const groupsCadre = new Map<string, BesoinMoustiquaire[]>();
-        for (const ligne of lignesAvecCadre) {
-          const code = ligne.articleCodeCadre || mstqConfig.cadreArticleCode || 'ART0052';
-          if (!groupsCadre.has(code)) groupsCadre.set(code, []);
-          groupsCadre.get(code)!.push(ligne);
+    const lignesAvecLF = tabliersFiltres.filter(c => c.avecLameFinale);
+    const groupsLF = new Map<string, CommandeTablier[]>();
+    for (const ligne of lignesAvecLF) {
+      const code = ligne.lfArticleCode || tablierConfig.lfArticleCode;
+      if (!groupsLF.has(code)) groupsLF.set(code, []);
+      groupsLF.get(code)!.push(ligne);
+    }
+
+    const lignesAvecGL = tabliersFiltres.filter(c => c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses);
+    const groupsGL = new Map<string, CommandeTablier[]>();
+    for (const ligne of lignesAvecGL) {
+      const code = ligne.glArticleCode || tablierConfig.glArticleCode;
+      if (!groupsGL.has(code)) groupsGL.set(code, []);
+      groupsGL.get(code)!.push(ligne);
+    }
+
+    const lignesAvecCadre = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE');
+    const groupsCadre = new Map<string, BesoinMoustiquaire[]>();
+    if (lignesAvecCadre.length > 0) {
+      for (const ligne of lignesAvecCadre) {
+        const code = ligne.articleCodeCadre || mstqConfig.cadreArticleCode || 'ART0052';
+        if (!groupsCadre.has(code)) groupsCadre.set(code, []);
+        groupsCadre.get(code)!.push(ligne);
+      }
+    }
+
+    const lignesAvecCoulisse = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE');
+    const groupsCoulisse = new Map<string, BesoinMoustiquaire[]>();
+    if (lignesAvecCoulisse.length > 0) {
+      for (const ligne of lignesAvecCoulisse) {
+        const code = ligne.articleCodeCoulisse || mstqConfig.coulisseArticleCode || 'ART0053';
+        if (!groupsCoulisse.has(code)) groupsCoulisse.set(code, []);
+        groupsCoulisse.get(code)!.push(ligne);
+      }
+    }
+
+    const lignesAvecBI = mstqFiltres.filter(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE');
+    const groupsBI = new Map<string, BesoinMoustiquaire[]>();
+    if (lignesAvecBI.length > 0) {
+      for (const ligne of lignesAvecBI) {
+        const code = ligne.articleCodeBarreInf || mstqConfig.barreInfArticleCode || 'ART0054';
+        if (!groupsBI.has(code)) groupsBI.set(code, []);
+        groupsBI.get(code)!.push(ligne);
+      }
+    }
+
+    const groupsPRC = new Map<string, CommandePrecadre[]>();
+    for (const ligne of precadresFiltres) {
+      const code = ligne.articleCode || precadreConfig.articleCode;
+      if (!groupsPRC.has(code)) groupsPRC.set(code, []);
+      groupsPRC.get(code)!.push(ligne);
+    }
+
+    const totalSteps = groupsCT.size + groupsSF.size + groupsTBL.size + groupsLF.size + groupsGL.size +
+      groupsCadre.size + groupsCoulisse.size + groupsBI.size + groupsPRC.size;
+
+    let stepIndex = 0;
+    const notifyStep = async (label: string) => {
+      stepIndex++;
+      const percent = Math.min(95, Math.round((stepIndex / Math.max(1, totalSteps)) * 90) + 5);
+      setOptProgress({
+        active: true,
+        percent,
+        currentTask: label,
+        sectionName: `Étape ${stepIndex} / ${totalSteps}`
+      });
+      // Permet au navigateur de rafraîchir l'affichage de la barre de progression et empêche l'alerte "Attendre ou Annuler"
+      await new Promise(r => setTimeout(r, 25));
+    };
+
+    setOptProgress({
+      active: true,
+      percent: 5,
+      currentTask: 'Initialisation des algorithmes de coupe et chargement des chutes...',
+      sectionName: `Étape 0 / ${totalSteps}`
+    });
+    await new Promise(r => setTimeout(r, 40));
+
+    try {
+      // ─────────────────────────────────────────────────────────────────────────
+      // 1. OPTIMISATION CAISSONS TUNNEL (CT) & SOUS-FACES ALU (SF)
+      // ─────────────────────────────────────────────────────────────────────────
+      if (caissonsFiltres.length > 0) {
+        const refsCaissonsInvolved = Array.from(new Set(caissonsFiltres.map(c => (c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
+        const titreRefCaissons = refsCaissonsInvolved.length > 0 ? refsCaissonsInvolved.join(', ') : 'CAISSONS';
+
+        // 1.1 Caissons CT
+        for (const [artCode, lignesGroup] of groupsCT.entries()) {
+          const artObj = safeArticles.find(a => a.code_art === artCode) || articlesCT.find(a => a.code_art === artCode) || articlesCT[0];
+          await notifyStep(`Caisson Tunnel : ${artObj?.designation || artCode}`);
+
+          const mappedSheetName = mapping[artObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarre = (ctTechParams.isDirty && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
+          const epScie = (ctTechParams.isDirty && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
+          const debord = (ctTechParams.isDirty && ctTechParams.debordement !== undefined) ? ctTechParams.debordement : (artObj?.debordement || 0);
+          const rMin = (ctTechParams.isDirty && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
+          const rMax = (ctTechParams.isDirty && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const piecesToCut = lignesGroup.map(c => {
+            const cmdTag = (c.refCommande || numCommandeCaisson || '').trim();
+            return {
+              longueur: c.longueur + debord,
+              quantite: c.quantite,
+              label: `${c.repere} (${artObj?.designation || artCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+              repere: c.repere,
+              refCommande: cmdTag || 'CMD-01'
+            };
+          });
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = artObj?.code_art || artCode;
+          res.articleDesignation = artObj?.designation || 'Caisson Tunnel';
+          res.refCommande = titreRefCaissons;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          const avecPeintureCT = lignesGroup.some(c => c.avecPeinture);
+          const avecSousFaceCT = lignesGroup.some(c => c.avecSousFace);
+          const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
+
+          generatedSections.push({
+            articleCode: artObj?.code_art || artCode,
+            articleDesignation: `📦 [CAISSON TUNNEL] ${artObj?.designation || 'Caisson Tunnel'}`,
+            articleObj: artObj,
+            resultat: res,
+            type: 'CT',
+            famille: 'CAISSON',
+            commandesInvolved: refsCaissonsInvolved,
+            avecPeinture: avecPeintureCT,
+            avecSousFace: avecSousFaceCT,
+            montageSousFace: montageCT
+          });
         }
-        groupsCadre.forEach((lignesGroup, cadreCode) => {
+
+        // 1.2 Sous-Faces SF
+        for (const [sfCode, lignesGroup] of groupsSF.entries()) {
+          const sfObj = safeArticles.find(a => a.code_art === sfCode) || articlesSF.find(a => a.code_art === sfCode) || articlesSF[0];
+          await notifyStep(`Sous-Face Alu : ${sfObj?.designation || sfCode}`);
+
+          const mappedSheetName = mapping[sfObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarreSF = (sfTechParams.isDirty && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
+          const epScieSF = (sfTechParams.isDirty && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
+          const debordSF = (sfTechParams.isDirty && sfTechParams.debordement !== undefined) ? sfTechParams.debordement : (sfObj?.debordement || 0);
+          const rMinSF = (sfTechParams.isDirty && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
+          const rMaxSF = (sfTechParams.isDirty && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
+
+          const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
+          const titreRefSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || titreRefCaissons || 'SOUS-FACES');
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreSF, epaisseurScie: epScieSF, refusMin: rMinSF, refusMax: rMaxSF, mode: optMode, poidsTemps });
+          const piecesToCut = lignesGroup.map((c, i) => {
+            const repSF = (c.repere || '').trim() || `C-${i + 1}`;
+            const cmdTag = (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim();
+            return {
+              longueur: c.longueur + debordSF,
+              quantite: c.quantite,
+              label: `${repSF} (${sfObj?.designation || sfCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+              repere: repSF,
+              refCommande: cmdTag || 'CMD-01'
+            };
+          });
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = sfObj?.code_art || sfCode;
+          res.articleDesignation = sfObj?.designation || 'Sous-Face Alu';
+          res.refCommande = titreRefSF;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          generatedSections.push({
+            articleCode: sfObj?.code_art || sfCode,
+            articleDesignation: `📐 [SOUS-FACE ALU] ${sfObj?.designation || 'Sous-Face Alu'}`,
+            articleObj: sfObj,
+            resultat: res,
+            type: 'SF',
+            famille: 'CAISSON',
+            commandesInvolved: refsSFInvolved
+          });
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // 2. OPTIMISATION VOLETS / TABLIERS (Lames, Lame Finale, Coulisses)
+      // ─────────────────────────────────────────────────────────────────────────
+      if (tabliersFiltres.length > 0) {
+        const refsTabliersInvolved = Array.from(new Set(tabliersFiltres.map(t => (t.refCommande || numCommandeTablier || '').trim()).filter(Boolean)));
+        const titreRefTabliers = refsTabliersInvolved.length > 0 ? refsTabliersInvolved.join(', ') : 'TABLIERS';
+
+        // 2.1 Lames Tablier (TBL)
+        for (const [artCode, lignesGroup] of groupsTBL.entries()) {
+          const artObj = safeArticles.find(a => a.code_art === artCode) || articlesTablier.find(a => a.code_art === artCode) || articlesTablier[0];
+          await notifyStep(`Lames Tablier : ${artObj?.designation || artCode}`);
+
+          const mappedSheetName = mapping[artObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarre = tblTechParams.longeur || artObj?.longeur || 6000;
+          const epScie = tblTechParams.lame || artObj?.lame || 4.0;
+          const debord = tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0);
+          const rMin = tblTechParams.refus_min ?? artObj?.refus_min ?? 250;
+          const rMax = tblTechParams.refus_max ?? artObj?.refus_max ?? 1000;
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const piecesToCut: any[] = [];
+          lignesGroup.forEach(c => {
+            const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
+            const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || artObj?.designation, c.hauteur_lame_tablier);
+            const nLamesPerVolet = Math.ceil(c.hauteur / hLame);
+            const totalLames = nLamesPerVolet * c.quantite;
+            const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
+
+            const dedTablier = isAvecVolet 
+              ? (hLame === 55 ? -28 : -65) 
+              : (tblTechParams.isDirty && tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0));
+            const lenLame = c.largeur + dedTablier;
+
+            piecesToCut.push({
+              longueur: lenLame,
+              quantite: totalLames,
+              label: `${c.repere} (${totalLames} lames ${artObj?.designation || artCode}) [${lenLame}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+              repere: c.repere,
+              refCommande: cmdTag || 'CMD-01'
+            });
+          });
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = artObj?.code_art || artCode;
+          res.articleDesignation = artObj?.designation || 'Lame Tablier';
+          res.refCommande = titreRefTabliers;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          generatedSections.push({
+            articleCode: artObj?.code_art || artCode,
+            articleDesignation: `🚪 [LAME TABLIER] ${artObj?.designation || 'Lame Tablier'}`,
+            articleObj: artObj,
+            resultat: res,
+            type: 'CT',
+            famille: 'TABLIER',
+            commandesInvolved: refsTabliersInvolved
+          });
+        }
+
+        // 2.2 Lames Finales (LF)
+        for (const [lfCode, lignesGroup] of groupsLF.entries()) {
+          const lfObj = safeArticles.find(a => a.code_art === lfCode) || articlesLameFinale.find(a => a.code_art === lfCode) || articlesLameFinale[0];
+          await notifyStep(`Lame Finale : ${lfObj?.designation || lfCode}`);
+
+          const mappedSheetName = mapping[lfObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarreLF = lfTechParams.longeur || lfObj?.longeur || 6000;
+          const epScieLF = lfTechParams.lame || lfObj?.lame || 4.0;
+          const debordLF = lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0);
+          const rMinLF = lfTechParams.refus_min ?? lfObj?.refus_min ?? 250;
+          const rMaxLF = lfTechParams.refus_max ?? lfObj?.refus_max ?? 1000;
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreLF, epaisseurScie: epScieLF, refusMin: rMinLF, refusMax: rMaxLF, mode: optMode, poidsTemps });
+          const piecesToCut = lignesGroup.map(c => {
+            const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
+            const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || lfObj?.designation, c.hauteur_lame_tablier);
+            const dedLF = isAvecVolet 
+              ? (hLame === 55 ? -28 : -65) 
+              : (lfTechParams.isDirty && lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0));
+            const lenLF = c.largeur + dedLF;
+            const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
+
+            return {
+              longueur: lenLF,
+              quantite: c.quantite,
+              label: `LF-${c.repere} (${lfObj?.designation || lfCode}) [${lenLF}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+              repere: `LF-${c.repere}`,
+              refCommande: cmdTag || 'CMD-01'
+            };
+          });
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = lfObj?.code_art || lfCode;
+          res.articleDesignation = lfObj?.designation || 'Lame Finale';
+          res.refCommande = titreRefTabliers;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          generatedSections.push({
+            articleCode: lfObj?.code_art || lfCode,
+            articleDesignation: `🏁 [LAME FINALE] ${lfObj?.designation || 'Lame Finale'}`,
+            articleObj: lfObj,
+            resultat: res,
+            type: 'LF',
+            famille: 'TABLIER',
+            commandesInvolved: refsTabliersInvolved
+          });
+        }
+
+        // 2.3 Coulisses (GL)
+        for (const [glCode, lignesGroup] of groupsGL.entries()) {
+          const glObj = safeArticles.find(a => a.code_art === glCode) || articlesCoulisses.find(a => a.code_art === glCode) || articlesCoulisses[0];
+          await notifyStep(`Coulisses Volet : ${glObj?.designation || glCode}`);
+
+          const mappedSheetName = mapping[glObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarreGL = glTechParams.longeur || glObj?.longeur || 6000;
+          const epScieGL = glTechParams.lame || glObj?.lame || 4.0;
+          const debordGL = (glTechParams.isDirty && glTechParams.debordement !== undefined) ? glTechParams.debordement : 0;
+          const rMinGL = glTechParams.refus_min ?? glObj?.refus_min ?? 300;
+          const rMaxGL = glTechParams.refus_max ?? glObj?.refus_max ?? 1200;
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreGL, epaisseurScie: epScieGL, refusMin: rMinGL, refusMax: rMaxGL, mode: optMode, poidsTemps });
+          const piecesToCut: any[] = [];
+          lignesGroup.forEach(c => {
+            const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
+            const lenGL = c.hauteur + debordGL;
+            piecesToCut.push({
+              longueur: lenGL,
+              quantite: 2 * c.quantite,
+              label: `TAB-CS-${c.repere} (2 × TAB COULISSE ${glObj?.designation || glCode}) [${lenGL}mm]${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+              repere: `TAB-CS-${c.repere}`,
+              refCommande: cmdTag || 'CMD-01'
+            });
+          });
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = glObj?.code_art || glCode;
+          res.articleDesignation = glObj?.designation || 'TAB COULISSE';
+          res.refCommande = titreRefTabliers;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          generatedSections.push({
+            articleCode: glObj?.code_art || glCode,
+            articleDesignation: `📐 [TAB COULISSE] ${glObj?.designation || 'Coulisses'}`,
+            articleObj: glObj,
+            resultat: res,
+            type: 'GL',
+            famille: 'TABLIER',
+            commandesInvolved: refsTabliersInvolved
+          });
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // 3. OPTIMISATION MOUSTIQUAIRES (Cadre, Coulisses, Barre Inf)
+      // ─────────────────────────────────────────────────────────────────────────
+      if (mstqFiltres.length > 0) {
+        const refsMSTQInvolved = Array.from(new Set(mstqFiltres.map(m => (m.refCommande || numCommandeMoustiquaire || '').trim()).filter(Boolean)));
+        const titreRefMSTQ = refsMSTQInvolved.length > 0 ? refsMSTQInvolved.join(', ') : 'MOUSTIQUAIRES';
+
+        // 3.1 Cadres Moustiquaire
+        for (const [cadreCode, lignesGroup] of groupsCadre.entries()) {
           const cadreObj = safeArticles.find(a => a.code_art === cadreCode) || articlesCadreMSTQ[0];
-          if (!cadreObj) return;
+          if (!cadreObj) continue;
+          await notifyStep(`Cadre Moustiquaire : ${cadreObj.designation}`);
+
           const mappedSheet = mapping[cadreObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
           const longBarre = mstqCadreTechParams.longeur || cadreObj.longeur || 6000;
           const epScie = mstqCadreTechParams.lame || cadreObj.lame || 4.0;
-          const ded = mstqCadreTechParams.debordement ?? cadreObj.debordement ?? -62;
           const rMin = mstqCadreTechParams.refus_min || cadreObj.refus_min || 350;
           const rMax = mstqCadreTechParams.refus_max || cadreObj.refus_max || 1200;
 
@@ -2453,9 +2528,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             const lenH = m.hauteur + dedH;
             const lenL = m.largeur + dedL;
             pieces.push({ longueur: lenH, quantite: 2 * Q, label: `CD-${m.repere} (Montant ${lenH}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Ha-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
-            // Traverse haute
             pieces.push({ longueur: lenL, quantite: 1 * Q, label: `CD-${m.repere} (Traverse Haute ${lenL}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `La-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
-            // Traverse basse : seulement si sans barre inférieure
             if (!m.avecBarreInferieure) {
               pieces.push({ longueur: lenL, quantite: 1 * Q, label: `CD-${m.repere} (Traverse Basse ${lenL}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Lb-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
             }
@@ -2477,21 +2550,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             famille: 'MOUSTIQUAIRE',
             commandesInvolved: refsMSTQInvolved
           });
-        });
-      }
-
-      // 3.2 Coulisses Moustiquaire
-      const lignesAvecCoulisse = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE');
-      if (lignesAvecCoulisse.length > 0) {
-        const groupsCoulisse = new Map<string, BesoinMoustiquaire[]>();
-        for (const ligne of lignesAvecCoulisse) {
-          const code = ligne.articleCodeCoulisse || mstqConfig.coulisseArticleCode || 'ART0053';
-          if (!groupsCoulisse.has(code)) groupsCoulisse.set(code, []);
-          groupsCoulisse.get(code)!.push(ligne);
         }
-        groupsCoulisse.forEach((lignesGroup, coulisseCode) => {
+
+        // 3.2 Coulisses Moustiquaire
+        for (const [coulisseCode, lignesGroup] of groupsCoulisse.entries()) {
           const coulisseObj = safeArticles.find(a => a.code_art === coulisseCode) || articlesCoulisseMSTQ[0];
-          if (!coulisseObj) return;
+          if (!coulisseObj) continue;
+          await notifyStep(`Coulisses Moustiquaire : ${coulisseObj.designation}`);
+
           const mappedSheet = mapping[coulisseObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
           const longBarre = mstqCoulisseTechParams.longeur || coulisseObj.longeur || 6000;
@@ -2529,21 +2595,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             famille: 'MOUSTIQUAIRE',
             commandesInvolved: refsMSTQInvolved
           });
-        });
-      }
-
-      // 3.3 Barres Inférieures Moustiquaire
-      const lignesAvecBI = mstqFiltres.filter(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE');
-      if (lignesAvecBI.length > 0) {
-        const groupsBI = new Map<string, BesoinMoustiquaire[]>();
-        for (const ligne of lignesAvecBI) {
-          const code = ligne.articleCodeBarreInf || mstqConfig.barreInfArticleCode || 'ART0054';
-          if (!groupsBI.has(code)) groupsBI.set(code, []);
-          groupsBI.get(code)!.push(ligne);
         }
-        groupsBI.forEach((lignesGroup, biCode) => {
+
+        // 3.3 Barres Inférieures Moustiquaire
+        for (const [biCode, lignesGroup] of groupsBI.entries()) {
           const biObj = safeArticles.find(a => a.code_art === biCode) || articlesBarreInfMSTQ[0];
-          if (!biObj) return;
+          if (!biObj) continue;
+          await notifyStep(`Barre Inf Moustiquaire : ${biObj.designation}`);
+
           const mappedSheet = mapping[biObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
           const longBarre = mstqBarreInfTechParams.longeur || biObj.longeur || 6000;
@@ -2577,85 +2636,93 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             famille: 'MOUSTIQUAIRE',
             commandesInvolved: refsMSTQInvolved
           });
-        });
+        }
       }
-    }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 4. OPTIMISATION PRÉCADRES (Profils, Renforts, Traverses, Montants)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (precadresFiltres.length > 0) {
-      const refsPRCInvolved = Array.from(new Set(precadresFiltres.map(p => (p.refCommande || numCommandePrecadre || '').trim()).filter(Boolean)));
-      const titreRefPRC = refsPRCInvolved.length > 0 ? refsPRCInvolved.join(', ') : 'PRÉCADRES';
+      // ─────────────────────────────────────────────────────────────────────────
+      // 4. OPTIMISATION PRÉCADRES (Profils, Renforts, Traverses, Montants)
+      // ─────────────────────────────────────────────────────────────────────────
+      if (precadresFiltres.length > 0) {
+        const refsPRCInvolved = Array.from(new Set(precadresFiltres.map(p => (p.refCommande || numCommandePrecadre || '').trim()).filter(Boolean)));
+        const titreRefPRC = refsPRCInvolved.length > 0 ? refsPRCInvolved.join(', ') : 'PRÉCADRES';
 
-      const groupsPRC = new Map<string, CommandePrecadre[]>();
-      for (const ligne of precadresFiltres) {
-        const code = ligne.articleCode || precadreConfig.articleCode;
-        if (!groupsPRC.has(code)) groupsPRC.set(code, []);
-        groupsPRC.get(code)!.push(ligne);
+        for (const [artCode, lignesGroup] of groupsPRC.entries()) {
+          const artObj = safeArticles.find(a => a.code_art === artCode) || articlesPrecadre.find(a => a.code_art === artCode) || articlesPrecadre[0];
+          await notifyStep(`Précadre : ${artObj?.designation || artCode}`);
+
+          const mappedSheetName = mapping[artObj?.code_art || ''] || null;
+          const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+          const longBarre = prcTechParams.longeur || artObj?.longeur || 6000;
+          const epScie = prcTechParams.lame || artObj?.lame || 4.0;
+          const rMin = prcTechParams.refus_min || artObj?.refus_min || 300;
+          const rMax = prcTechParams.refus_max || artObj?.refus_max || 1200;
+
+          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const piecesToCut: any[] = [];
+          lignesGroup.forEach(c => {
+            const debSup = c.debordementSuperieur !== undefined ? c.debordementSuperieur : 100;
+            const debInf = c.debordementInferieur !== undefined ? c.debordementInferieur : 300;
+
+            const { hMontant, lTraverse, lRenfortSeul, lDemiRenfortCroise, hRenfort } = getDimensionsPrecadrePiece(
+              c.largeur,
+              c.hauteur,
+              c.modeDebordement,
+              debSup,
+              debInf
+            );
+
+            const cmdTag = (c.refCommande || numCommandePrecadre || '').trim();
+            piecesToCut.push({ longueur: hMontant, quantite: 1 * c.quantite, label: `Ha-${c.repere} (Montant A — ${hMontant}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Ha-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            piecesToCut.push({ longueur: hMontant, quantite: 1 * c.quantite, label: `Hb-${c.repere} (Montant B — ${hMontant}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Hb-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            piecesToCut.push({ longueur: lTraverse, quantite: 1 * c.quantite, label: `La-${c.repere} (Traverse Haute — ${lTraverse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `La-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            piecesToCut.push({ longueur: lTraverse, quantite: 1 * c.quantite, label: `Lb-${c.repere} (Traverse Basse — ${lTraverse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Lb-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+
+            if (c.figure === 'RENFORT_L1') {
+              piecesToCut.push({ longueur: lRenfortSeul, quantite: 1 * c.quantite, label: `L1-${c.repere} (Renfort Horizontal — ${lRenfortSeul}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            } else if (c.figure === 'RENFORT_CROISE') {
+              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L1-${c.repere} (Demi-Renfort 1 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L2-${c.repere} (Demi-Renfort 2 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L2-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+              piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            } else if (c.figure === 'RENFORT_H1') {
+              piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+            }
+          });
+
+          const res = opt.optimiser(piecesToCut, availableChutes);
+          res.articleCode = artObj?.code_art || artCode;
+          res.articleDesignation = artObj?.designation || 'Précadre';
+          res.refCommande = titreRefPRC;
+          res.nomClient = clientDeMonClient.trim() || 'CLIENT';
+          res.donneurOrdre = monClient;
+          res.dateCommande = dateCommande;
+
+          generatedSections.push({
+            articleCode: artObj?.code_art || artCode,
+            articleDesignation: `🔲 [PRÉCADRE] ${artObj?.designation || 'Précadre'}`,
+            articleObj: artObj,
+            resultat: res,
+            type: 'PRC',
+            famille: 'PRECADRE',
+            commandesInvolved: refsPRCInvolved
+          });
+        }
       }
-      groupsPRC.forEach((lignesGroup, artCode) => {
-        const artObj = safeArticles.find(a => a.code_art === artCode) || articlesPrecadre.find(a => a.code_art === artCode) || articlesPrecadre[0];
-        const mappedSheetName = mapping[artObj?.code_art || ''] || null;
-        const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-        const longBarre = prcTechParams.longeur || artObj?.longeur || 6000;
-        const epScie = prcTechParams.lame || artObj?.lame || 4.0;
-        const rMin = prcTechParams.refus_min || artObj?.refus_min || 300;
-        const rMax = prcTechParams.refus_max || artObj?.refus_max || 1200;
 
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
-        const piecesToCut: any[] = [];
-        lignesGroup.forEach(c => {
-          const debSup = c.debordementSuperieur !== undefined ? c.debordementSuperieur : 100;
-          const debInf = c.debordementInferieur !== undefined ? c.debordementInferieur : 300;
-
-          const { hMontant, lTraverse, lRenfortSeul, lDemiRenfortCroise, hRenfort } = getDimensionsPrecadrePiece(
-            c.largeur,
-            c.hauteur,
-            c.modeDebordement,
-            debSup,
-            debInf
-          );
-
-          const cmdTag = (c.refCommande || numCommandePrecadre || '').trim();
-          piecesToCut.push({ longueur: hMontant, quantite: 1 * c.quantite, label: `Ha-${c.repere} (Montant A — ${hMontant}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Ha-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          piecesToCut.push({ longueur: hMontant, quantite: 1 * c.quantite, label: `Hb-${c.repere} (Montant B — ${hMontant}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Hb-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          piecesToCut.push({ longueur: lTraverse, quantite: 1 * c.quantite, label: `La-${c.repere} (Traverse Haute — ${lTraverse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `La-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          piecesToCut.push({ longueur: lTraverse, quantite: 1 * c.quantite, label: `Lb-${c.repere} (Traverse Basse — ${lTraverse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Lb-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-
-          if (c.figure === 'RENFORT_L1') {
-            piecesToCut.push({ longueur: lRenfortSeul, quantite: 1 * c.quantite, label: `L1-${c.repere} (Renfort Horizontal — ${lRenfortSeul}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          } else if (c.figure === 'RENFORT_CROISE') {
-            piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L1-${c.repere} (Demi-Renfort 1 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-            piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L2-${c.repere} (Demi-Renfort 2 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L2-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-            piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          } else if (c.figure === 'RENFORT_H1') {
-            piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-          }
-        });
-
-        const res = opt.optimiser(piecesToCut, availableChutes);
-        res.articleCode = artObj?.code_art || artCode;
-        res.articleDesignation = artObj?.designation || 'Précadre';
-        res.refCommande = titreRefPRC;
-        res.nomClient = clientDeMonClient.trim() || 'CLIENT';
-        res.donneurOrdre = monClient;
-        res.dateCommande = dateCommande;
-
-        generatedSections.push({
-          articleCode: artObj?.code_art || artCode,
-          articleDesignation: `🔲 [PRÉCADRE] ${artObj?.designation || 'Précadre'}`,
-          articleObj: artObj,
-          resultat: res,
-          type: 'PRC',
-          famille: 'PRECADRE',
-          commandesInvolved: refsPRCInvolved
-        });
+      setOptProgress({
+        active: true,
+        percent: 100,
+        currentTask: 'Finalisation des plans de coupe et synthèse globale...',
+        sectionName: 'Succès'
       });
+      await new Promise(r => setTimeout(r, 150));
+      setSectionsMultiCaisson(generatedSections);
+      setModalDebitCaissonOpen(true);
+    } catch (err) {
+      logger.error('Erreur lors de l’optimisation multi-familles :', err);
+      showFlashNotification('Une erreur est survenue pendant l’optimisation.', 'warn');
+    } finally {
+      setOptProgress(null);
     }
-
-    setSectionsMultiCaisson(generatedSections);
-    setModalDebitCaissonOpen(true);
   };
 
   const handleOptimiserSelectionCommandesDossier = () => {
@@ -3331,6 +3398,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       setInputH('');
       setInputRepere('');
     }
+
+    // Toujours réinitialiser la quantité à 1 lors de l'ajout d'une ligne
+    setInputQte('1');
 
     setTimeout(() => {
       if (inputRepereRef.current) {
@@ -7341,6 +7411,43 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           )}
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* 6.9 MODAL BARRE DE PROGRESSION DE L'OPTIMISATION (ANTI-BLOCAGE) */}
+      {/* ========================================================================= */}
+      {optProgress && optProgress.active && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border border-emerald-500/40 rounded-2xl w-full max-w-lg p-6 shadow-2xl flex flex-col items-center text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 animate-pulse">
+              <Scissors className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1.5 w-full">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <span className="text-emerald-400 font-bold">{optProgress.sectionName}</span>
+                <span className="font-mono text-emerald-400">{optProgress.percent}%</span>
+              </div>
+
+              {/* Barre de progression fluide */}
+              <div className="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden border border-slate-700/60 p-0.5">
+                <div
+                  className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-300 ease-out shadow-sm shadow-emerald-500/50"
+                  style={{ width: `${optProgress.percent}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-slate-200">
+                {optProgress.currentTask}
+              </p>
+              <p className="text-xs text-slate-400">
+                Veuillez patienter pendant l'optimisation des coupes et le réemploi des chutes...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 7. MODAL D'OPTIMISATION DE DÉCOUPE PAR FAMILLE DE PRODUIT (NON MÉLANGÉE) */}

@@ -86,7 +86,7 @@ export class OptimiseurCoupe1D {
     }
     this.mode = options.mode || 'matiere';
     this.poidsTemps = Number.isFinite(Number(options.poidsTemps)) && Number(options.poidsTemps) >= 0 ? Number(options.poidsTemps) : 5.0;
-    this.iterations = Number.isFinite(Number(options.iterations)) && Number(options.iterations) >= 0 ? Math.floor(Number(options.iterations)) : 3500;
+    this.iterations = Number.isFinite(Number(options.iterations)) && Number(options.iterations) >= 0 ? Math.floor(Number(options.iterations)) : 800;
     this.eboutage = Number.isFinite(Number(options.eboutage)) && Number(options.eboutage) >= 0 ? Number(options.eboutage) : 0;
   }
 
@@ -140,8 +140,8 @@ export class OptimiseurCoupe1D {
     let bestUtilise = -1;
 
     let count = 0;
-    // Augmenter la profondeur d'exploration pour trouver les combinaisons intelligentes
-    const maxNodes = Math.min(35000, 1500 + pool.length * 250);
+    // Profondeur d'exploration calibrée pour une recherche ultra-rapide sans bloquer le thread principal
+    const maxNodes = Math.min(8000, 1000 + pool.length * 80);
 
     const backtrack = (idx: number, currentList: PieceItem[], currentUtilise: number) => {
       count++;

@@ -210,6 +210,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
     setTabliers([...tabliers, newTablier]);
     setSaisieLargeur('');
     setSaisieHauteur('');
+    setSaisieQte('1');
     
     // Auto-génération intelligente du prochain repère (ex: SB-3 -> SB-4)
     if (autoRepere.includes('-')) {
