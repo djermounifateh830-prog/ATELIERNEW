@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  
+  code, kbd, samp, pre {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  body.of-modal-open #root {
+    display: none !important;
+  }
+  body.of-modal-open {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+  header, nav, button, footer, .print\:hidden {
+    display: none !important;
+  }
+  .page-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+}

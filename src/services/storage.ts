@@ -1,0 +1,911 @@
+import * as XLSX from 'xlsx';
+import {
+  Article,
+  ChuteItem,
+  ChuteMaille,
+  MappingChutes,
+  DossierCommandeGlobal,
+  SuiviOF,
+  MouvementStock,
+  ClientCodification,
+  FicheTransfert
+} from '../types';
+import {
+  INITIAL_ARTICLES,
+  INITIAL_CHUTES_STOCK,
+  INITIAL_MAILLE_CHUTES,
+  INITIAL_MAPPING
+} from '../data/initialData';
+import { INITIAL_CLIENT_CODIFICATIONS } from '../data/initialCodifications';
+import { logger } from './logger';
+
+
+// =========================================================================
+// SQLite est l'unique source de vérité.
+// Traçabilité complète de toutes les opérations via SystemLogger.
+// =========================================================================
+
+export class StorageService {
+  private static async request(url: string, init?: RequestInit): Promise<Response> {
+    const startTime = performance.now();
+    try {
+      const response = await fetch(url, init);
+      const elapsedMs = Math.round(performance.now() - startTime);
+
+      if (!response.ok) {
+        let message = `Erreur HTTP ${response.status}`;
+        let details: any = null;
+        try {
+          const body = await response.json();
+          if (body?.error) message = body.error;
+          details = body;
+        } catch {
+          // Non JSON
+        }
+        logger.error('SQLite', `Échec requête [${init?.method || 'GET'}] ${url} (${response.status}) en ${elapsedMs}ms`, {
+          status: response.status,
+          message,
+          details
+        });
+        throw new Error(message);
+      }
+      return response;
+    } catch (err: any) {
+      const elapsedMs = Math.round(performance.now() - startTime);
+      if (!err.message?.startsWith('Erreur HTTP')) {
+        logger.error('Network', `Erreur réseau ou timeout sur [${init?.method || 'GET'}] ${url} en ${elapsedMs}ms`, {
+          error: err.message || String(err)
+        });
+      }
+      throw err;
+    }
+  }
+
+  // =========================================================================
+  // INITIALISATION : Charge TOUT depuis SQLite
+  // =========================================================================
+
+  static async initSqlite(): Promise<{
+    articles: Article[];
+    chutesBarres: Record<string, ChuteItem[]>;
+    chutesMaille: ChuteMaille[];
+    mapping: MappingChutes;
+    dossiers: DossierCommandeGlobal[];
+    suivisOF: SuiviOF[];
+    mouvements: MouvementStock[];
+    clientCodifications: ClientCodification[];
+    fichesTransfert: FicheTransfert[];
+  }> {
+    const maxRetries = 3;
+    let lastError: any = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const startTime = performance.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          controller.abort(new Error('Délai d\'attente dépassé pour la connexion SQLite (15s)'));
+        }, 15000);
+        const res = await fetch('/api/data', { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) {
+            const d = json.data;
+            const elapsedMs = Math.round(performance.now() - startTime);
+            console.log('📦 [SQLite] Connecté — Source unique de vérité.');
+            logger.sqlite('Init DB', `Connecté en ${elapsedMs}ms — ${d.articles?.length || 0} articles, ${Object.keys(d.chutesBarres || {}).length} familles de chutes, ${d.dossiers?.length || 0} dossiers, ${d.suivisOF?.length || 0} suivis OF, ${d.clientCodifications?.length || 0} codifications clients, ${d.fichesTransfert?.length || 0} fiches de transfert.`, {
+              articlesCount: d.articles?.length || 0,
+              chutesFamiliesCount: Object.keys(d.chutesBarres || {}).length,
+              dossiersCount: d.dossiers?.length || 0,
+              suivisOFCount: d.suivisOF?.length || 0,
+              mouvementsCount: d.mouvements?.length || 0,
+              codificationsCount: d.clientCodifications?.length || 0,
+              fichesTransfertCount: d.fichesTransfert?.length || 0
+            });
+
+            return {
+              articles: Array.isArray(d.articles) ? d.articles : [],
+              chutesBarres: (d.chutesBarres && typeof d.chutesBarres === 'object') ? d.chutesBarres : {},
+              chutesMaille: Array.isArray(d.chutesMaille) ? d.chutesMaille : [],
+              mapping: (d.mapping && typeof d.mapping === 'object') ? d.mapping : {},
+              dossiers: Array.isArray(d.dossiers) ? d.dossiers : [],
+              suivisOF: Array.isArray(d.suivisOF) ? d.suivisOF : [],
+              mouvements: Array.isArray(d.mouvements) ? d.mouvements : [],
+              clientCodifications: Array.isArray(d.clientCodifications) && d.clientCodifications.length > 0 ? d.clientCodifications : INITIAL_CLIENT_CODIFICATIONS,
+              fichesTransfert: Array.isArray(d.fichesTransfert) ? d.fichesTransfert : []
+            };
+          }
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[StorageService] Tentative ${attempt}/${maxRetries} pour connexion SQLite:`, err?.message || err);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 800 * attempt));
+        }
+      }
+    }
+
+    console.error('[StorageService] Erreur connexion SQLite après tentatives:', lastError);
+    logger.warn('Init DB', 'Serveur SQLite non joignable ou en attente d\'initialisation.', { error: lastError?.message });
+    return {
+      articles: INITIAL_ARTICLES,
+      chutesBarres: INITIAL_CHUTES_STOCK,
+      chutesMaille: INITIAL_MAILLE_CHUTES,
+      mapping: INITIAL_MAPPING,
+      dossiers: [],
+      suivisOF: [],
+      mouvements: [],
+      clientCodifications: INITIAL_CLIENT_CODIFICATIONS,
+      fichesTransfert: []
+    };
+  }
+
+
+  static downloadSqliteDb(): void {
+    logger.action('SQLite', 'Téléchargement de la base SQLite 3m_atelier.db demandé par l\'utilisateur.');
+    window.open('/api/db/download', '_blank');
+  }
+
+  // =========================================================================
+  // DOSSIERS
+  // =========================================================================
+
+  static async getDossiers(): Promise<DossierCommandeGlobal[]> {
+    try {
+      const res = await this.request('/api/dossiers');
+      const json = await res.json();
+      return Array.isArray(json.data) ? json.data : [];
+    } catch (e: any) {
+      console.error('Erreur chargement dossiers:', e);
+      return [];
+    }
+  }
+
+  static async saveDossiers(dossiers: DossierCommandeGlobal[]): Promise<void> {
+    try {
+      await this.request('/api/dossiers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dossiers)
+      });
+      logger.sqlite('Dossiers', `${dossiers.length} dossier(s) sauvegardé(s) en SQLite.`, {
+        count: dossiers.length,
+        dossierRefs: dossiers.slice(0, 5).map(d => d.refCommande)
+      });
+    } catch (e: any) {
+      console.error('Erreur sauvegarde dossiers:', e);
+      logger.error('Dossiers', 'Erreur lors de la sauvegarde globale des dossiers en SQLite.', { error: e.message });
+      throw e;
+    }
+  }
+
+  static async upsertDossier(dossier: DossierCommandeGlobal): Promise<void> {
+    try {
+      await this.request('/api/dossiers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dossier)
+      });
+    } catch (e: any) {
+      console.error('Erreur mise à jour dossier:', e);
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // ARTICLES
+  // =========================================================================
+
+  static async saveArticles(articles: Article[]): Promise<void> {
+    try {
+      await this.request('/api/articles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(articles)
+      });
+      logger.sqlite('Articles', `${articles.length} article(s) sauvegardé(s) en SQLite.`, {
+        count: articles.length
+      });
+    } catch (e: any) {
+      console.error('Erreur sauvegarde articles:', e);
+      logger.error('Articles', 'Erreur lors de la sauvegarde des articles en SQLite.', { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // CHUTES BARRES
+  // =========================================================================
+
+  static async saveChutesBarres(chutes: Record<string, ChuteItem[]>): Promise<void> {
+    try {
+      await this.request('/api/chutes/barres', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(chutes)
+      });
+      const totalPieces = Object.values(chutes).reduce((acc, list) => acc + list.reduce((s, c) => s + (c.quantite || 0), 0), 0);
+      logger.sqlite('Chutes Barres', `${Object.keys(chutes).length} familles de chutes sauvegardées (${totalPieces} pièces au total).`, {
+        famillesCount: Object.keys(chutes).length,
+        totalPieces
+      });
+    } catch (e: any) {
+      console.error('Erreur sauvegarde chutes barres:', e);
+      logger.error('Chutes Barres', 'Erreur lors de la sauvegarde des chutes barres.', { error: e.message });
+      throw e;
+    }
+  }
+
+  static async saveChutesMaille(chutes: ChuteMaille[]): Promise<void> {
+    try {
+      await this.request('/api/chutes/maille', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(chutes)
+      });
+      const totalPlis = chutes.reduce((acc, c) => acc + (c.plis || 0), 0);
+      logger.sqlite('Chutes Maille', `${chutes.length} références de chutes maille sauvegardées (${totalPlis} plis).`, {
+        count: chutes.length,
+        totalPlis
+      });
+    } catch (e: any) {
+      console.error('Erreur sauvegarde chutes maille:', e);
+      logger.error('Chutes Maille', 'Erreur lors de la sauvegarde des chutes maille.', { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // MAPPING
+  // =========================================================================
+
+  static async saveMapping(mapping: MappingChutes): Promise<void> {
+    try {
+      await this.request('/api/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mapping)
+      });
+      logger.sqlite('Mapping', `Mapping articles/chutes mis à jour (${Object.keys(mapping).length} correspondances).`);
+    } catch (e: any) {
+      console.error('Erreur sauvegarde mapping:', e);
+      logger.error('Mapping', 'Erreur lors de la sauvegarde du mapping articles/chutes.', { error: e.message });
+      throw e;
+    }
+  }
+
+  static async clearAllMappings(): Promise<void> {
+    try {
+      await this.request('/api/mapping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      logger.sqlite('Mapping', 'Tous les mappings articles/chutes ont été déliés.');
+    } catch (e: any) {
+      console.error('Erreur clear mapping:', e);
+      logger.error('Mapping', 'Erreur lors de la suppression des mappings.', { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // CRÉER / RENOMMER / SUPPRIMER UNE FAMILLE DE CHUTES
+  // =========================================================================
+
+  static async createChuteFamily(
+    name: string,
+    currentChutesBarres: Record<string, ChuteItem[]>
+  ): Promise<Record<string, ChuteItem[]> | null> {
+    const clean = name.trim();
+    if (!clean) return null;
+    if (currentChutesBarres[clean] !== undefined) return null;
+
+    const newChutesBarres = { ...currentChutesBarres, [clean]: [] };
+
+    try {
+      await this.request('/api/chutes/create-family', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: clean })
+      });
+      logger.sqlite('Chutes', `Nouvelle famille de chutes créée : "${clean}".`);
+    } catch (e: any) {
+      console.error('Erreur create chute family:', e);
+      logger.error('Chutes', `Erreur création famille de chutes "${clean}".`, { error: e.message });
+      throw e;
+    }
+    return newChutesBarres;
+  }
+
+  static async wipeDatabase(): Promise<void> {
+    try {
+      await this.request('/api/db/wipe', { method: 'POST' });
+      logger.warn('Wipe DB', 'Base SQLite 3m_atelier.db complètement purgée.');
+    } catch (e: any) {
+      console.error('Erreur API wipe:', e);
+      logger.error('Wipe DB', 'Erreur lors du vidage de la base SQLite.', { error: e.message });
+      throw e;
+    }
+  }
+
+  static async resetAllToFactory(): Promise<void> {
+    try {
+      await this.request('/api/sync/initial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          articles: INITIAL_ARTICLES,
+          chutesBarres: INITIAL_CHUTES_STOCK,
+          chutesMaille: INITIAL_MAILLE_CHUTES,
+          mapping: INITIAL_MAPPING,
+          dossiers: [],
+          suivisOF: [],
+          mouvements: []
+        })
+      });
+      logger.sqlite('Réinit. Usine', "Base SQLite réinitialisée avec les paramètres d'usine complets.");
+    } catch (e: any) {
+      console.error('Erreur resetAllToFactory:', e);
+      logger.error('Réinit. Usine', "Erreur lors de la réinitialisation usine.", { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // RENOMMER / SUPPRIMER UN ONGLET DE CHUTES
+  // =========================================================================
+
+  static async renameChuteSheet(
+    oldName: string,
+    newName: string,
+    currentChutesBarres: Record<string, ChuteItem[]>,
+    currentMapping: MappingChutes
+  ): Promise<{ chutesBarres: Record<string, ChuteItem[]>; mapping: MappingChutes } | null> {
+    const cleanNew = newName.trim();
+    if (!cleanNew || cleanNew === oldName) return null;
+    if (currentChutesBarres[cleanNew]) return null;
+    if (currentChutesBarres[oldName] === undefined) return null;
+
+    const newChutesBarres = { ...currentChutesBarres };
+    newChutesBarres[cleanNew] = newChutesBarres[oldName];
+    delete newChutesBarres[oldName];
+
+    const newMapping = { ...currentMapping };
+    Object.keys(newMapping).forEach(code => {
+      if (newMapping[code] === oldName) newMapping[code] = cleanNew;
+    });
+
+    try {
+      await this.request('/api/chutes/rename-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldName, newName: cleanNew })
+      });
+      logger.sqlite('Chutes', `Onglet de chutes renommé : "${oldName}" ➔ "${cleanNew}".`);
+    } catch (e: any) {
+      console.error('Erreur rename sheet:', e);
+      logger.error('Chutes', `Erreur renommage onglet de chutes "${oldName}".`, { error: e.message });
+      throw e;
+    }
+    return { chutesBarres: newChutesBarres, mapping: newMapping };
+  }
+
+  static async deleteChuteSheet(
+    sheetName: string,
+    currentChutesBarres: Record<string, ChuteItem[]>,
+    currentMapping: MappingChutes
+  ): Promise<{ chutesBarres: Record<string, ChuteItem[]>; mapping: MappingChutes } | null> {
+    if (sheetName === 'MAILLE MSTQ') return null;
+    if (currentChutesBarres[sheetName] === undefined) return null;
+
+    const newChutesBarres = { ...currentChutesBarres };
+    delete newChutesBarres[sheetName];
+
+    const newMapping = { ...currentMapping };
+    Object.keys(newMapping).forEach(code => {
+      if (newMapping[code] === sheetName) delete newMapping[code];
+    });
+
+    try {
+      await this.request(`/api/chutes/sheet/${encodeURIComponent(sheetName)}`, { method: 'DELETE' });
+      logger.sqlite('Chutes', `Onglet de chutes "${sheetName}" supprimé de SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur delete sheet:', e);
+      logger.error('Chutes', `Erreur suppression onglet de chutes "${sheetName}".`, { error: e.message });
+      throw e;
+    }
+    return { chutesBarres: newChutesBarres, mapping: newMapping };
+  }
+
+  // =========================================================================
+  // EXPORT TO EXCEL
+  // =========================================================================
+
+  static exportArticlesExcel(articles: Article[]): void {
+    logger.action('Export Excel', `Export du catalogue de ${articles.length} articles vers Excel.`);
+    const ws = XLSX.utils.json_to_sheet(articles);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Articles');
+    XLSX.writeFile(wb, 'articles_stock.xlsx');
+  }
+
+  static exportChutesExcel(chutesBarres: Record<string, ChuteItem[]>, chutesMaille: ChuteMaille[]): void {
+    logger.action('Export Excel', `Export des chutes (${Object.keys(chutesBarres).length} familles barres + maille) vers Excel.`);
+    const wb = XLSX.utils.book_new();
+    const wsMaille = XLSX.utils.json_to_sheet(chutesMaille);
+    XLSX.utils.book_append_sheet(wb, wsMaille, 'MAILLE MSTQ');
+    for (const [sheetName, items] of Object.entries(chutesBarres)) {
+      if (sheetName === 'MAILLE MSTQ') continue;
+      const rows = items.map(c => ({ Longueur: c.longueur, Quantite: c.quantite }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+    XLSX.writeFile(wb, 'stok_chutes.xlsx');
+  }
+
+  // =========================================================================
+  // IMPORT FROM EXCEL
+  // =========================================================================
+
+  static async parseArticlesExcelFile(file: File): Promise<Article[]> {
+    logger.action('Import Excel', `Lecture du fichier Excel articles : "${file.name}" (${file.size} octets).`);
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data);
+    const firstSheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[firstSheetName];
+    const rawRows = XLSX.utils.sheet_to_json<any>(ws);
+
+    const articles: Article[] = [];
+    for (const row of rawRows) {
+      const code = String(row.code_art || row.Code_Art || row.CODE_ART || row.Code || row.CODE || '').trim();
+      if (!code) continue;
+      articles.push({
+        code_art: code,
+        designation: String(row.designation || row.Designation || row.DESIGNATION || row.Libelle || code).trim(),
+        statut: String(row.statut || row.Statut || 'NORMAL').trim(),
+        hauteur: Number(row.hauteur || 0),
+        longeur: Number(row.longeur || row.longueur || row.Longueur || 6000),
+        lame: Number(row.lame || 4.5),
+        debordement: Number(row.debordement || 0),
+        refus_min: Number(row.refus_min || 300),
+        refus_max: Number(row.refus_max || 1200),
+        stock_physique: Number(row.stock_physique || row.Stock || 0),
+        quantite_reservee: Number(row.quantite_reservee || 0),
+        prix_unitaire: Number(row.prix_unitaire || row.Prix || 0),
+        stock_min: Number(row.stock_min || 5)
+      });
+    }
+    logger.info('Import Excel', `${articles.length} articles extraits avec succès du fichier "${file.name}".`);
+    return articles;
+  }
+
+  static async importArticlesFromExcelFile(file: File): Promise<Article[]> {
+    const articles = await this.parseArticlesExcelFile(file);
+    if (articles.length > 0) await this.saveArticles(articles);
+    return articles;
+  }
+
+  static async parseChutesExcelFile(file: File): Promise<{
+    chutesBarres: Record<string, ChuteItem[]>;
+    chutesMaille: ChuteMaille[];
+    sheetNames: string[];
+  }> {
+    logger.action('Import Excel', `Lecture du fichier Excel chutes : "${file.name}" (${file.size} octets).`);
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data);
+    const chutesBarres: Record<string, ChuteItem[]> = {};
+    let chutesMaille: ChuteMaille[] = [];
+
+    const extractNumber = (val: any): number => {
+      if (val === null || val === undefined || val === '') return NaN;
+      if (typeof val === 'number') return val;
+      const str = String(val).replace(/\s/g, '').replace(',', '.').replace(/[^\d.-]/g, '');
+      const parsed = parseFloat(str);
+      return isNaN(parsed) ? NaN : parsed;
+    };
+
+    // Helper pour trouver la valeur d'une colonne par correspondance floue de son en-tête
+    const findColVal = (row: any, candidates: string[]): any => {
+      const keys = Object.keys(row);
+      for (const cand of candidates) {
+        const foundKey = keys.find(k => {
+          const norm = k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+          return norm === cand || norm.startsWith(cand);
+        });
+        if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null && row[foundKey] !== '') {
+          return row[foundKey];
+        }
+      }
+      return undefined;
+    };
+
+    let globalCounter = 1;
+    const now = Date.now();
+
+    for (const sheetName of wb.SheetNames) {
+      const cleanSheet = sheetName.trim();
+      if (!cleanSheet) continue;
+      const safeSheet = cleanSheet.replace(/[^a-zA-Z0-9]/g, '_') || 'famille';
+
+      const ws = wb.Sheets[sheetName];
+      const rowsAsObjects = XLSX.utils.sheet_to_json<any>(ws, { defval: null });
+      const rowsRaw = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1 });
+
+      if (cleanSheet.toUpperCase().includes('MAILLE')) {
+        const mailleList: ChuteMaille[] = [];
+        for (const row of rowsAsObjects) {
+          const dimVal = extractNumber(findColVal(row, ['dim', 'dimension', 'fixe', 'longueur', 'l', 'taille']));
+          const plisVal = extractNumber(findColVal(row, ['plis', 'plie', 'nbr', 'qte', 'quantite', 'q']));
+
+          let dim = !isNaN(dimVal) && dimVal > 0 ? dimVal : NaN;
+          let plis = !isNaN(plisVal) && plisVal > 0 ? Math.round(plisVal) : 1;
+
+          if (isNaN(dim)) {
+            const vals = Object.values(row).map(extractNumber).filter(n => !isNaN(n) && n > 0);
+            if (vals.length >= 2) {
+              dim = vals[0];
+              plis = Math.round(vals[1]);
+            } else if (vals.length === 1) {
+              dim = vals[0];
+              plis = 1;
+            }
+          }
+
+          if (!isNaN(dim) && dim > 0) {
+            if (dim < 15) dim = Math.round(dim * 1000);
+            mailleList.push({ id: `m-imp-${now}-${globalCounter++}`, dimension_fixe: dim, plis });
+          }
+        }
+        if (mailleList.length === 0) {
+          for (const row of rowsRaw.slice(1)) {
+            if (!row || !Array.isArray(row)) continue;
+            const numbers = row.map(extractNumber).filter(n => !isNaN(n) && n > 0);
+            if (numbers.length >= 2) {
+              let dim = numbers[0] < 15 ? Math.round(numbers[0] * 1000) : numbers[0];
+              mailleList.push({ id: `m-imp-${now}-${globalCounter++}`, dimension_fixe: dim, plis: Math.round(numbers[1]) });
+            }
+          }
+        }
+        chutesMaille = mailleList;
+      } else {
+        const itemsList: ChuteItem[] = [];
+        for (const row of rowsAsObjects) {
+          // 1. Détection intelligente par nom de colonne
+          const lCol = findColVal(row, ['longueur', 'long', 'lg', 'cote', 'dimension', 'dim', 'taille', 'l']);
+          const qCol = findColVal(row, ['quantite', 'qte', 'qnt', 'q', 'nombre', 'nb', 'nbr', 'nbre', 'pieces', 'pcs', 'count']);
+
+          let longueur = extractNumber(lCol);
+          let quantite = extractNumber(qCol);
+
+          // Si colonnes reconnues
+          if (!isNaN(longueur) && longueur > 0) {
+            // Conversion automatique mètres -> millimètres si longueur < 15 (ex: 2.5m = 2500mm)
+            if (longueur < 15) longueur = Math.round(longueur * 1000);
+            const q = !isNaN(quantite) && quantite > 0 ? Math.round(quantite) : 1;
+            itemsList.push({ id: `c-${safeSheet}-${now}-${globalCounter++}`, longueur, quantite: q });
+            continue;
+          }
+
+          // 2. Si pas de colonne nommée claire, analyse des valeurs numériques dans la ligne
+          const vals = Object.values(row).map(v => extractNumber(v)).filter(n => !isNaN(n) && n > 0);
+          if (vals.length >= 2) {
+            // Identifier quelle valeur est la longueur et quelle est la quantité
+            let lVal = vals[0];
+            let qVal = vals[1];
+
+            // Si une valeur est manifestement une cote de profilé (ex: > 100) et l'autre une petite quantité (<= 50)
+            if (vals.some(v => v >= 100) && vals.some(v => v <= 50)) {
+              lVal = Math.max(...vals);
+              qVal = Math.min(...vals);
+            } else if (vals.some(v => v < 15)) {
+              // Une valeur en mètres
+              const mVal = vals.find(v => v < 15)!;
+              const otherVal = vals.find(v => v !== mVal) || 1;
+              lVal = Math.round(mVal * 1000);
+              qVal = otherVal;
+            } else {
+              const sorted = [...vals].sort((a, b) => b - a);
+              lVal = sorted[0];
+              qVal = sorted[sorted.length - 1];
+            }
+
+            if (lVal < 15) lVal = Math.round(lVal * 1000);
+            if (lVal > 0) {
+              itemsList.push({ id: `c-${safeSheet}-${now}-${globalCounter++}`, longueur: lVal, quantite: Math.max(1, Math.round(qVal || 1)) });
+            }
+          } else if (vals.length === 1 && vals[0] > 0) {
+            let lVal = vals[0];
+            if (lVal < 15) lVal = Math.round(lVal * 1000);
+            itemsList.push({ id: `c-${safeSheet}-${now}-${globalCounter++}`, longueur: lVal, quantite: 1 });
+          }
+        }
+
+        // 3. Fallback sur les lignes brutes (tableaux sans header d'objets)
+        if (itemsList.length === 0) {
+          for (const row of rowsRaw.slice(1)) {
+            if (!row || !Array.isArray(row)) continue;
+            const numbers = row.map(extractNumber).filter(n => !isNaN(n) && n > 0);
+            if (numbers.length >= 2) {
+              let lVal = numbers[0];
+              let qVal = numbers[1];
+              if (numbers.some(v => v >= 100) && numbers.some(v => v <= 50)) {
+                lVal = Math.max(...numbers);
+                qVal = Math.min(...numbers);
+              } else {
+                const sorted = [...numbers].sort((a, b) => b - a);
+                lVal = sorted[0];
+                qVal = sorted[sorted.length - 1];
+              }
+              if (lVal < 15) lVal = Math.round(lVal * 1000);
+              itemsList.push({ id: `c-${safeSheet}-${now}-${globalCounter++}`, longueur: lVal, quantite: Math.max(1, Math.round(qVal)) });
+            } else if (numbers.length === 1) {
+              let lVal = numbers[0];
+              if (lVal < 15) lVal = Math.round(lVal * 1000);
+              itemsList.push({ id: `c-${safeSheet}-${now}-${globalCounter++}`, longueur: lVal, quantite: 1 });
+            }
+          }
+        }
+        chutesBarres[cleanSheet] = itemsList;
+      }
+    }
+    logger.info('Import Excel', `Extraction terminée : ${Object.keys(chutesBarres).length} feuilles barres, ${chutesMaille.length} chutes maille.`);
+    return { chutesBarres, chutesMaille, sheetNames: wb.SheetNames };
+  }
+
+  static async getChutesBarres(): Promise<Record<string, ChuteItem[]>> {
+    const data = await this.initSqlite();
+    return data.chutesBarres || {};
+  }
+
+  static async getChutesMaille(): Promise<ChuteMaille[]> {
+    const data = await this.initSqlite();
+    return data.chutesMaille || [];
+  }
+
+  static async importChutesFromExcelFile(file: File): Promise<{
+    chutesBarres: Record<string, ChuteItem[]>;
+    chutesMaille: ChuteMaille[];
+  }> {
+    const res = await this.parseChutesExcelFile(file);
+    const currentBarres = await this.getChutesBarres().catch(() => ({}));
+    const currentMaille = await this.getChutesMaille().catch(() => []);
+
+    // Fusion non-destructrice : conserver les familles existantes et mettre à jour/ajouter celles du fichier Excel
+    const mergedBarres: Record<string, ChuteItem[]> = { ...currentBarres };
+    Object.entries(res.chutesBarres).forEach(([sheet, items]) => {
+      if (items && items.length > 0) {
+        mergedBarres[sheet] = items;
+      }
+    });
+
+    const mergedMaille = res.chutesMaille.length > 0 ? res.chutesMaille : currentMaille;
+
+    if (Object.keys(mergedBarres).length > 0) await this.saveChutesBarres(mergedBarres);
+    if (mergedMaille.length > 0) await this.saveChutesMaille(mergedMaille);
+    return { chutesBarres: mergedBarres, chutesMaille: mergedMaille };
+  }
+
+  // ==========================================
+  // SUIVIS OF
+  // ==========================================
+
+  static async reparerFamillesOF(): Promise<{ repares: number; data?: SuiviOF[] }> {
+    try {
+      const response = await this.request('/api/of/reparer-familles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const res = await response.json();
+      if (res?.repares > 0) {
+        logger.sqlite('Réparation OF', `${res.repares} ordre(s) de fabrication réparé(s) vers leur vraie famille (Tablier, Moustiquaire...).`);
+      }
+      return { repares: res?.repares || 0, data: res?.data };
+    } catch (e: any) {
+      console.error('Erreur réparation familles OF:', e);
+      return { repares: 0 };
+    }
+  }
+
+  static async upsertSuiviOF(suivi: SuiviOF): Promise<void> {
+    try {
+      await this.request('/api/of', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(suivi)
+      });
+      logger.sqlite('Suivi OF', `Ordre de Fabrication N° ${suivi.numCommande} (${suivi.titreSection}) mis à jour (Statut: ${suivi.statut}).`, {
+        numCommande: suivi.numCommande,
+        statut: suivi.statut,
+        famille: suivi.famille,
+        titreSection: suivi.titreSection
+      });
+    } catch (e: any) {
+      console.error('Erreur upsert suivi OF:', e);
+      logger.error('Suivi OF', `Erreur mise à jour OF ${suivi.numCommande}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async closeOF(suivi: SuiviOF, mouvements: MouvementStock[]): Promise<void> {
+    try {
+      await this.request('/api/of/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ suivi, mouvements })
+      });
+      logger.sqlite('Clôture OF', `OF N° ${suivi.numCommande} clôturé avec succès (${mouvements.length} mouvements de stock confirmés).`, {
+        numCommande: suivi.numCommande,
+        mouvementsCount: mouvements.length
+      });
+    } catch (e: any) {
+      console.error('Erreur clôture OF:', e);
+      logger.error('Clôture OF', `Erreur clôture OF N° ${suivi.numCommande}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async deleteSuiviOF(id: string): Promise<void> {
+    try {
+      await this.request(`/api/of/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      logger.sqlite('Suivi OF', `OF ID ${id} supprimé de SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur suppression suivi OF:', e);
+      logger.error('Suivi OF', `Erreur suppression OF ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // MOUVEMENTS DE STOCK
+  // =========================================================================
+
+  static async addMouvement(mvt: MouvementStock): Promise<void> {
+    try {
+      await this.request('/api/mouvements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mvt)
+      });
+      logger.sqlite('Mouvement Stock', `Mouvement ${mvt.type} sur ${mvt.articleCode || mvt.designation || 'Article'} (${mvt.quantite || 1} u / ${mvt.longueurMm || 0}mm).`);
+    } catch (e: any) {
+      console.error('Erreur ajout mouvement:', e);
+      logger.error('Mouvement Stock', `Erreur enregistrement mouvement sur ${mvt.articleCode || 'Article'}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async addMouvements(mvts: MouvementStock[]): Promise<void> {
+    try {
+      await this.request('/api/mouvements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mvts)
+      });
+      logger.sqlite('Mouvements Stock', `${mvts.length} mouvement(s) de stock enregistrés en lot.`);
+    } catch (e: any) {
+      console.error('Erreur ajout mouvements:', e);
+      logger.error('Mouvements Stock', `Erreur enregistrement mouvements de stock.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // CODIFICATIONS CLIENTS & PRÉFIXES
+  // =========================================================================
+
+  static async getClientCodifications(): Promise<ClientCodification[]> {
+    try {
+      const res = await this.request('/api/codifications');
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data;
+      }
+    } catch (e: any) {
+      console.error('Erreur chargement codifications clients:', e);
+    }
+    return INITIAL_CLIENT_CODIFICATIONS;
+  }
+
+  static async saveClientCodifications(codifs: ClientCodification[]): Promise<void> {
+    try {
+      await this.request('/api/codifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(codifs)
+      });
+      logger.sqlite('Codification Clients', `${codifs.length} codifications clients enregistrées dans SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur sauvegarde codifications clients:', e);
+      logger.error('Codification Clients', `Erreur sauvegarde codifications clients.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async upsertClientCodification(codif: ClientCodification): Promise<void> {
+    try {
+      await this.request('/api/codifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(codif)
+      });
+      logger.sqlite('Codification Clients', `Codification "${codif.nom}" (${codif.prefixeCommande}) mise à jour.`);
+    } catch (e: any) {
+      console.error('Erreur upsert codification client:', e);
+      logger.error('Codification Clients', `Erreur mise à jour codification "${codif.nom}".`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async deleteClientCodification(id: string): Promise<void> {
+    try {
+      await this.request(`/api/codifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      logger.sqlite('Codification Clients', `Codification ID ${id} supprimée de SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur suppression codification client:', e);
+      logger.error('Codification Clients', `Erreur suppression codification ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  // =========================================================================
+  // FICHES DE TRANSFERT & BONS DE LIVRAISON TRANSPORTEUR
+  // =========================================================================
+
+  static async getFichesTransfert(): Promise<FicheTransfert[]> {
+    try {
+      const res = await this.request('/api/fiches-transfert');
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data;
+      }
+    } catch (e: any) {
+      console.error('Erreur chargement fiches transfert:', e);
+    }
+    return [];
+  }
+
+  static async saveFichesTransfert(fiches: FicheTransfert[]): Promise<void> {
+    try {
+      await this.request('/api/fiches-transfert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fiches)
+      });
+      logger.sqlite('Fiches Transfert', `${fiches.length} fiche(s) de transfert enregistrée(s) dans SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur sauvegarde fiches transfert:', e);
+      logger.error('Fiches Transfert', `Erreur sauvegarde fiches transfert.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async upsertFicheTransfert(fiche: FicheTransfert): Promise<void> {
+    try {
+      await this.request('/api/fiches-transfert', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fiche)
+      });
+      logger.sqlite('Fiche Transfert', `Fiche de transfert N° ${fiche.numeroFiche} (${fiche.monClient}) enregistrée / validée.`);
+    } catch (e: any) {
+      console.error('Erreur upsert fiche transfert:', e);
+      logger.error('Fiche Transfert', `Erreur mise à jour fiche transfert "${fiche.numeroFiche}".`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async deleteFicheTransfert(id: string): Promise<void> {
+    try {
+      await this.request(`/api/fiches-transfert/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      logger.sqlite('Fiche Transfert', `Fiche de transfert ID ${id} supprimée de SQLite.`);
+    } catch (e: any) {
+      console.error('Erreur suppression fiche transfert:', e);
+      logger.error('Fiche Transfert', `Erreur suppression fiche transfert ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+}
+
