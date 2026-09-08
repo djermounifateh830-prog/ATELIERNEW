@@ -39,12 +39,14 @@ export function getDeductionLameFinale(hauteurLame: number, isAvecVolet: boolean
   return Number(hauteurLame) === 55 ? DEDUCTION_VOLET_55_MM : DEDUCTION_VOLET_43_MM;
 }
 
-export function calculerNbLame(hauteur: number, hauteurLameTablier: number): number {
+export function calculerNbLame(hauteur: number, hauteurLameTablier: number, isAvecVolet: boolean = false): number {
   if (hauteurLameTablier <= 0) {
     throw new Error('La hauteur de lame de tablier doit être supérieure à 0');
   }
-  // Règle validée par l'atelier (§9) : arrondi supérieur direct (Math.ceil) sans marge additionnelle
-  return Math.ceil(hauteur / hauteurLameTablier);
+  // Règle validée par l'atelier : arrondi supérieur direct (Math.ceil)
+  // + Règle volet sélectionné : ajout automatique de +2 lames de tablier (pas lame finale) du même profil (TAB 43 ou TAB 55)
+  const baseLames = Math.ceil(hauteur / hauteurLameTablier);
+  return isAvecVolet ? baseLames + 2 : baseLames;
 }
 
 export function calculerTablier(commande: CommandeTablier): {
@@ -57,8 +59,8 @@ export function calculerTablier(commande: CommandeTablier): {
   piecesCoulisses?: { longueur: number; quantite: number; label: string; repere: string; refCommande?: string }[];
 } {
   const hLame = getHauteurLameTablierHelper(commande.articleCode, commande.articleDesignation, commande.hauteur_lame_tablier);
-  const nbLame = calculerNbLame(commande.hauteur, hLame);
-  const isAvecVolet = commande.typeFabrication === 'VOLET_COMPLET' || commande.avecCoulisses;
+  const isAvecVolet = commande.typeFabrication === 'VOLET_COMPLET' || !!commande.avecCoulisses;
+  const nbLame = calculerNbLame(commande.hauteur, hLame, isAvecVolet);
   const dedTablier = getDeductionTablier(hLame, !!isAvecVolet);
   const lenLame = commande.largeur + dedTablier;
   const totalLames = nbLame * Math.max(1, commande.quantite);

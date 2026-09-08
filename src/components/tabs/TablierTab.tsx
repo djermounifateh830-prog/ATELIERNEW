@@ -75,7 +75,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SA-1',
-      nb_lame: Math.ceil(2250 / 55),
+      nb_lame: Math.ceil(2250 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     },
@@ -89,7 +89,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SA-2',
-      nb_lame: Math.ceil(2100 / 55),
+      nb_lame: Math.ceil(2100 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     },
@@ -103,7 +103,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SA-3',
-      nb_lame: Math.ceil(2100 / 55),
+      nb_lame: Math.ceil(2100 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     },
@@ -117,7 +117,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SA-4',
-      nb_lame: Math.ceil(2100 / 55),
+      nb_lame: Math.ceil(2100 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     },
@@ -131,7 +131,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SB-1',
-      nb_lame: Math.ceil(2250 / 55),
+      nb_lame: Math.ceil(2250 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     },
@@ -145,7 +145,7 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       hauteur_lame_tablier: 55,
       quantite: 1,
       repere: 'SB-2',
-      nb_lame: Math.ceil(2100 / 55),
+      nb_lame: Math.ceil(2100 / 55) + 2,
       typeFabrication: 'VOLET_COMPLET',
       avecLameFinale: true
     }
@@ -186,7 +186,8 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       return;
     }
 
-    const nbLame = Math.ceil(h / hLame);
+    const isAvecVolet = saisieTypeFabrication === 'VOLET_COMPLET';
+    const nbLame = Math.ceil(h / hLame) + (isAvecVolet ? 2 : 0);
     const ref = (saisieRefCommande.trim() || refCommandeDefaut.trim() || 'CMD-01');
     const client = (saisieNomClient.trim() || nomClientDefaut.trim() || 'CLIENT');
     const dateCmd = (saisieDate.trim() || dateCommandeDefaut.trim() || getTodayDateString());
@@ -261,7 +262,8 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       return;
     }
 
-    const nbLame = Math.ceil(editForm.hauteur / editForm.hauteur_lame_tablier);
+    const isAvecVolet = editForm.typeFabrication === 'VOLET_COMPLET';
+    const nbLame = Math.ceil(editForm.hauteur / editForm.hauteur_lame_tablier) + (isAvecVolet ? 2 : 0);
     const updated: CommandeTablier = {
       ...editForm,
       nb_lame: nbLame,
@@ -429,6 +431,46 @@ export const TablierTab: React.FC<TablierTabProps> = ({
               <Palette className="w-3.5 h-3.5 text-rose-400" />            </label>          </div>
         </div>
 
+        {/* Type de prestation Tablier / Volet */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-400">Prestation :</span>
+            <div className="flex rounded-lg overflow-hidden border border-slate-700 bg-slate-900 p-0.5">
+              <button
+                type="button"
+                onClick={() => setSaisieTypeFabrication('VOLET_COMPLET')}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition ${
+                  saisieTypeFabrication === 'VOLET_COMPLET'
+                    ? 'bg-sky-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Volet Complet (+2 lames tablier)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSaisieTypeFabrication('TABLIER_SEUL')}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition ${
+                  saisieTypeFabrication === 'TABLIER_SEUL'
+                    ? 'bg-slate-700 text-slate-100 shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Tablier Seul
+              </button>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={saisieAvecLameFinale}
+              onChange={e => setSaisieAvecLameFinale(e.target.checked)}
+              className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
+            />
+            <span>Inclure 1 Lame Finale (LF)</span>
+          </label>
+        </div>
+
         {/* Formulaire ajout rapide tablier */}
         <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 grid grid-cols-2 sm:grid-cols-12 gap-3 items-end">
           <div className="sm:col-span-2">
@@ -537,9 +579,10 @@ export const TablierTab: React.FC<TablierTabProps> = ({
               <tbody className="divide-y divide-slate-800/60 font-mono">
                 {tabliers.map((t, idx) => {
                   const isEditing = editingId === t.id && editForm !== null;
+                  const isVolet = (isEditing ? editForm.typeFabrication : t.typeFabrication) === 'VOLET_COMPLET';
                   const nbLameUnitaire = isEditing
-                    ? Math.ceil(editForm.hauteur / editForm.hauteur_lame_tablier)
-                    : t.nb_lame || Math.ceil(t.hauteur / t.hauteur_lame_tablier);
+                    ? (editForm.nb_lame || (Math.ceil(editForm.hauteur / editForm.hauteur_lame_tablier) + (isVolet ? 2 : 0)))
+                    : (t.nb_lame || (Math.ceil(t.hauteur / t.hauteur_lame_tablier) + (isVolet ? 2 : 0)));
                   const totalLames = isEditing
                     ? nbLameUnitaire * editForm.quantite
                     : nbLameUnitaire * t.quantite;

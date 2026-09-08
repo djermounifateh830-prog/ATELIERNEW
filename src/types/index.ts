@@ -201,6 +201,7 @@ export interface CommandeCaisson {
   avecSousFace: boolean; // Avec sous-face OU Sans sous-face
   montageSousFace: 'MONTEE_ATELIER' | 'NON_MONTEE'; // Montée sur caisson en atelier OU Livrée séparément
   avecPeinture: boolean; // Avec peinture / laquage couleur OU Brut
+  avecPlaque?: boolean; // Avec plaque OU Sans plaque (fermeture / joue / renfort caisson)
 }
 
 export type FigurePrecadre = 'VIDE' | 'RENFORT_L1' | 'RENFORT_H1' | 'RENFORT_CROISE';
@@ -481,6 +482,10 @@ export interface ClientCodification {
   description?: string;
   actif: boolean;
   ordre?: number;
+  // Options par défaut Caisson configurables par client / agence
+  peintureParDefaut?: boolean;         // Peinture par défaut : true uniquement pour CRISTAL Alger et CRISTAL CNE/Constantine
+  montageSousFaceParDefaut?: boolean;  // Montage sous-face atelier par défaut (true: Montée, false: Non montée)
+  avecPlaqueParDefaut?: boolean;       // Avec Plaque par défaut
 }
 
 

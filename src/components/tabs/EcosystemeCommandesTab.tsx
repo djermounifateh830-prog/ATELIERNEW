@@ -611,15 +611,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [caissonConfig, setCaissonConfig] = useState(() => {
     const defaultClient = INITIAL_CLIENT_CODIFICATIONS[0]?.nom || '';
     const upper = defaultClient.toUpperCase();
-    const isCristal = upper.includes('CRISTAL');
+    const isCristalAlgerOuCne = upper.includes('CRISTAL ALGER') || upper.includes('CRISTAL-ALGER') || 
+                               upper.includes('CRISTAL CONST') || upper.includes('CRISTAL CNE') || upper.includes('CRISTAL-CONST');
+    const firstCodif = INITIAL_CLIENT_CODIFICATIONS[0];
+    const defPeinture = firstCodif?.peintureParDefaut !== undefined ? firstCodif.peintureParDefaut : isCristalAlgerOuCne;
+    const defMontage = firstCodif?.montageSousFaceParDefaut !== false ? 'MONTEE_ATELIER' : 'NON_MONTEE';
+    const defPlaque = firstCodif?.avecPlaqueParDefaut ?? false;
+
     return {
       typeCommande: 'CAISSON_ET_SOUS_FACE' as 'CAISSON_ET_SOUS_FACE' | 'CAISSON_SEUL' | 'SOUS_FACE_SEULE',
       ctArticleCode: '',
       typeCaisson: 'TUNNEL_SIMPLE' as 'TUNNEL_SIMPLE' | 'EXTERIEUR',
       avecSousFace: true,
       sfArticleCode: '',
-      montageSousFace: 'MONTEE_ATELIER' as 'MONTEE_ATELIER' | 'NON_MONTEE',
-      avecPeinture: isCristal
+      montageSousFace: defMontage as 'MONTEE_ATELIER' | 'NON_MONTEE',
+      avecPeinture: defPeinture,
+      avecPlaque: defPlaque
     };
   });
 
@@ -943,7 +950,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       lignesGroup.forEach(c => {
         const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
         const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || artObj.designation, c.hauteur_lame_tablier);
-        const nLamesPerVolet = Math.ceil(c.hauteur / hLame); // Recalculé depuis H réel et hauteur de lame exacte (43/55)
+        const nLamesPerVolet = Math.ceil(c.hauteur / hLame) + (isAvecVolet ? 2 : 0); // +2 lames de tablier (pas finale) de la même sélection (TAB 43 ou TAB 55) si volet
         const totalLames = nLamesPerVolet * c.quantite;
 
         // Règle Volet : 43mm -> -65mm, 55mm -> -28mm. Tablier seul -> débord standard
@@ -1602,7 +1609,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           hauteur: h,
           quantite: Math.max(1, editTablierForm.quantite),
           hauteur_lame_tablier: hLame,
-          nb_lame: Math.ceil(h / hLame),
+          nb_lame: Math.ceil(h / hLame) + (editTablierForm.typeFabrication === 'VOLET_COMPLET' ? 2 : 0),
           typeFabrication: editTablierForm.typeFabrication,
           avecLameFinale: editTablierForm.avecLameFinale,
           avecCoulisses: editTablierForm.typeFabrication === 'VOLET_COMPLET',
@@ -1701,6 +1708,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   const handleStartEditPrecadre = (p: CommandePrecadre) => {
     const prcObj = articlesPrecadre.find(a => a.code_art === p.articleCode) || articlesPrecadre[0];
+    const bchObj = articlesBouchonPrecadre.find(a => a.code_art === p.bouchonArticleCode) || articlesBouchonPrecadre[0];
     setEditingPrecadreId(p.id);
     setEditPrecadreForm({
       ...p,
@@ -1709,8 +1717,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       modeDebordement: p.modeDebordement || 'SUPERIEUR_INFERIEUR',
       debordementSuperieur: p.debordementSuperieur !== undefined ? p.debordementSuperieur : 100,
       debordementInferieur: p.debordementInferieur !== undefined ? p.debordementInferieur : 300,
-      articleCode: p.articleCode || prcObj.code_art,
-      articleDesignation: p.articleDesignation || prcObj.designation
+      articleCode: p.articleCode || prcObj?.code_art || 'ART0060',
+      articleDesignation: p.articleDesignation || prcObj?.designation || 'PRÉCADRE PRC 43',
+      bouchonArticleCode: p.bouchonArticleCode || bchObj?.code_art || 'ART0065',
+      bouchonArticleDesignation: p.bouchonArticleDesignation || bchObj?.designation || 'BOUCHON PRECADRE 43'
     });
   };
 
@@ -1729,17 +1739,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }
 
     const prcObj = articlesPrecadre.find(a => a.code_art === editPrecadreForm.articleCode) || articlesPrecadre[0];
+    const bchObj = articlesBouchonPrecadre.find(a => a.code_art === editPrecadreForm.bouchonArticleCode) || articlesBouchonPrecadre[0];
 
     const updated = lignesPrecadres.map(p => {
       if (p.id === editPrecadreForm.id) {
         return {
           ...editPrecadreForm,
-          refCommande: editPrecadreForm.refCommande || p.refCommande,
+          refCommande: (editPrecadreForm.refCommande || p.refCommande || '').trim(),
           largeur: l,
           hauteur: h,
           quantite: Math.max(1, editPrecadreForm.quantite),
-          articleCode: prcObj.code_art,
-          articleDesignation: prcObj.designation
+          articleCode: prcObj?.code_art || editPrecadreForm.articleCode,
+          articleDesignation: prcObj?.designation || editPrecadreForm.articleDesignation,
+          bouchonArticleCode: bchObj?.code_art || editPrecadreForm.bouchonArticleCode,
+          bouchonArticleDesignation: bchObj?.designation || editPrecadreForm.bouchonArticleDesignation
         };
       }
       return p;
@@ -1751,40 +1764,24 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     showFlashNotification('✓ Ligne de précadre mise à jour avec succès.', 'success');
   };
 
-  // Modification directe de la figure de renfort pour la configuration et synchronisation des lignes actives
+  // Sélection de la figure de renfort pour la configuration des nouvelles lignes de précadre (sans écraser les lignes précédentes)
   const handleSetPrecadreFigure = (newFigure: FigurePrecadre) => {
     setPrecadreConfig(prev => ({ ...prev, figure: newFigure }));
-    if (lignesPrecadres.length > 0) {
-      const updated = lignesPrecadres.map(p => ({
-        ...p,
-        figure: newFigure
-      }));
-      setLignesPrecadres(updated);
-      const label = newFigure === 'VIDE' ? '1. Vide (sans renfort)'
-        : newFigure === 'RENFORT_L1' ? '2. + Renfort Horizontal L1'
-        : newFigure === 'RENFORT_H1' ? '3. + Renfort Vertical H1'
-        : '4. Croisé L1+H1';
-      showFlashNotification(`✓ Figure mise à jour : ${label} (${updated.length} ligne(s) actualisée(s))`, 'success');
-    }
+    const label = newFigure === 'VIDE' ? '1. Vide (sans renfort)'
+      : newFigure === 'RENFORT_L1' ? '2. + Renfort Horizontal L1'
+      : newFigure === 'RENFORT_H1' ? '3. + Renfort Vertical H1'
+      : '4. Croisé L1+H1';
+    showFlashNotification(`✓ Configuration figure sélectionnée : ${label}`, 'info');
   };
 
-  // Modification directe du mode de débordement pour la configuration et synchronisation des lignes actives
+  // Sélection du mode de débordement pour la configuration des nouvelles lignes de précadre (sans écraser les lignes précédentes)
   const handleSetPrecadreModeDebordement = (newMode: ModeDebordementPrecadre) => {
     setPrecadreConfig(prev => ({ ...prev, modeDebordement: newMode }));
-    if (lignesPrecadres.length > 0) {
-      const hasDebordement = (newMode !== 'SANS_DEBORDEMENT' && (newMode as string) !== 'AUCUN');
-      const updated = lignesPrecadres.map(p => ({
-        ...p,
-        modeDebordement: newMode,
-        typeAssemblage: (hasDebordement ? 'EQUERRE' : 'BOUCHON') as 'EQUERRE' | 'BOUCHON'
-      }));
-      setLignesPrecadres(updated);
-      const modeLabel = newMode === 'SUPERIEUR_INFERIEUR' ? 'Haut (+100) & Bas (+300)'
-        : newMode === 'SUPERIEUR_SEUL' ? 'Haut (+100)'
-        : newMode === 'INFERIEUR_SEUL' ? 'Bas (+300)'
-        : 'Cadre Fermé (0/0)';
-      showFlashNotification(`✓ Mode débordement : ${modeLabel} (${updated.length} ligne(s) actualisée(s))`, 'success');
-    }
+    const modeLabel = newMode === 'SUPERIEUR_INFERIEUR' ? 'Haut (+100) & Bas (+300)'
+      : newMode === 'SUPERIEUR_SEUL' ? 'Haut (+100)'
+      : newMode === 'INFERIEUR_SEUL' ? 'Bas (+300)'
+      : 'Cadre Fermé (0/0)';
+    showFlashNotification(`✓ Configuration débordement sélectionnée : ${modeLabel}`, 'info');
   };
 
   // Helper de calcul de hauteur des montants avec débordement
@@ -2366,7 +2363,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           lignesGroup.forEach(c => {
             const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
             const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || artObj?.designation, c.hauteur_lame_tablier);
-            const nLamesPerVolet = Math.ceil(c.hauteur / hLame);
+            const nLamesPerVolet = Math.ceil(c.hauteur / hLame) + (isAvecVolet ? 2 : 0); // +2 lames de tablier (pas lame finale) du même profil si volet
             const totalLames = nLamesPerVolet * c.quantite;
             const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
 
@@ -2833,10 +2830,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     const newPrefix = getPrefixeCommande(nomDonneur, clientCodifications);
     setMonClient(nomDonneur);
     const upper = (nomDonneur || '').toUpperCase();
-    const isCristal = upper.includes('CRISTAL');
+    const isCristalAlgerOuCne = upper.includes('CRISTAL ALGER') || upper.includes('CRISTAL-ALGER') || 
+                               upper.includes('CRISTAL CONST') || upper.includes('CRISTAL CNE') || upper.includes('CRISTAL-CONST');
+    const agence = clientCodifications.find(d => d.nom === nomDonneur) || clientCodifications.find(d => d.code === nomDonneur);
+    const defPeinture = agence?.peintureParDefaut !== undefined ? agence.peintureParDefaut : isCristalAlgerOuCne;
+    const defMontage = agence?.montageSousFaceParDefaut !== undefined 
+      ? (agence.montageSousFaceParDefaut ? 'MONTEE_ATELIER' : 'NON_MONTEE')
+      : 'MONTEE_ATELIER';
+    const defPlaque = agence?.avecPlaqueParDefaut !== undefined ? agence.avecPlaqueParDefaut : false;
+
     setCaissonConfig(prev => ({
       ...prev,
-      avecPeinture: isCristal
+      avecPeinture: defPeinture,
+      montageSousFace: defMontage,
+      avecPlaque: defPlaque
     }));
 
     // Mettre à jour automatiquement les préfixes de tous les numéros de commande en cours
@@ -2954,7 +2961,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         articleCode: t.articleCode || 'ART0040',
         articleDesignation: t.articleDesignation || 'TBL 43 BL',
         hauteur_lame_tablier: hLame,
-        nb_lame: h > 0 ? Math.ceil(h / hLame) : (t.nb_lame || 50)
+        nb_lame: t.nb_lame || (h > 0 ? (Math.ceil(h / hLame) + ((t.typeFabrication === 'VOLET_COMPLET' || t.avecCoulisses) ? 2 : 0)) : 50)
       };
     });
     setLignesTabliers(enrichedTabliers);
@@ -3279,7 +3286,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         typeCaisson: caissonConfig.typeCaisson,
         avecSousFace: avecSF && !isCaissonSeul,
         montageSousFace: isSFSeule ? 'NON_MONTEE' : caissonConfig.montageSousFace,
-        avecPeinture: caissonConfig.avecPeinture
+        avecPeinture: caissonConfig.avecPeinture,
+        avecPlaque: caissonConfig.avecPlaque ?? false
       };
       setLignesCaissons([...lignesCaissons, nouvelleLigne]);
       setInputL('');
@@ -3303,7 +3311,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         hauteur_lame_tablier: getHauteurLameTablier(tablierConfig.articleCode, currentTBLArticle?.designation, tablierConfig.hauteurLame),
         quantite: qte,
         repere: inputRepere.trim() || `SA-${lignesTabliers.length + 1}`,
-        nb_lame: Math.ceil(h / getHauteurLameTablier(tablierConfig.articleCode, currentTBLArticle?.designation, tablierConfig.hauteurLame)),
+        nb_lame: Math.ceil(h / getHauteurLameTablier(tablierConfig.articleCode, currentTBLArticle?.designation, tablierConfig.hauteurLame)) + (tablierConfig.typeFabrication === 'VOLET_COMPLET' ? 2 : 0),
         // HÉRITAGE AUTOMATIQUE DES OPTIONS ET ARTICLES DU HAUT
         typeFabrication: tablierConfig.typeFabrication,
         avecLameFinale: tablierConfig.avecLameFinale,
@@ -3428,6 +3436,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           if (optKey === 'avecSousFace') return { ...c, avecSousFace: !c.avecSousFace };
           if (optKey === 'montage') return { ...c, montageSousFace: c.montageSousFace === 'MONTEE_ATELIER' ? 'NON_MONTEE' : 'MONTEE_ATELIER' };
           if (optKey === 'peinture') return { ...c, avecPeinture: !c.avecPeinture };
+          if (optKey === 'plaque') return { ...c, avecPlaque: !c.avecPlaque };
           return c;
         })
       );
@@ -3435,7 +3444,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       setLignesTabliers(
         lignesTabliers.map(t => {
           if (t.id !== id) return t;
-          if (optKey === 'typeFab') return { ...t, typeFabrication: t.typeFabrication === 'VOLET_COMPLET' ? 'TABLIER_SEUL' : 'VOLET_COMPLET' };
+          if (optKey === 'typeFab') {
+            const nextType = t.typeFabrication === 'VOLET_COMPLET' ? 'TABLIER_SEUL' : 'VOLET_COMPLET';
+            const hLame = getHauteurLameTablier(t.articleCode, t.articleDesignation, t.hauteur_lame_tablier);
+            const baseNbLame = Math.ceil(t.hauteur / hLame);
+            const nextNbLame = nextType === 'VOLET_COMPLET' ? baseNbLame + 2 : baseNbLame;
+            return {
+              ...t,
+              typeFabrication: nextType,
+              nb_lame: nextNbLame,
+              avecCoulisses: nextType === 'VOLET_COMPLET'
+            };
+          }
           if (optKey === 'lameFinale') return { ...t, avecLameFinale: !t.avecLameFinale };
           return t;
         })
@@ -4136,15 +4156,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </select>
                 </div>
 
-                {/* 3. Montage & Finition Peinture */}
+                {/* 3. Montage & Finition Peinture & Plaque */}
                 <div className="lg:col-span-2">
                   <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
-                    <span>Montage &amp; Finition Atelier</span>
-                    {caissonConfig.avecPeinture && (
-                      <span className="text-[10px] text-purple-400 font-bold">🎨 Peint</span>
-                    )}
+                    <span>Options &amp; Finitions Caisson</span>
+                    <div className="flex items-center gap-2">
+                      {caissonConfig.avecPeinture && (
+                        <span className="text-[10px] text-purple-400 font-bold">🎨 Peint</span>
+                      )}
+                      {caissonConfig.avecPlaque && (
+                        <span className="text-[10px] text-emerald-400 font-bold">🛡️ Plaque</span>
+                      )}
+                    </div>
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
                     {/* Checkbox Montage Sous-Face */}
                     <label
                       className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-bold cursor-pointer transition select-none ${
@@ -4169,7 +4194,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         className="rounded border-slate-700 text-sky-500 focus:ring-sky-500 w-3.5 h-3.5 cursor-pointer"
                       />
                       <span className="truncate">
-                        {caissonConfig.montageSousFace === 'MONTEE_ATELIER' ? '✓ Avec Montage Atelier' : 'Sans Montage'}
+                        {caissonConfig.montageSousFace === 'MONTEE_ATELIER' ? '✓ SF Montée' : 'SF Séparée'}
                       </span>
                     </label>
 
@@ -4195,6 +4220,31 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       />
                       <span className="truncate">
                         {caissonConfig.avecPeinture ? '🎨 Avec Peinture' : 'Sans Peinture'}
+                      </span>
+                    </label>
+
+                    {/* Checkbox Avec Plaque */}
+                    <label
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] font-bold cursor-pointer transition select-none ${
+                        caissonConfig.avecPlaque
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700'
+                      }`}
+                      title="Cocher si le caisson est avec plaque"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={caissonConfig.avecPlaque ?? false}
+                        onChange={e =>
+                          setCaissonConfig({
+                            ...caissonConfig,
+                            avecPlaque: e.target.checked
+                          })
+                        }
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span className="truncate">
+                        {caissonConfig.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
                       </span>
                     </label>
                   </div>
@@ -5602,6 +5652,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   >
                     {caissonConfig.avecPeinture ? '🎨 Avec Peinture' : 'Sans Peinture'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setCaissonConfig(prev => ({ ...prev, avecPlaque: !prev.avecPlaque }))}
+                    className={`text-[11px] font-bold px-2 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1 ${
+                      caissonConfig.avecPlaque
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                    title="Cliquer pour basculer Avec / Sans Plaque"
+                  >
+                    {caissonConfig.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
+                  </button>
                 </>
               )}
 
@@ -5969,6 +6031,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                   >
                                     {editCaissonForm.avecPeinture ? 'Avec Peinture' : 'Sans Peinture'}
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditCaissonForm({ ...editCaissonForm, avecPlaque: !editCaissonForm.avecPlaque })}
+                                    className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
+                                      editCaissonForm.avecPlaque ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
+                                    }`}
+                                  >
+                                    {editCaissonForm.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
+                                  </button>
                                 </div>
                               </td>
                               <td className="py-2 px-2 text-right font-sans">
@@ -6069,6 +6140,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                   }`}
                                 >
                                   {c.avecPeinture ? '✓ Avec Peinture' : 'Sans Peinture'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleLigneOption('CAISSON', c.id, 'plaque')}
+                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
+                                    c.avecPlaque
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                                  }`}
+                                  title="Bascule Avec / Sans Plaque"
+                                >
+                                  {c.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
                                 </button>
                               </div>
                             </td>
@@ -6291,8 +6374,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                 {(() => {
                                   const tblObj2 = articlesTablier.find(a => a.code_art === t.articleCode) || articlesTablier[0];
                                   const hLame2 = getHauteurLameTablier(t.articleCode, t.articleDesignation || tblObj2?.designation, t.hauteur_lame_tablier);
-                                  const nbLameCalc = Math.ceil(t.hauteur / hLame2);
                                   const isAvecVolet = t.typeFabrication === 'VOLET_COMPLET' || t.avecCoulisses;
+                                  const nbLameCalc = t.nb_lame || (Math.ceil(t.hauteur / hLame2) + (isAvecVolet ? 2 : 0));
                                   const dedTablier = isAvecVolet ? (hLame2 === 55 ? -28 : -65) : 0;
                                   const lenLameCalc = t.largeur + dedTablier;
                                   const lenLFCalc = t.largeur + dedTablier;
@@ -6909,13 +6992,66 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           {/* TABLEAU PRÉCADRES */}
           {familleArticle === 'PRECADRE' && (
             <div className="space-y-3">
+              {/* BARRE DE FILTRE PAR COMMANDE (Précadres) */}
+              {(() => {
+                const refsDistinctes = Array.from(new Set(lignesPrecadres.map(p => (p.refCommande || '').trim()).filter(Boolean)));
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-900/90 rounded-xl border border-slate-800">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-slate-300 mr-1 flex items-center gap-1">
+                        <Tag className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Filtre Commande :</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setFilterCmdActive('TOUTES')}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          filterCmdActive === 'TOUTES'
+                            ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400'
+                            : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                        }`}
+                      >
+                        Toutes les commandes ({lignesPrecadres.length})
+                      </button>
+                      {refsDistinctes.map(r => {
+                        const count = lignesPrecadres.filter(p => (p.refCommande || '').trim() === r).length;
+                        const isSelected = filterCmdActive === r;
+                        return (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setFilterCmdActive(r)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400'
+                                : 'bg-slate-950 text-amber-300 hover:text-amber-200 border border-slate-800'
+                            }`}
+                          >
+                            <span>N° {r}</span>
+                            <span className="text-[10px] px-1 py-0.2 rounded bg-purple-950/80 text-purple-200 border border-purple-500/30">
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="text-[11px] text-slate-400 font-mono">
+                      Total : <strong className="text-purple-300">{lignesPrecadres.length}</strong> ligne(s) de précadre
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-slate-900/90 text-slate-400 text-[11px] font-semibold border-b border-slate-800">
                     <tr>
                       <th className="py-2.5 px-3">Repère</th>
+                      <th className="py-2.5 px-3">N° Commande</th>
                       <th className="py-2.5 px-3">Dimensions (L × H)</th>
-                      <th className="py-2.5 px-3">Quantité</th>
+                      <th className="py-2.5 px-3 text-center">Qté</th>
+                      <th className="py-2.5 px-3">Profilé &amp; Bouchon (Dédié Ligne)</th>
                       <th className="py-2.5 px-3">Modèle &amp; Débordement</th>
                       <th className="py-2.5 px-3">Détail Débit Généré</th>
                       <th className="py-2.5 px-3 text-right">Action</th>
@@ -6923,16 +7059,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono">
                     {(() => {
-                      const activeRef = (getActiveNumCommande() || '').trim();
-                      const precadresFiltres = activeRef
-                        ? lignesPrecadres.filter(p => (p.refCommande || '').trim() === activeRef)
+                      const precadresFiltres = filterCmdActive && filterCmdActive !== 'TOUTES'
+                        ? lignesPrecadres.filter(p => (p.refCommande || '').trim() === filterCmdActive)
                         : lignesPrecadres;
 
                       if (precadresFiltres.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={6} className="py-6 text-center text-slate-500 font-sans italic text-xs">
-                              Aucun précadre dans cette commande N° {activeRef || 'en cours'}. Saisissez L × H ci-dessus puis validez.
+                            <td colSpan={8} className="py-6 text-center text-slate-500 font-sans italic text-xs">
+                              {lignesPrecadres.length === 0
+                                ? 'Aucun précadre enregistré pour le moment. Saisissez L × H ci-dessus puis validez.'
+                                : `Aucun précadre pour le filtre "${filterCmdActive}". Cliquez sur "Toutes les commandes" pour afficher l\'ensemble.`}
                             </td>
                           </tr>
                         );
@@ -6953,12 +7090,21 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                 />
                               </td>
                               <td className="py-2 px-2">
+                                <input
+                                  type="text"
+                                  value={editPrecadreForm.refCommande}
+                                  onChange={e => setEditPrecadreForm({ ...editPrecadreForm, refCommande: e.target.value })}
+                                  className="w-full bg-slate-950 border border-purple-500 rounded px-1.5 py-1 text-xs text-amber-300 font-mono"
+                                  placeholder="Réf Commande"
+                                />
+                              </td>
+                              <td className="py-2 px-2">
                                 <div className="flex items-center gap-1">
                                   <input
                                     type="number"
                                     value={editPrecadreForm.largeur}
                                     onChange={e => setEditPrecadreForm({ ...editPrecadreForm, largeur: Number(e.target.value) })}
-                                    className="w-20 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-slate-100 font-black"
+                                    className="w-16 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-slate-100 font-black"
                                     placeholder="L"
                                   />
                                   <span className="text-slate-500 text-xs">×</span>
@@ -6966,19 +7112,43 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                     type="number"
                                     value={editPrecadreForm.hauteur}
                                     onChange={e => setEditPrecadreForm({ ...editPrecadreForm, hauteur: Number(e.target.value) })}
-                                    className="w-20 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-slate-100 font-black"
+                                    className="w-16 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-slate-100 font-black"
                                     placeholder="H"
                                   />
                                 </div>
                               </td>
-                              <td className="py-2 px-2">
+                              <td className="py-2 px-2 text-center">
                                 <input
                                   type="number"
                                   min="1"
                                   value={editPrecadreForm.quantite}
                                   onChange={e => setEditPrecadreForm({ ...editPrecadreForm, quantite: Math.max(1, Number(e.target.value)) })}
-                                  className="w-14 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-amber-300 font-bold text-center"
+                                  className="w-12 bg-slate-950 border border-purple-500 rounded px-1 py-1 text-xs text-amber-300 font-bold text-center"
                                 />
+                              </td>
+                              <td className="py-2 px-2 space-y-1">
+                                <select
+                                  value={editPrecadreForm.articleCode}
+                                  onChange={e => {
+                                    const code = e.target.value;
+                                    const found = articlesPrecadre.find(a => a.code_art === code);
+                                    const is55 = (code === 'ART0061' || (found?.designation || '').includes('55'));
+                                    const bchCode = is55 ? 'ART0066' : 'ART0065';
+                                    const bchArt = articlesBouchonPrecadre.find(b => b.code_art === bchCode);
+                                    setEditPrecadreForm({
+                                      ...editPrecadreForm,
+                                      articleCode: code,
+                                      articleDesignation: found?.designation || code,
+                                      bouchonArticleCode: bchCode,
+                                      bouchonArticleDesignation: bchArt?.designation || bchCode
+                                    });
+                                  }}
+                                  className="w-full bg-slate-900 border border-purple-500/50 rounded px-1 py-0.5 text-[10px] text-purple-200"
+                                >
+                                  {articlesPrecadre.map(a => (
+                                    <option key={a.code_art} value={a.code_art}>{a.designation}</option>
+                                  ))}
+                                </select>
                               </td>
                               <td className="py-2 px-2 font-sans text-[10px] space-y-1">
                                 <select
@@ -7035,7 +7205,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         const debSup = p.debordementSuperieur !== undefined ? p.debordementSuperieur : 100;
                         const debInf = p.debordementInferieur !== undefined ? p.debordementInferieur : 300;
 
-                        const { hMontant, lTraverse, lRenfortSeul, lDemiRenfortCroise, hRenfort, typeAssemblage } = getDimensionsPrecadrePiece(
+                        const { hMontant, lTraverse, lRenfortSeul, lDemiRenfortCroise, hRenfort } = getDimensionsPrecadrePiece(
                           p.largeur,
                           p.hauteur,
                           p.modeDebordement || 'SUPERIEUR_INFERIEUR',
@@ -7043,13 +7213,53 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           debInf
                         );
 
+                        const currentArtCode = p.articleCode || precadreConfig.articleCode || 'ART0060';
+                        const currentArt = articlesPrecadre.find(a => a.code_art === currentArtCode) || articlesPrecadre[0];
+
                         return (
                           <tr key={p.id || idx} className="hover:bg-slate-900/50 transition">
                             <td className="py-2 px-3 text-amber-300 font-bold">{p.repere}</td>
-                            <td className="py-2 px-3 text-slate-100 font-bold">{p.largeur} × {p.hauteur} mm</td>
-                            <td className="py-2 px-3 text-slate-200">{p.quantite}</td>
+                            <td className="py-2 px-3">
+                              <span className="px-2 py-0.5 rounded bg-slate-900 border border-amber-500/40 text-amber-300 font-mono font-bold text-[11px] whitespace-nowrap">
+                                {p.refCommande || 'CMD-PRC'}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-slate-100 font-bold whitespace-nowrap">{p.largeur} × {p.hauteur} mm</td>
+                            <td className="py-2 px-3 text-slate-200 text-center font-bold">{p.quantite}</td>
                             <td className="py-2 px-3 font-sans text-[11px]">
-                              <div className="space-y-1.5 min-w-[165px]">
+                              <div className="space-y-1 min-w-[150px]">
+                                <select
+                                  value={currentArtCode}
+                                  onChange={e => {
+                                    const newCode = e.target.value;
+                                    const artFound = articlesPrecadre.find(a => a.code_art === newCode);
+                                    const is55 = (newCode === 'ART0061' || (artFound?.designation || '').includes('55'));
+                                    const newBchCode = is55 ? 'ART0066' : 'ART0065';
+                                    const bchArt = articlesBouchonPrecadre.find(b => b.code_art === newBchCode);
+                                    setLignesPrecadres(prev => prev.map(item => item.id === p.id ? {
+                                      ...item,
+                                      articleCode: newCode,
+                                      articleDesignation: artFound?.designation || newCode,
+                                      bouchonArticleCode: newBchCode,
+                                      bouchonArticleDesignation: bchArt?.designation || newBchCode
+                                    } : item));
+                                    showFlashNotification(`✓ Ligne ${p.repere} : Profilé sélectionné : "${artFound?.designation || newCode}"`, 'success');
+                                  }}
+                                  className="w-full bg-slate-950 border border-purple-500/40 hover:border-purple-400 rounded-md px-1.5 py-0.5 text-xs text-purple-200 font-bold focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                                  title="Changer le profilé spécifique de ce précadre"
+                                >
+                                  {articlesPrecadre.map(a => (
+                                    <option key={a.code_art} value={a.code_art}>{a.designation}</option>
+                                  ))}
+                                </select>
+                                <div className="text-[10px] text-slate-400 font-sans flex items-center gap-1">
+                                  <span>Bouchon :</span>
+                                  <span className="text-slate-300 font-semibold">{p.bouchonArticleDesignation || (currentArtCode === 'ART0061' ? 'BOUCHON 55' : 'BOUCHON 43')}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-2 px-3 font-sans text-[11px]">
+                              <div className="space-y-1.5 min-w-[155px]">
                                 <div>
                                   <select
                                     value={p.figure || 'VIDE'}
@@ -7059,7 +7269,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                       const figLabel = fig === 'VIDE' ? '1. Vide' : fig === 'RENFORT_L1' ? '2. + Renfort L1' : fig === 'RENFORT_H1' ? '3. + Renfort H1' : '4. Croisé L1+H1';
                                       showFlashNotification(`✓ Ligne ${p.repere} : Figure actualisée en "${figLabel}"`, 'success');
                                     }}
-                                    className="w-full bg-slate-950 border border-purple-500/50 hover:border-purple-400 rounded-md px-1.5 py-1 text-xs text-purple-200 font-bold focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
+                                    className="w-full bg-slate-950 border border-slate-700 hover:border-purple-400 rounded-md px-1.5 py-0.5 text-xs text-slate-200 font-semibold focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
                                     title="Changer la figure de renfort pour ce précadre"
                                   >
                                     <option value="VIDE">⬜ 1. Vide (sans renfort)</option>
@@ -7097,7 +7307,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                 )}
                                 {p.figure === 'RENFORT_CROISE' && (
                                   <div className="text-sky-300 font-bold">
-                                    + 2 × Demi-Renforts (L1 &amp; L2) = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
+                                    + 2 × Demi-Renforts = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
                                   </div>
                                 )}
                                 {(p.figure === 'RENFORT_H1' || p.figure === 'RENFORT_CROISE') && (
@@ -7120,6 +7330,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                 <button
                                   onClick={() => handleSupprimerLigne('PRECADRE', p.id)}
                                   className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition cursor-pointer"
+                                  title="Supprimer cette ligne"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>

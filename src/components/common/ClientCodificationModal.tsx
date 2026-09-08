@@ -44,7 +44,10 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
     prefixeRepereSpecial: '',
     type: 'AUTRE',
     description: '',
-    actif: true
+    actif: true,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   });
 
   // Simulateur de repère en direct
@@ -80,7 +83,10 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
       badgeBg: editForm.badgeBg || 'bg-sky-500/20 border-sky-500/30',
       description: editForm.description || '',
       actif: editForm.actif ?? true,
-      ordre: editForm.ordre || 0
+      ordre: editForm.ordre || 0,
+      peintureParDefaut: editForm.peintureParDefaut ?? false,
+      montageSousFaceParDefaut: editForm.montageSousFaceParDefaut ?? true,
+      avecPlaqueParDefaut: editForm.avecPlaqueParDefaut ?? false
     };
 
     await onUpsertCodification(codifToSave);
@@ -105,7 +111,10 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
       badgeBg: newForm.type === 'CRISTAL' ? 'bg-purple-500/20 border-purple-500/30' : newForm.type === 'SOMADAL' ? 'bg-sky-500/20 border-sky-500/30' : 'bg-amber-500/20 border-amber-500/30',
       description: newForm.description || '',
       actif: true,
-      ordre: codifications.length + 1
+      ordre: codifications.length + 1,
+      peintureParDefaut: newForm.peintureParDefaut ?? false,
+      montageSousFaceParDefaut: newForm.montageSousFaceParDefaut ?? true,
+      avecPlaqueParDefaut: newForm.avecPlaqueParDefaut ?? false
     };
 
     await onUpsertCodification(newCodif);
@@ -117,7 +126,10 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
       prefixeRepereSpecial: '',
       type: 'AUTRE',
       description: '',
-      actif: true
+      actif: true,
+      peintureParDefaut: false,
+      montageSousFaceParDefaut: true,
+      avecPlaqueParDefaut: false
     });
   };
 
@@ -323,7 +335,15 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
                     <label className="block text-[11px] text-slate-400 mb-1">Type de Réseau</label>
                     <select
                       value={newForm.type || 'AUTRE'}
-                      onChange={(e) => setNewForm({ ...newForm, type: e.target.value as any })}
+                      onChange={(e) => {
+                        const newType = e.target.value as any;
+                        setNewForm({
+                          ...newForm,
+                          type: newType,
+                          // Si nom contient Cristal Alger ou Cristal Constantine/CNE, Peinture activée
+                          peintureParDefaut: newForm.peintureParDefaut || (newType === 'CRISTAL' && (newForm.nom?.toUpperCase().includes('ALGER') || newForm.nom?.toUpperCase().includes('CONST') || newForm.nom?.toUpperCase().includes('CNE')))
+                        });
+                      }}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:border-amber-500 focus:outline-none"
                     >
                       <option value="SOMADAL">SOMODAL (Menuisiers / Pro)</option>
@@ -333,6 +353,46 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
                     </select>
                   </div>
                 </div>
+
+                {/* Options Caisson par défaut */}
+                <div className="mt-3 p-3 bg-slate-950/80 border border-slate-800 rounded-lg">
+                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <span>📦 Préférences Caisson par Défaut</span>
+                    <span className="text-[10px] text-slate-400 font-normal normal-case">(appliquées automatiquement lors du choix de cette agence)</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="flex items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded cursor-pointer hover:bg-slate-800/80 transition">
+                      <input
+                        type="checkbox"
+                        checked={newForm.peintureParDefaut ?? false}
+                        onChange={(e) => setNewForm({ ...newForm, peintureParDefaut: e.target.checked })}
+                        className="rounded border-slate-700 text-amber-500 focus:ring-0"
+                      />
+                      <span className="text-xs text-slate-200 font-medium">🎨 Peinture par défaut</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded cursor-pointer hover:bg-slate-800/80 transition">
+                      <input
+                        type="checkbox"
+                        checked={newForm.montageSousFaceParDefaut ?? true}
+                        onChange={(e) => setNewForm({ ...newForm, montageSousFaceParDefaut: e.target.checked })}
+                        className="rounded border-slate-700 text-sky-500 focus:ring-0"
+                      />
+                      <span className="text-xs text-slate-200 font-medium">🔧 Montage Sous-Face Atelier</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded cursor-pointer hover:bg-slate-800/80 transition">
+                      <input
+                        type="checkbox"
+                        checked={newForm.avecPlaqueParDefaut ?? false}
+                        onChange={(e) => setNewForm({ ...newForm, avecPlaqueParDefaut: e.target.checked })}
+                        className="rounded border-slate-700 text-emerald-500 focus:ring-0"
+                      />
+                      <span className="text-xs text-slate-200 font-medium">🛡️ Avec Plaque par défaut</span>
+                    </label>
+                  </div>
+                </div>
+
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     onClick={() => setIsAddingNew(false)}
@@ -361,6 +421,7 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
                     <th className="px-4 py-3 text-center">Préfixe Commande</th>
                     <th className="px-4 py-3 text-center">Préfixe Repère</th>
                     <th className="px-4 py-3 text-center">Exemple Repère (Client F)</th>
+                    <th className="px-4 py-3 text-center">Préférences Caisson (Défauts)</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -417,6 +478,37 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className="font-mono text-slate-400">En cours...</span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex flex-col gap-1 items-start bg-slate-900/90 p-2 rounded border border-slate-700">
+                              <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  checked={editForm.peintureParDefaut ?? false}
+                                  onChange={(e) => setEditForm({ ...editForm, peintureParDefaut: e.target.checked })}
+                                  className="rounded border-slate-700 text-amber-500 text-xs"
+                                />
+                                <span>🎨 Peinture</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  checked={editForm.montageSousFaceParDefaut ?? true}
+                                  onChange={(e) => setEditForm({ ...editForm, montageSousFaceParDefaut: e.target.checked })}
+                                  className="rounded border-slate-700 text-sky-500 text-xs"
+                                />
+                                <span>🔧 Montage SF</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-200">
+                                <input
+                                  type="checkbox"
+                                  checked={editForm.avecPlaqueParDefaut ?? false}
+                                  onChange={(e) => setEditForm({ ...editForm, avecPlaqueParDefaut: e.target.checked })}
+                                  className="rounded border-slate-700 text-emerald-500 text-xs"
+                                />
+                                <span>🛡️ Plaque</span>
+                              </label>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
@@ -480,6 +572,45 @@ export const ClientCodificationModal: React.FC<ClientCodificationModalProps> = (
                           <span className="font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
                             {exRepere}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="inline-flex flex-wrap gap-1 justify-center items-center max-w-[210px]">
+                            {/* Peinture */}
+                            <span
+                              title={`Peinture caisson : ${c.peintureParDefaut ? 'ACTIVÉE par défaut' : 'NON activée par défaut'}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                c.peintureParDefaut
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                  : 'bg-slate-800/60 text-slate-500 border-slate-700/50'
+                              }`}
+                            >
+                              🎨 {c.peintureParDefaut ? 'Peinture OUI' : 'Brut'}
+                            </span>
+
+                            {/* Montage Sous-Face */}
+                            <span
+                              title={`Montage sous-face : ${c.montageSousFaceParDefaut !== false ? 'Montée en atelier par défaut' : 'Non montée (séparée)'}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                c.montageSousFaceParDefaut !== false
+                                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                                  : 'bg-slate-800/60 text-slate-400 border-slate-700/50'
+                              }`}
+                            >
+                              🔧 {c.montageSousFaceParDefaut !== false ? 'SF Montée' : 'SF Séparée'}
+                            </span>
+
+                            {/* Avec Plaque */}
+                            <span
+                              title={`Plaque caisson : ${c.avecPlaqueParDefaut ? 'Avec Plaque par défaut' : 'Sans Plaque par défaut'}`}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                c.avecPlaqueParDefaut
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                  : 'bg-slate-800/60 text-slate-500 border-slate-700/50'
+                              }`}
+                            >
+                              🛡️ {c.avecPlaqueParDefaut ? 'Avec Plaque' : 'Sans Plaque'}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">

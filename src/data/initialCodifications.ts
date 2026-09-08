@@ -12,7 +12,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-purple-500/20 border-purple-500/30',
     description: 'Showroom Particuliers & Habitat (Oran)',
     actif: true,
-    ordre: 1
+    ordre: 1,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'SOMODAL-ORAN',
@@ -25,7 +28,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-sky-500/20 border-sky-500/30',
     description: 'Client Pro / Menuisiers & Promoteurs (Oran)',
     actif: true,
-    ordre: 2
+    ordre: 2,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'CRISTAL-ALGER',
@@ -38,7 +44,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-purple-500/20 border-purple-500/30',
     description: 'Showroom Particuliers & Habitat (Alger)',
     actif: true,
-    ordre: 3
+    ordre: 3,
+    peintureParDefaut: true, // Peinture activée par défaut pour CRISTAL Alger
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'SOMODAL-ALGER',
@@ -51,7 +60,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-sky-500/20 border-sky-500/30',
     description: 'Client Pro / Menuisiers & Promoteurs (Alger)',
     actif: true,
-    ordre: 4
+    ordre: 4,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'CRISTAL-CONST',
@@ -64,7 +76,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-purple-500/20 border-purple-500/30',
     description: 'Showroom Particuliers & Habitat (Constantine)',
     actif: true,
-    ordre: 5
+    ordre: 5,
+    peintureParDefaut: true, // Peinture activée par défaut pour CRISTAL CNE / Constantine
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'SOMODAL-CONST',
@@ -77,7 +92,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-sky-500/20 border-sky-500/30',
     description: 'Client Pro / Menuisiers & Promoteurs (Constantine)',
     actif: true,
-    ordre: 6
+    ordre: 6,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'ATELIER-ORAN',
@@ -90,7 +108,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-amber-500/20 border-amber-500/30',
     description: 'Sous-traitance & Fabrication Atelier Oran',
     actif: true,
-    ordre: 7
+    ordre: 7,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'ATELIER-CONST',
@@ -103,7 +124,10 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-amber-500/20 border-amber-500/30',
     description: 'Sous-traitance & Fabrication Atelier Constantine',
     actif: true,
-    ordre: 8
+    ordre: 8,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   },
   {
     id: 'CLIENT-DIRECT',
@@ -116,6 +140,9 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     badgeBg: 'bg-emerald-500/20 border-emerald-500/30',
     description: 'Commande directe atelier',
     actif: true,
-    ordre: 9
+    ordre: 9,
+    peintureParDefaut: false,
+    montageSousFaceParDefaut: true,
+    avecPlaqueParDefaut: false
   }
 ];
