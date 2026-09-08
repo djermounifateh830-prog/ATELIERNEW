@@ -747,20 +747,18 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
     return `
     <div class="section-container" style="page-break-inside:avoid;margin-bottom:14px;">
-      <div style="background:#fff;border:2.5px solid #000;color:#000;padding:6px 10px;margin-bottom:8px;border-radius:4px;display:flex;justify-content:space-between;align-items:center;page-break-after:avoid;">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <span style="background:#fff;color:#000;font-weight:900;font-size:15px;padding:3px 8px;border-radius:3px;text-transform:uppercase;border:2px solid #000;letter-spacing:0.5px;">
-            ${familleLabel}
-          </span>
-          <span style="color:#000;font-size:20px;font-weight:900;">&rarr;</span>
-          <strong style="font-size:22px;font-weight:900;color:#000;font-family:Consolas,monospace;text-transform:uppercase;letter-spacing:1px;background:#fff;padding:2px 10px;border:2px solid #000;border-radius:3px;">
-            ${profileDesignation}
-          </strong>
-        </div>
-        ${conditionsHtml ? `<span style="font-size:12px;color:#000;font-weight:bold;background:#fff;border:1.5px solid #000;padding:3px 8px;border-radius:3px;">${conditionsHtml}</span>` : ''}
+      <div style="background:#fff;border:2.5px solid #000;color:#000;padding:8px 14px;margin-bottom:8px;border-radius:6px;display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;text-align:center;page-break-after:avoid;">
+        <span style="background:#fff;color:#000;font-weight:900;font-size:20px;padding:4px 14px;border-radius:4px;text-transform:uppercase;border:2.5px solid #000;letter-spacing:0.5px;">
+          ${familleLabel}
+        </span>
+        <span style="color:#000;font-size:28px;font-weight:900;">&rarr;</span>
+        <strong style="font-size:36px;font-weight:900;color:#000;font-family:Consolas,monospace;text-transform:uppercase;letter-spacing:2px;background:#fff;padding:4px 18px;border:3px solid #000;border-radius:6px;">
+          ${profileDesignation}
+        </strong>
+        ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:13px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:4px 10px;border-radius:4px;">${c}</span>`).join(' ') : ''}
       </div>
       ${sec.groupesBarresNeuves.length > 0 ? `
-      <div style="font-size:13px;font-weight:900;margin:6px 0 4px 0;border-left:4px solid #000;padding-left:8px;text-transform:uppercase;color:#000;">
+      <div style="font-size:14px;font-weight:900;margin:6px 0 4px 0;text-align:center;text-transform:uppercase;color:#000;">
         COUPES SUR BARRES NEUVES (${sec.resultat.total_barres_neuves} barre(s) — Rendement : ${sec.resultat.taux_rendement}%)
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:10px;table-layout:fixed;border:2.5px solid #000;">
@@ -785,7 +783,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         <tbody>${barresHTML}</tbody>
       </table>` : ''}
       ${sec.groupesChutesRecup.length > 0 ? `
-      <div style="font-size:13px;font-weight:900;margin:6px 0 4px 0;border-left:4px solid #000;padding-left:8px;text-transform:uppercase;color:#000;">
+      <div style="font-size:14px;font-weight:900;margin:6px 0 4px 0;text-align:center;text-transform:uppercase;color:#000;">
         COUPES SUR CHUTES DU STOCK (${sec.resultat.total_chutes_recyclees} chute(s))
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:10px;table-layout:fixed;border:2.5px solid #000;">
@@ -848,8 +846,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     const mstqToileItems = (lignesMoustiquaires || []).filter(m => m.typeFabrication !== 'PROFILES_SEULS');
     const toilePlisseeHTML = mstqToileItems.length > 0 ? `
       <div style="margin-top:12px;margin-bottom:12px;page-break-inside:avoid;">
-        <div style="font-weight:900;font-size:13px;margin:8px 0 4px 0;text-transform:uppercase;color:#000;background:#fff;border:2px solid #000;padding:6px 10px;">
-          🕸️ Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis & Cordes)
+        <div style="font-weight:900;font-size:14px;margin:12px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;background:#fff;border:2px solid #000;padding:6px 10px;border-radius:4px;">
+          D. Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis &amp; Cordes)
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;border:2px solid #000;margin-bottom:8px;table-layout:fixed;">
           <colgroup>
@@ -961,13 +959,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   </div>
 
   ${(matieresNeuvesFiltrees.length > 0 || chutesADestoquer.length > 0 || accessoiresFiltres.length > 0 || toilePlisseeHTML) ? `
-  <div style="background:#fff;color:#000;border:2px solid #000;padding:6px 10px;font-weight:900;font-size:13px;text-transform:uppercase;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;border-radius:4px;">
-    <span>📋 PARTIE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)</span>
-    <span style="font-size:11px;font-weight:bold;color:#000;">Prélèvement Profilés &amp; Matières</span>
+  <div style="background:#fff;color:#000;border:2.5px solid #000;padding:8px 12px;font-weight:900;font-size:15px;text-transform:uppercase;margin-bottom:10px;text-align:center;border-radius:4px;">
+    📋 PARTIE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)
   </div>
 
   ${matieresNeuvesFiltrees.length > 0 ? `
-  <div style="font-weight:900;font-size:13px;margin:6px 0 4px 0;text-transform:uppercase;color:#000;">A. Barres Neuves à sortir du Magasin :</div>
+  <div style="font-weight:900;font-size:14px;margin:8px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;">A. Barres Neuves à sortir du Magasin</div>
   <table style="table-layout:fixed;width:100%;border:2.5px solid #000;">
     <colgroup>
       <col style="width:52%;">
@@ -985,7 +982,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   </table>` : ''}
 
   ${chutesADestoquer.length > 0 ? `
-  <div style="font-weight:900;font-size:13px;margin:10px 0 4px 0;text-transform:uppercase;color:#000;">B. Chutes Récupérées à Déstocker des Casiers :</div>
+  <div style="font-weight:900;font-size:14px;margin:12px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;">B. Chutes Récupérées à Déstocker des Casiers</div>
   <table style="table-layout:fixed;width:100%;border:2.5px solid #000;">
     <colgroup>
       <col style="width:52%;">
@@ -1003,7 +1000,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   </table>` : ''}
 
   ${accessoiresFiltres.length > 0 ? `
-  <div style="font-weight:900;font-size:13px;margin:10px 0 4px 0;text-transform:uppercase;color:#000;">C. Accessoires à Préparer :</div>
+  <div style="font-weight:900;font-size:14px;margin:12px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;">C. Accessoires à Préparer</div>
   <table style="table-layout:fixed;width:100%;border:2.5px solid #000;">
     <colgroup>
       <col style="width:52%;">
@@ -1025,56 +1022,19 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   <!-- PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS -->
   <div style="margin-top:16px;border-top:3px solid #000;padding-top:10px;">
-    <div style="background:#fff;color:#000;border:2px solid #000;padding:6px 12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-radius:4px;">
-      <div>
-        <div style="font-size:16px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:0.5px;">
-          ✂️ OPTIMISATION DE DÉCOUPE
-        </div>
-        <div style="font-size:11px;color:#000;font-weight:bold;">Plans de coupe profilés et débits atelier</div>
+    <div style="background:#fff;color:#000;border:2.5px solid #000;padding:8px 12px;margin-bottom:12px;border-radius:4px;text-align:center;">
+      <div style="font-size:18px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:1px;">
+        ✂️ OPTIMISATION DE DÉCOUPE
       </div>
-      <div style="text-align:right;">
-        <span style="font-size:11px;color:#000;text-transform:uppercase;font-weight:bold;margin-right:6px;">COMMANDE N° :</span>
-        <span style="font-size:18px;font-weight:900;font-family:Consolas,monospace;color:#000;background:#fff;padding:2px 8px;border:2px solid #000;border-radius:3px;">${cmdAffichee}</span>
+      <div style="font-size:12px;color:#000;font-weight:bold;margin-top:2px;">
+        Plans de coupe profilés et débits atelier — Commande N° : <span style="font-family:Consolas,monospace;font-size:15px;font-weight:900;border:1.5px solid #000;padding:1px 6px;border-radius:3px;">${cmdAffichee}</span>
       </div>
     </div>
 
-    ${sectionsParFamille.caissons.length > 0 ? `
-    <div style="page-break-inside:avoid;margin-bottom:12px;">
-      <div class="famille-header">
-        <span>📦 FAMILLE 1 : CAISSONS TUNNEL &amp; SOUS-FACES ALU</span>
-        <span style="font-size:12px;font-family:Consolas,monospace;font-weight:bold;">
-          ${numCommandeCaisson ? `N° Cmd: ${numCommandeCaisson}` : ''}
-        </span>
-      </div>
-      ${caissonsHTML}
-    </div>` : ''}
-
-    ${sectionsParFamille.tabliers.length > 0 ? `
-    <div style="page-break-inside:avoid;margin-bottom:12px;">
-      <div class="famille-header">
-        <span>🚪 FAMILLE 2 : VOLETS &amp; TABLIERS</span>
-        <span style="font-size:12px;font-family:Consolas,monospace;font-weight:bold;">${numCommandeTablier ? `Cmd: ${numCommandeTablier}` : ''}</span>
-      </div>
-      ${tabliersHTML}
-    </div>` : ''}
-
-    ${sectionsParFamille.precadres.length > 0 ? `
-    <div style="page-break-inside:avoid;margin-bottom:12px;">
-      <div class="famille-header">
-        <span>🔲 FAMILLE 3 : PRÉCADRES ALUMINIUM</span>
-        <span style="font-size:12px;font-family:Consolas,monospace;font-weight:bold;">${numCommandePrecadre ? `Cmd: ${numCommandePrecadre}` : ''}</span>
-      </div>
-      ${precadresHTML}
-    </div>` : ''}
-
-    ${sectionsParFamille.moustiquaires.length > 0 ? `
-    <div style="page-break-inside:avoid;margin-bottom:12px;">
-      <div class="famille-header">
-        <span>🖼️ FAMILLE 4 : MOUSTIQUAIRES (Profilés Cadre, Coulisse, Barre Inférieure)</span>
-        <span style="font-size:12px;font-family:Consolas,monospace;font-weight:bold;">${numCommandeMoustiquaire ? `Cmd: ${numCommandeMoustiquaire}` : ''}</span>
-      </div>
-      ${mstqHTML}
-    </div>` : ''}
+    ${caissonsHTML}
+    ${tabliersHTML}
+    ${precadresHTML}
+    ${mstqHTML}
   </div>
 </body>
 </html>`;
@@ -1335,23 +1295,21 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
     return (
       <div key={sIdx} className="space-y-3 of-avoid-break pt-2">
-        {/* Titre du profilé - TRÈS GRAND, VISIBLE, FOND BLANC ET BORDURE NOIRE NETTE */}
-        <div className="bg-white border-2 border-black text-black p-3 sm:p-4 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            <span className="bg-white text-black font-black text-sm sm:text-base px-3.5 py-1.5 rounded-lg uppercase tracking-wider border-2 border-black">
-              {familleLabel}
-            </span>
-            <span className="text-black text-2xl font-black">→</span>
-            <span className="text-xl sm:text-3xl font-black text-black font-mono tracking-wider uppercase bg-white px-4 py-1.5 rounded-lg border-2 border-black">
-              {profileDesignation}
-            </span>
-          </div>
+        {/* Titre du profilé - TRÈS GRAND, VISIBLE, CENTRÉ, FOND BLANC ET BORDURE NOIRE NETTE */}
+        <div className="bg-white border-[2.5px] border-black text-black p-3 sm:p-4 rounded-xl flex items-center justify-center gap-3 sm:gap-4 flex-wrap text-center">
+          <span className="bg-white text-black font-black text-base sm:text-xl px-4 py-2 rounded-lg uppercase tracking-wider border-2 border-black">
+            {familleLabel}
+          </span>
+          <span className="text-black text-2xl sm:text-3xl font-black">→</span>
+          <span className="text-2xl sm:text-4xl lg:text-5xl font-black text-black font-mono tracking-wider uppercase bg-white px-5 py-2 rounded-xl border-[3px] border-black">
+            {profileDesignation}
+          </span>
           {conditionsParts.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
               {conditionsParts.map((c, i) => (
                 <span
                   key={i}
-                  className="text-xs font-black px-2.5 py-1 rounded border-2 border-black bg-white text-black"
+                  className="text-xs sm:text-sm font-black px-3 py-1 rounded border-2 border-black bg-white text-black"
                 >
                   {c}
                 </span>
@@ -1363,15 +1321,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         {/* Coupes sur Barres Neuves */}
         {sec.groupesBarresNeuves.length > 0 && (
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs sm:text-sm font-black uppercase text-black px-1">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-5 bg-black rounded-xs"></div>
-                <span className="text-black font-black text-sm sm:text-base">
-                  COUPES SUR BARRES NEUVES ({sec.resultat.total_barres_neuves} barre(s))
-                </span>
-              </div>
-              <span className="text-xs font-mono text-black font-black bg-white px-2.5 py-1 rounded border-2 border-black">
-                Rendement : {sec.resultat.taux_rendement}%
+            <div className="flex items-center justify-center text-xs sm:text-sm font-black uppercase text-black px-1 text-center">
+              <span className="text-black font-black text-sm sm:text-base">
+                COUPES SUR BARRES NEUVES ({sec.resultat.total_barres_neuves} barre(s) — Rendement : {sec.resultat.taux_rendement}%)
               </span>
             </div>
             <div className="border-[3px] border-black overflow-hidden rounded-lg shadow-sm">
@@ -1462,8 +1414,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         {/* Coupes sur Chutes du Stock */}
         {sec.groupesChutesRecup.length > 0 && (
           <div className="space-y-1.5 pt-1">
-            <div className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase text-black px-1">
-              <div className="w-2.5 h-5 bg-black rounded-xs"></div>
+            <div className="flex items-center justify-center text-xs sm:text-sm font-black uppercase text-black px-1 text-center">
               <span className="text-black font-black text-sm sm:text-base">
                 COUPES SUR CHUTES DU STOCK ({sec.resultat.total_chutes_recyclees} chute(s))
               </span>
@@ -1822,22 +1773,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
                 return (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between bg-white text-black border-2 border-black py-2.5 px-3.5 rounded-lg shadow-none">
-                      <div className="flex items-center gap-2.5">
-                        <PackageCheck className="w-5 h-5 text-black shrink-0" />
-                        <span className="font-black text-sm sm:text-base uppercase tracking-tight text-black">
-                          PARTIE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)
-                        </span>
-                      </div>
-                      <span className="text-xs text-slate-700 hidden sm:inline font-bold">Prélèvement profilés, chutes &amp; accessoires</span>
+                    <div className="bg-white text-black border-2 border-black py-2.5 px-4 rounded-lg shadow-none text-center">
+                      <span className="font-black text-sm sm:text-base uppercase tracking-tight text-black">
+                        📋 PARTIE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)
+                      </span>
                     </div>
 
                     {/* TABLEAU A : BARRES NEUVES DU MAGASIN */}
                     {matieresNeuves.length > 0 && (
                       <div className="space-y-1.5">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase text-black">
-                          <Layers className="w-4 h-4 text-black" />
-                          <span>A. Barres Neuves à prélever du Stock Magasin</span>
+                        <div className="text-xs sm:text-sm font-black uppercase text-black text-center">
+                          A. Barres Neuves à prélever du Stock Magasin
                         </div>
                         <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
@@ -1875,9 +1821,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     {/* TABLEAU B : CHUTES DU STOCK À DÉSTOCKER */}
                     {chutesADestoquer.length > 0 && (
                       <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase text-black">
-                          <Recycle className="w-4 h-4 text-black" />
-                          <span>B. Chutes Récupérées à Déstocker des Casiers</span>
+                        <div className="text-xs sm:text-sm font-black uppercase text-black text-center">
+                          B. Chutes Récupérées à Déstocker des Casiers
                         </div>
                         <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
@@ -1915,9 +1860,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     {/* TABLEAU C : ACCESSOIRES À PRÉPARER */}
                     {accessoiresFiltres.length > 0 && (
                       <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase text-black">
-                          <span className="text-base">📦</span>
-                          <span>C. Accessoires à Préparer</span>
+                        <div className="text-xs sm:text-sm font-black uppercase text-black text-center">
+                          C. Accessoires à Préparer
                         </div>
                         <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
@@ -1964,9 +1908,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               {/* TABLEAU D : DÉBIT TOILE PLISSÉE / MAILLE MSTQ (MATIÈRE PREMIÈRE) */}
               {lignesMoustiquaires && lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length > 0 && (
                 <div className="space-y-1.5 pt-1 of-avoid-break">
-                  <div className="flex items-center gap-2 text-xs sm:text-sm font-black uppercase text-black">
-                    <span className="text-base">🕸️</span>
-                    <span>D. Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis &amp; Cordes)</span>
+                  <div className="text-xs sm:text-sm font-black uppercase text-black text-center">
+                    D. Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis &amp; Cordes)
                   </div>
                   <div className="border-2 border-black overflow-hidden rounded">
                     <table className="w-full text-left text-sm border-collapse table-fixed">
@@ -2050,105 +1993,26 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             {/* PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS   */}
             {/* ========================================================================= */}
             <div className="space-y-4 pt-4 border-t-4 border-black">
-              <div className="flex items-center justify-between bg-white text-black p-3.5 rounded-lg border-2 border-black flex-wrap gap-3 shadow-none">
-                <div>
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-2xl">✂️</span>
-                    <span className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
-                      OPTIMISATION DE DÉCOUPE
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-700 font-bold ml-8">
-                    Plans de coupe profilés et débits atelier
-                  </div>
+              <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center shadow-none">
+                <div className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
+                  ✂️ OPTIMISATION DE DÉCOUPE
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs uppercase font-black text-black hidden sm:inline">COMMANDE N° :</span>
-                  <span className="text-xl sm:text-2xl font-mono font-black text-black bg-white px-3 py-1 rounded-md border-2 border-black">
-                    {cmdAffichee}
-                  </span>
+                <div className="text-xs text-black font-bold mt-1">
+                  Plans de coupe profilés et débits atelier — Commande N° : <span className="font-mono text-sm sm:text-base font-black px-2 py-0.5 rounded border border-black">{cmdAffichee}</span>
                 </div>
               </div>
 
-              {/* FAMILLE 1 : CAISSONS TUNNEL & SOUS-FACES ALU */}
-              {sectionsParFamille.caissons.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between bg-white text-black p-2.5 rounded-lg border-2 border-black flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">📦</span>
-                      <span className="font-black text-xs sm:text-sm uppercase tracking-wide text-black">
-                        FAMILLE 1 : CAISSONS TUNNEL &amp; SOUS-FACES ALU
-                      </span>
-                    </div>
-                    {numCommandeCaisson && (
-                      <span className="bg-white text-black px-2 py-0.5 rounded border border-black font-mono text-xs font-bold">
-                        N° Cmd : {numCommandeCaisson}
-                      </span>
-                    )}
-                  </div>
-                  {sectionsParFamille.caissons.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
-                </div>
-              )}
+              {/* Profilés Caissons & Sous-faces */}
+              {sectionsParFamille.caissons.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
 
-              {/* FAMILLE 2 : VOLETS & TABLIERS */}
-              {sectionsParFamille.tabliers.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between bg-white text-black p-2.5 rounded-lg border-2 border-black flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🚪</span>
-                      <span className="font-black text-xs sm:text-sm uppercase tracking-wide text-black">
-                        FAMILLE 2 : VOLETS &amp; TABLIERS (Lames, Lame Finale, Coulisses)
-                      </span>
-                    </div>
-                    {numCommandeTablier && (
-                      <span className="bg-white text-black px-2 py-0.5 rounded border border-black font-mono text-xs font-bold">
-                        N° Cmd Tablier : {numCommandeTablier}
-                      </span>
-                    )}
-                  </div>
-                  {sectionsParFamille.tabliers.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
-                </div>
-              )}
+              {/* Profilés Volets & Tabliers */}
+              {sectionsParFamille.tabliers.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
 
-              {/* FAMILLE 3 : PRÉCADRES ALUMINIUM */}
-              {sectionsParFamille.precadres.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between bg-white text-black p-2.5 rounded-lg border-2 border-black flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🔲</span>
-                      <span className="font-black text-xs sm:text-sm uppercase tracking-wide text-black">
-                        FAMILLE 3 : PRÉCADRES ALUMINIUM (Profilés, Renforts, Montants)
-                      </span>
-                    </div>
-                    {numCommandePrecadre && (
-                      <span className="bg-white text-black px-2 py-0.5 rounded border border-black font-mono text-xs font-bold">
-                        N° Cmd Précadre : {numCommandePrecadre}
-                      </span>
-                    )}
-                  </div>
-                  {sectionsParFamille.precadres.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
-                </div>
-              )}
+              {/* Profilés Précadres */}
+              {sectionsParFamille.precadres.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
 
-              {/* FAMILLE 4 : MOUSTIQUAIRES (Profilés Cadre & Coulisses) */}
-              {sectionsParFamille.moustiquaires.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between bg-white text-black p-2.5 rounded-lg border-2 border-black flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🖼️</span>
-                      <span className="font-black text-xs sm:text-sm uppercase tracking-wide text-black">
-                        FAMILLE 4 : MOUSTIQUAIRES (Profilés Cadre, Coulisse, Barre Inférieure)
-                      </span>
-                    </div>
-                    {numCommandeMoustiquaire && (
-                      <span className="bg-white text-black px-2 py-0.5 rounded border border-black font-mono text-xs font-bold">
-                        N° Cmd Moustiquaire : {numCommandeMoustiquaire}
-                      </span>
-                    )}
-                  </div>
-                  {sectionsParFamille.moustiquaires.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
-                </div>
-              )}
+              {/* Profilés Moustiquaires */}
+              {sectionsParFamille.moustiquaires.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
             </div>
 
           </div>
