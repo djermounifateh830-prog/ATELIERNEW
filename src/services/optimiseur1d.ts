@@ -27,6 +27,11 @@ interface PieceItem {
   donneurOrdre?: string;
 }
 
+interface ChuteStockItem {
+  id: string;
+  longueur: number;
+}
+
 interface SolutionPlan {
   barres: {
     longueurTotale: number;
@@ -35,6 +40,7 @@ interface SolutionPlan {
     reste: number;
     statut: 'Dechet' | 'STOCK' | 'SACRIFICE';
     isChuteStock: boolean;
+    chuteIdStock?: string;
     eboutage: number;
   }[];
   score: number;
@@ -448,7 +454,7 @@ export class OptimiseurCoupe1D {
    */
   private construireSolutionHeuristique(
     initialPool: PieceItem[],
-    poolChutes: number[],
+    poolChutes: ChuteStockItem[],
     modeHeuristique: 'PATTERN_MINING' | 'SAME_LENGTH_FIRST' | 'BFD' | 'FFD' | 'RANDOM' | 'KNAPSACK',
     recyclageChute: 'PROPRE_STRICT' | 'SANS_CHUTES' | 'TOLERANT' = 'PROPRE_STRICT'
   ): SolutionPlan {
@@ -461,14 +467,14 @@ export class OptimiseurCoupe1D {
     if (recyclageChute !== 'SANS_CHUTES') {
       const interdireSacrifice = recyclageChute === 'PROPRE_STRICT';
       // Trier les chutes de manière décroissante pour maximiser l'accueil des pièces
-      const chutesTriees = [...poolChutes].sort((a, b) => b - a);
+      const chutesTriees = [...poolChutes].sort((a, b) => b.longueur - a.longueur);
 
-      for (const longueurChute of chutesTriees) {
+      for (const chuteItem of chutesTriees) {
         if (pool.length === 0) break;
-        const knap = this.trouverMeilleurSacADos(pool, longueurChute, false, interdireSacrifice);
+        const knap = this.trouverMeilleurSacADos(pool, chuteItem.longueur, false, interdireSacrifice);
         if (knap && knap.pieces.length > 0) {
           const utilise = this.calculerEncombrement(knap.pieces, false);
-          const reste = longueurChute - utilise;
+          const reste = chuteItem.longueur - utilise;
           const statut = this.statutPourReste(reste);
 
           // Si le découpage dans cette chute produirait un SACRIFICE interdit,
@@ -478,12 +484,13 @@ export class OptimiseurCoupe1D {
           }
 
           planBarres.push({
-            longueurTotale: longueurChute,
+            longueurTotale: chuteItem.longueur,
             pieces: knap.pieces,
             utilise,
             reste,
             statut,
             isChuteStock: true,
+            chuteIdStock: chuteItem.id,
             eboutage: 0
           });
           const usedIds = new Set(knap.pieces.map(p => p.id));
@@ -950,17 +957,20 @@ export class OptimiseurCoupe1D {
       });
     }
 
-    const poolChutes: number[] = [];
+    const poolChutes: ChuteStockItem[] = [];
     for (const chute of chutesStock) {
       const qte = Math.max(0, Math.floor(chute.quantite || 0));
       const lg = Number(chute.longueur) || 0;
       if (lg > 0) {
         for (let i = 0; i < qte; i++) {
-          poolChutes.push(lg);
+          poolChutes.push({
+            id: chute.id || `chute-${lg}-${i}`,
+            longueur: lg
+          });
         }
       }
     }
-    poolChutes.sort((a, b) => b - a);
+    poolChutes.sort((a, b) => b.longueur - a.longueur);
 
     // Calcul de la Borne Inférieure Théorique
     const capaciteUtileBarre = this.longueurBarre - this.eboutage;
@@ -1061,6 +1071,7 @@ export class OptimiseurCoupe1D {
         const distinctCotes = new Set(piecesFinales.map(p => Math.round(p.longueur))).size;
         chutesUtilisees.push({
           id: `chute-util-${cCounter++}`,
+          chuteIdStock: b.chuteIdStock,
           pieces: piecesFinales,
           longueur_chute_depart: b.longueurTotale,
           utilise: b.utilise,

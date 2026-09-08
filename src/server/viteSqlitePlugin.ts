@@ -163,6 +163,16 @@ export function sqlitePlugin(): Plugin {
           atelierDb.closeOF(body.suivi, body.mouvements);
           return sendJson(res, { success: true });
         }
+        if (url.startsWith('/api/of/') && url.endsWith('/rollback-cloture') && method === 'POST') {
+          const id = decodeURIComponent(url.replace('/api/of/', '').replace('/rollback-cloture', ''));
+          atelierDb.rollbackClotureOF(id);
+          return sendJson(res, { success: true });
+        }
+        if (url.startsWith('/api/of/') && url.endsWith('/annuler') && method === 'POST') {
+          const id = decodeURIComponent(url.replace('/api/of/', '').replace('/annuler', ''));
+          atelierDb.annulerOF(id);
+          return sendJson(res, { success: true });
+        }
         if (url.startsWith('/api/of/') && method === 'DELETE') {
           const id = decodeURIComponent(url.replace('/api/of/', ''));
           atelierDb.deleteSuiviOF(id);

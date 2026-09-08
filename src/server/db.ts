@@ -161,16 +161,18 @@ class AtelierDatabase {
         id TEXT PRIMARY KEY,
         date TEXT NOT NULL,
         type TEXT NOT NULL,
-        of_id TEXT,
+        of_id TEXT REFERENCES suivis_of(id) ON DELETE SET NULL,
         num_commande TEXT,
         nom_client TEXT,
         article_code TEXT,
         designation TEXT,
         longueur_mm REAL,
         quantite INTEGER,
-        remarque TEXT
+        remarque TEXT,
+        chute_id TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_mvt_date ON mouvements_stock(date);
+      CREATE INDEX IF NOT EXISTS idx_mvt_of ON mouvements_stock(of_id);
 
       -- Table Fiches de Transfert & Bons de Livraison Transporteur
       CREATE TABLE IF NOT EXISTS fiches_transfert (
@@ -210,8 +212,9 @@ class AtelierDatabase {
       -- Table Réservations Chutes Barres (OFs en cours de fabrication)
       CREATE TABLE IF NOT EXISTS reservations_chutes (
         id TEXT PRIMARY KEY,
-        of_id TEXT NOT NULL,
+        of_id TEXT NOT NULL REFERENCES suivis_of(id) ON DELETE CASCADE,
         num_commande TEXT,
+        chute_id TEXT,
         sheet_name TEXT NOT NULL,
         longueur REAL NOT NULL,
         quantite INTEGER NOT NULL,
@@ -223,9 +226,9 @@ class AtelierDatabase {
       -- Table Réservations Barres Neuves (Articles alu réservés sur OFs en cours)
       CREATE TABLE IF NOT EXISTS reservations_barres (
         id TEXT PRIMARY KEY,
-        of_id TEXT NOT NULL,
+        of_id TEXT NOT NULL REFERENCES suivis_of(id) ON DELETE CASCADE,
         num_commande TEXT,
-        code_art TEXT NOT NULL,
+        code_art TEXT NOT NULL REFERENCES articles(code_art) ON DELETE CASCADE,
         quantite INTEGER NOT NULL,
         longueur REAL DEFAULT 6000,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -236,7 +239,7 @@ class AtelierDatabase {
       -- Table Réservations Chutes Toile Maille Moustiquaire
       CREATE TABLE IF NOT EXISTS reservations_maille (
         id TEXT PRIMARY KEY,
-        of_id TEXT NOT NULL,
+        of_id TEXT NOT NULL REFERENCES suivis_of(id) ON DELETE CASCADE,
         num_commande TEXT,
         chute_id TEXT,
         dimension_fixe REAL NOT NULL,
@@ -245,6 +248,17 @@ class AtelierDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_res_maille_of ON reservations_maille(of_id);
     `);
+
+    // Migrations pour tables existantes déjà initialisées sur disque
+    try {
+      this.db.exec('ALTER TABLE reservations_chutes ADD COLUMN chute_id TEXT;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN chute_id TEXT;');
+    } catch {}
+    try {
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_res_chutes_cid ON reservations_chutes(chute_id);');
+    } catch {}
   }
 
   private seedIfEmpty() {
@@ -353,7 +367,30 @@ class AtelierDatabase {
   }
 
   deleteArticle(code: string) {
-    this.db.prepare('DELETE FROM articles WHERE code_art = ?').run(code);
+    // Vérifier si l'article est actuellement réservé sur un OF en cours
+    const activeRes = (this.db.prepare(`
+      SELECT rb.num_commande, COUNT(*) as count
+      FROM reservations_barres rb
+      JOIN suivis_of s ON rb.of_id = s.id
+      WHERE rb.code_art = ? AND s.statut IN ('EMIS', 'RETOUR_EN_ATTENTE', 'EN_COURS')
+      GROUP BY rb.num_commande
+    `).all(code) as any[]);
+
+    if (activeRes && activeRes.length > 0) {
+      const ofList = activeRes.map((r: any) => r.num_commande || 'Inconnu').join(', ');
+      throw new Error(`Impossible de supprimer l'article "${code}" : il est actuellement réservé sur un ou plusieurs Ordres de Fabrication en cours (${ofList}). Clôturez ou annulez d'abord ces OFs.`);
+    }
+
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.db.prepare('DELETE FROM mapping_chutes WHERE code_art = ?').run(code);
+      this.db.prepare('DELETE FROM reservations_barres WHERE code_art = ?').run(code);
+      this.db.prepare('DELETE FROM articles WHERE code_art = ?').run(code);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   // ==========================================
@@ -369,19 +406,28 @@ class AtelierDatabase {
 
     // Récupérer les réservations actives d'OFs en cours (EMIS, RETOUR_EN_ATTENTE, EN_COURS)
     const activeRes = this.db.prepare(`
-      SELECT rc.sheet_name, rc.longueur, SUM(rc.quantite) as total_reserve
+      SELECT rc.chute_id, rc.sheet_name, rc.longueur, SUM(rc.quantite) as total_reserve
       FROM reservations_chutes rc
       JOIN suivis_of s ON rc.of_id = s.id
       WHERE s.statut IN ('EMIS', 'RETOUR_EN_ATTENTE', 'EN_COURS')
-      GROUP BY rc.sheet_name, rc.longueur
+      GROUP BY rc.chute_id, rc.sheet_name, rc.longueur
     `).all() as any[];
 
-    const resMap = new Map<string, number>();
+    // 1. Map des réservations par ID précis (Point 3.7 : traçabilité absolue)
+    const idResMap = new Map<string, number>();
+    // 2. Map des réservations par profilé / longueur (pour compatibilité ou réservations non spécifiées par ID)
+    const legacyResMap = new Map<string, number>();
+
     for (const ar of activeRes) {
-      const sheet = (ar.sheet_name || '').trim().toUpperCase();
-      const lg = Math.round(Number(ar.longueur) || 0);
-      const key = `${sheet}__${lg}`;
-      resMap.set(key, (resMap.get(key) || 0) + (Number(ar.total_reserve) || 0));
+      const qte = Number(ar.total_reserve) || 0;
+      if (ar.chute_id) {
+        idResMap.set(ar.chute_id, (idResMap.get(ar.chute_id) || 0) + qte);
+      } else {
+        const sheet = (ar.sheet_name || '').trim().toUpperCase();
+        const lg = Math.round(Number(ar.longueur) || 0);
+        const key = `${sheet}__${lg}`;
+        legacyResMap.set(key, (legacyResMap.get(key) || 0) + qte);
+      }
     }
 
     // 2. Charger les chutes physiques existantes et déduire les réservations pour les optimisations futures
@@ -393,24 +439,42 @@ class AtelierDatabase {
       const lg = Math.round(Number(r.longueur) || 0);
       const key = `${sheet}__${lg}`;
 
-      let reservedForLg = resMap.get(key) || 0;
-      let matchedKey = key;
-      if (reservedForLg === 0) {
-        // Recherche avec petite tolérance de 5mm si pas d'égalité stricte
-        for (const [k, count] of resMap.entries()) {
-          if (count > 0 && k.startsWith(`${sheet}__`)) {
-            const otherLg = parseInt(k.split('__')[1], 10);
-            if (Math.abs(otherLg - lg) <= 5) {
-              reservedForLg = count;
-              matchedKey = k;
-              break;
+      // a. Déduction prioritaire par ID unique
+      let usedReserve = 0;
+      let availablePhysical = physicalQte;
+      if (r.id && idResMap.has(r.id)) {
+        const reservedById = idResMap.get(r.id)!;
+        const matchedQte = Math.min(availablePhysical, reservedById);
+        usedReserve += matchedQte;
+        availablePhysical -= matchedQte;
+        idResMap.set(r.id, reservedById - matchedQte);
+      }
+
+      // b. Déduction secondaire par profilé et longueur pour le reste disponible
+      if (availablePhysical > 0) {
+        let reservedForLg = legacyResMap.get(key) || 0;
+        let matchedKey = key;
+        if (reservedForLg === 0) {
+          // Tolérance 5mm si pas d'égalité stricte
+          for (const [k, count] of legacyResMap.entries()) {
+            if (count > 0 && k.startsWith(`${sheet}__`)) {
+              const otherLg = parseInt(k.split('__')[1], 10);
+              if (Math.abs(otherLg - lg) <= 5) {
+                reservedForLg = count;
+                matchedKey = k;
+                break;
+              }
             }
           }
         }
+        if (reservedForLg > 0) {
+          const matchedLegacy = Math.min(availablePhysical, reservedForLg);
+          usedReserve += matchedLegacy;
+          availablePhysical -= matchedLegacy;
+          legacyResMap.set(matchedKey, reservedForLg - matchedLegacy);
+        }
       }
 
-      const usedReserve = Math.min(physicalQte, reservedForLg);
-      resMap.set(matchedKey, reservedForLg - usedReserve);
       const dispoQte = Math.max(0, physicalQte - usedReserve);
 
       map[r.sheet_name].push({
@@ -507,6 +571,20 @@ class AtelierDatabase {
 
   deleteChuteSheet(sheetName: string) {
     const clean = sheetName.trim();
+    // Vérifier si des chutes de cette famille sont actuellement réservées sur des OFs en cours
+    const activeRes = (this.db.prepare(`
+      SELECT rc.num_commande, COUNT(*) as count
+      FROM reservations_chutes rc
+      JOIN suivis_of s ON rc.of_id = s.id
+      WHERE rc.sheet_name = ? AND s.statut IN ('EMIS', 'RETOUR_EN_ATTENTE', 'EN_COURS')
+      GROUP BY rc.num_commande
+    `).all(clean) as any[]);
+
+    if (activeRes && activeRes.length > 0) {
+      const ofList = activeRes.map((r: any) => r.num_commande || 'Inconnu').join(', ');
+      throw new Error(`Impossible de supprimer la famille de chutes "${clean}" : elle contient des chutes réservées sur des Ordres de Fabrication en cours (${ofList}). Clôturez ou annulez d'abord ces OFs.`);
+    }
+
     this.db.exec('BEGIN TRANSACTION');
     try {
       this.db.prepare('DELETE FROM chute_families WHERE name = ?').run(clean);
@@ -975,7 +1053,7 @@ class AtelierDatabase {
     }
   }
 
-  upsertSuiviOF(s: SuiviOF) {
+  private internalUpsertSuiviOF(s: SuiviOF) {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO suivis_of (
         id, num_commande, nom_client, donneur_ordre,
@@ -989,59 +1067,62 @@ class AtelierDatabase {
     );
 
     // Gestion stricte des réservations de chutes et de barres dès émission
-    try {
-      this.db.prepare('DELETE FROM reservations_chutes WHERE of_id = ?').run(s.id);
-      this.db.prepare('DELETE FROM reservations_barres WHERE of_id = ?').run(s.id);
-      this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(s.id);
+    this.db.prepare('DELETE FROM reservations_chutes WHERE of_id = ?').run(s.id);
+    this.db.prepare('DELETE FROM reservations_barres WHERE of_id = ?').run(s.id);
+    this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(s.id);
 
-      if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE' || s.statut === 'EN_COURS') {
-        this.saveReservationsForOF(s);
-      }
-      this.syncArticlesQuantiteReservee();
-    } catch (resErr) {
-      console.warn('Erreur gestion des réservations dans upsertSuiviOF:', resErr);
+    if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE' || s.statut === 'EN_COURS') {
+      this.saveReservationsForOF(s);
     }
+    this.syncArticlesQuantiteReservee();
 
     // Synchronisation automatique avec les Dossiers de Commande (Statut passe à 'EN_COURS' dès l'émission de l'OF)
-    try {
-      if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE') {
-        const cmdRefs = (s.numCommande || '')
-          .split(/[\s,+/]+/)
-          .map(c => c.trim().toLowerCase())
-          .filter(Boolean);
+    if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE') {
+      const cmdRefs = (s.numCommande || '')
+        .split(/[\s,+/]+/)
+        .map(c => c.trim().toLowerCase())
+        .filter(Boolean);
 
-        const allDossiers = this.getDossiers();
-        for (const dossier of allDossiers) {
-          const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-          const subRefs = [
-            dossier.numCommandeCaisson,
-            dossier.numCommandeSousFace,
-            dossier.numCommandeTablier,
-            dossier.numCommandeMoustiquaire,
-            dossier.numCommandePrecadre
-          ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
-          const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
-          const matchesClient = s.nomClient && dossier.nomClientFinal &&
-            dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+      const allDossiers = this.getDossiers();
+      for (const dossier of allDossiers) {
+        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+        const subRefs = [
+          dossier.numCommandeCaisson,
+          dossier.numCommandeSousFace,
+          dossier.numCommandeTablier,
+          dossier.numCommandeMoustiquaire,
+          dossier.numCommandePrecadre
+        ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
+        const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
+        const matchesClient = s.nomClient && dossier.nomClientFinal &&
+          dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
 
-          if (matchesCmd || matchesSub || (matchesClient && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut))) {
-            if (dossier.statut !== 'EN_COURS' && dossier.statut !== 'CLOTURE' && dossier.statut !== 'FABRIQUE' && dossier.statut !== 'LIVRE') {
-              dossier.statut = 'EN_COURS';
-              this.upsertDossier(dossier);
-            }
+        if (matchesCmd || matchesSub || (matchesClient && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut))) {
+          if (dossier.statut !== 'EN_COURS' && dossier.statut !== 'CLOTURE' && dossier.statut !== 'FABRIQUE' && dossier.statut !== 'LIVRE') {
+            dossier.statut = 'EN_COURS';
+            this.upsertDossier(dossier);
           }
         }
       }
-    } catch (dossierSyncErr) {
-      console.warn('Erreur synchronisation statut dossier lors de upsertSuiviOF:', dossierSyncErr);
+    }
+  }
+
+  upsertSuiviOF(s: SuiviOF) {
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.internalUpsertSuiviOF(s);
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
     }
   }
 
   private saveReservationsForOF(s: SuiviOF) {
     const insertChuteRes = this.db.prepare(`
-      INSERT INTO reservations_chutes (id, of_id, num_commande, sheet_name, longueur, quantite)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO reservations_chutes (id, of_id, num_commande, chute_id, sheet_name, longueur, quantite)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     const insertBarreRes = this.db.prepare(`
       INSERT INTO reservations_barres (id, of_id, num_commande, code_art, quantite, longueur)
@@ -1055,7 +1136,7 @@ class AtelierDatabase {
     let resCounter = 1;
     const makeResId = (prefix: string) => `res-${prefix}-${s.id}-${resCounter++}`;
 
-    // 1. Chutes Barres
+    // 1. Chutes Barres (Point 3.7 : traçabilité absolue avec chuteId)
     if (Array.isArray(s.chutesReservees) && s.chutesReservees.length > 0) {
       for (const cr of s.chutesReservees) {
         if (!cr.sheetName || !cr.longueur || !cr.quantite) continue;
@@ -1063,13 +1144,14 @@ class AtelierDatabase {
           makeResId('c'),
           s.id,
           s.numCommande,
+          cr.chuteId || null,
           cr.sheetName.trim(),
           Math.round(Number(cr.longueur)),
           Math.max(1, Math.round(Number(cr.quantite)))
         );
       }
     } else if (Array.isArray(s.lignesRetour)) {
-      const mapLignesChutes = new Map<string, { sheetName: string; longueur: number; quantite: number }>();
+      const mapLignesChutes = new Map<string, { sheetName: string; longueur: number; quantite: number; chuteId?: string }>();
       for (const lr of s.lignesRetour) {
         if (lr.typeSupport === 'CHUTE_BARRE' && lr.longueurPrevue) {
           let sheetName = '';
@@ -1087,9 +1169,9 @@ class AtelierDatabase {
           }
           const lg = Math.round(Number(lr.longueurPrevue));
           if (sheetName && lg > 0) {
-            const key = `${sheetName}__${lg}`;
+            const key = lr.chuteId ? `CID__${lr.chuteId}` : `${sheetName}__${lg}`;
             if (!mapLignesChutes.has(key)) {
-              mapLignesChutes.set(key, { sheetName, longueur: lg, quantite: 0 });
+              mapLignesChutes.set(key, { sheetName, longueur: lg, quantite: 0, chuteId: lr.chuteId });
             }
             mapLignesChutes.get(key)!.quantite += 1;
           }
@@ -1100,6 +1182,7 @@ class AtelierDatabase {
           makeResId('c'),
           s.id,
           s.numCommande,
+          item.chuteId || null,
           item.sheetName,
           item.longueur,
           item.quantite
@@ -1201,6 +1284,95 @@ class AtelierDatabase {
     }
   }
 
+  /**
+   * Restaure intégralement et physiquement le stock pour un OF clôturé ou annulé (Point 3.3 de l'audit)
+   */
+  private rollbackStockForClosedOF(ofId: string) {
+    const mvts = this.db.prepare('SELECT * FROM mouvements_stock WHERE of_id = ?').all() as any[];
+
+    for (const m of mvts) {
+      // 1. Restituer les barres neuves et accessoires consommés
+      if ((m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_ACCESSOIRE' || m.type === 'SORTIE_ARTICLE') && m.article_code) {
+        const qte = m.quantite || 1;
+        this.db.prepare(
+          'UPDATE articles SET stock_physique = stock_physique + ? WHERE code_art = ?'
+        ).run(qte, m.article_code);
+      }
+
+      // 2. Traiter les chutes
+      if ((m.type === 'SORTIE_CHUTE' || m.type === 'ENTREE_CHUTE') && m.article_code && m.longueur_mm) {
+        let sheetName = '';
+        const mappedSheet = this.db.prepare('SELECT sheet_name FROM mapping_chutes WHERE code_art = ?').get(m.article_code) as any;
+        if (mappedSheet?.sheet_name) {
+          sheetName = mappedSheet.sheet_name;
+        } else {
+          const artRow = this.db.prepare('SELECT designation FROM articles WHERE code_art = ?').get(m.article_code) as any;
+          sheetName = artRow?.designation ? artRow.designation.trim() : '';
+        }
+
+        if (sheetName) {
+          const quantite = m.quantite || 1;
+          const isMaille = sheetName.toUpperCase() === 'MAILLE MSTQ' || sheetName.toUpperCase().includes('MAILLE') || (m.designation && m.designation.toUpperCase().includes('MAILLE'));
+
+          if (isMaille) {
+            if (m.type === 'SORTIE_CHUTE') {
+              const plis = Math.max(1, Math.round(m.longueur_mm / 20));
+              this.db.prepare(
+                'INSERT INTO chutes_maille (id, dimension_fixe, plis) VALUES (?, ?, ?)'
+              ).run(m.chute_id || `cht-m-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, m.longueur_mm, plis);
+            } else if (m.type === 'ENTREE_CHUTE') {
+              const matchedMaille = this.db.prepare(
+                'SELECT id FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
+              ).get(m.longueur_mm) as any;
+              if (matchedMaille?.id) {
+                this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchedMaille.id);
+              }
+            }
+          } else {
+            // Profilés barres alu
+            if (m.type === 'SORTIE_CHUTE') {
+              let reinserted = false;
+              if (m.chute_id) {
+                const existingById = this.db.prepare('SELECT id, quantite FROM chutes_barres WHERE id = ?').get(m.chute_id) as any;
+                if (existingById?.id) {
+                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite + ? WHERE id = ?').run(quantite, existingById.id);
+                  reinserted = true;
+                }
+              }
+              if (!reinserted) {
+                const existingSameLg = this.db.prepare(
+                  'SELECT id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 1.0 LIMIT 1'
+                ).get(sheetName, m.longueur_mm) as any;
+                if (existingSameLg?.id) {
+                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite + ? WHERE id = ?').run(quantite, existingSameLg.id);
+                } else {
+                  this.db.prepare(
+                    'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
+                  ).run(m.chute_id || `cht-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueur_mm, quantite);
+                }
+              }
+            } else if (m.type === 'ENTREE_CHUTE') {
+              const matched = this.db.prepare(
+                'SELECT rowid, id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 2.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
+              ).get(sheetName, m.longueur_mm, m.longueur_mm) as any;
+
+              if (matched?.rowid) {
+                if (matched.quantite <= quantite) {
+                  this.db.prepare('DELETE FROM chutes_barres WHERE rowid = ?').run(matched.rowid);
+                } else {
+                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, matched.rowid);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Supprimer tous les mouvements de stock enregistrés pour cet OF
+    this.db.prepare('DELETE FROM mouvements_stock WHERE of_id = ?').run(ofId);
+  }
+
   closeOF(s: SuiviOF, mvts: MouvementStock[]) {
     this.db.exec('BEGIN TRANSACTION');
     try {
@@ -1212,15 +1384,16 @@ class AtelierDatabase {
       const stmt = this.db.prepare(`
         INSERT OR REPLACE INTO mouvements_stock (
           id, date, type, of_id, num_commande, nom_client,
-          article_code, designation, longueur_mm, quantite, remarque
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          article_code, designation, longueur_mm, quantite, remarque, chute_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       for (const m of mvts) {
         stmt.run(
           m.id, m.date, m.type, m.ofId || null, m.numCommande || null,
           m.nomClient || null, m.articleCode || null, m.designation || null,
-          m.longueurMm || null, m.quantite || null, m.remarque || null
+          m.longueurMm || null, m.quantite || null, m.remarque || null,
+          m.chuteId || null
         );
 
         // 1. Décompte des barres neuves et accessoires (Joues, bouchons, articles magasin)
@@ -1233,7 +1406,6 @@ class AtelierDatabase {
 
         // 2. Traitement des chutes (Profilés alu ou Toiles moustiquaires)
         if ((m.type === 'SORTIE_CHUTE' || m.type === 'ENTREE_CHUTE') && m.articleCode && m.longueurMm) {
-          // Résolution de l'onglet/famille de chute
           let sheetName: string | undefined;
           const mappedSheet = this.db.prepare('SELECT sheet_name FROM mapping_chutes WHERE code_art = ?').get(m.articleCode) as { sheet_name?: string } | undefined;
           if (mappedSheet?.sheet_name) {
@@ -1252,7 +1424,6 @@ class AtelierDatabase {
             const isMaille = sheetName.toUpperCase() === 'MAILLE MSTQ' || sheetName.toUpperCase().includes('MAILLE') || (m.designation && m.designation.toUpperCase().includes('MAILLE'));
 
             if (isMaille) {
-              // Gestion spécifique Toile Moustiquaire
               if (m.type === 'SORTIE_CHUTE') {
                 const matchedMaille = this.db.prepare(
                   'SELECT id, dimension_fixe, plis FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
@@ -1267,12 +1438,30 @@ class AtelierDatabase {
                 ).run(`cht-m-${Date.now()}-${Math.floor(Math.random() * 1000)}`, m.longueurMm, plis);
               }
             } else {
-              // Gestion Profilés Barres Aluminium
+              // Profilés Barres Aluminium
               if (m.type === 'SORTIE_CHUTE') {
-                // Recherche stricte dans une tolérance de +/- 10mm
-                const matched = this.db.prepare(
-                  'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 10.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
-                ).get(sheetName, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+                let matched: { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+
+                // Point 3.7 : Recherche prioritaire par identifiant unique de chute
+                if (m.chuteId) {
+                  matched = this.db.prepare(
+                    'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE id = ? AND quantite > 0'
+                  ).get(m.chuteId) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+                }
+
+                if (!matched) {
+                  // Tolérance stricte +/- 10mm
+                  matched = this.db.prepare(
+                    'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 10.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
+                  ).get(sheetName, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+                }
+
+                if (!matched) {
+                  // Chute de longueur supérieure
+                  matched = this.db.prepare(
+                    'SELECT rowid, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND longueur >= ? - 10.0 AND quantite > 0 ORDER BY longueur ASC LIMIT 1'
+                  ).get(sheetName, m.longueurMm) as { rowid?: number; quantite?: number; longueur?: number } | undefined;
+                }
 
                 if (matched?.rowid) {
                   this.db.prepare(
@@ -1280,21 +1469,9 @@ class AtelierDatabase {
                   ).run(quantite, matched.rowid);
                   this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
                 } else {
-                  // Recherche d'une chute de longueur supérieure ou égale (au moins longueur demandée - 10mm)
-                  const largerChute = this.db.prepare(
-                    'SELECT rowid, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND longueur >= ? - 10.0 AND quantite > 0 ORDER BY longueur ASC LIMIT 1'
-                  ).get(sheetName, m.longueurMm) as { rowid?: number; quantite?: number; longueur?: number } | undefined;
-
-                  if (largerChute?.rowid) {
-                    this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, largerChute.rowid);
-                    this.db.prepare('DELETE FROM chutes_barres WHERE quantite <= 0').run();
-                  } else {
-                    // Si aucune chute compatible n'est trouvée, ne pas détruire arbitrairement une chute non liée
-                    console.warn(`[Stock] Sortie chute ${m.longueurMm}mm pour ${sheetName} non trouvée en inventaire physique.`);
-                  }
+                  console.warn(`[Stock] Sortie chute ${m.longueurMm}mm pour ${sheetName} non trouvée en inventaire physique.`);
                 }
               } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
-                // Recherche d'une chute identique existante pour consolider la quantité
                 const existingSameLg = this.db.prepare(
                   'SELECT id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 1.0 LIMIT 1'
                 ).get(sheetName, m.longueurMm) as { id?: string; quantite?: number } | undefined;
@@ -1313,41 +1490,36 @@ class AtelierDatabase {
       }
 
       // Mise à jour de l'OF en statut CLOTURE
-      this.upsertSuiviOF(s);
+      this.internalUpsertSuiviOF(s);
 
       // Synchronisation intelligente avec les Dossiers de Commande
-      try {
-        const cmdRefs = (s.numCommande || '')
-          .split(/[\s,+/]+/)
-          .map(c => c.trim().toLowerCase())
-          .filter(Boolean);
+      const cmdRefs = (s.numCommande || '')
+        .split(/[\s,+/]+/)
+        .map(c => c.trim().toLowerCase())
+        .filter(Boolean);
 
-        const allDossiers = this.getDossiers();
-        for (const dossier of allDossiers) {
-          const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-          const matchesClient = s.nomClient && dossier.nomClientFinal &&
-            dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+      const allDossiers = this.getDossiers();
+      for (const dossier of allDossiers) {
+        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+        const matchesClient = s.nomClient && dossier.nomClientFinal &&
+          dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
 
-          if (matchesCmd || (matchesClient && dossier.statut !== 'FABRIQUE')) {
-            // Vérifier si tous les OF liés à ce dossier sont clôturés
-            const relatedOFs = (this.getSuivisOF() || []).filter(o => {
-              const oCmds = (o.numCommande || '').toLowerCase();
-              return cmdRefs.some(ref => oCmds.includes(ref)) ||
-                (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
-            });
+        if (matchesCmd || (matchesClient && dossier.statut !== 'FABRIQUE')) {
+          const relatedOFs = (this.getSuivisOF() || []).filter(o => {
+            const oCmds = (o.numCommande || '').toLowerCase();
+            return cmdRefs.some(ref => oCmds.includes(ref)) ||
+              (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
+          });
 
-            const allClosed = relatedOFs.length > 0 && relatedOFs.every(o => o.id === s.id || o.statut === 'CLOTURE');
-            const newStatut = allClosed ? 'FABRIQUE' : 'EN_COURS';
+          const allClosed = relatedOFs.length > 0 && relatedOFs.every(o => o.id === s.id || o.statut === 'CLOTURE');
+          const newStatut = allClosed ? 'FABRIQUE' : 'EN_COURS';
 
-            if (dossier.statut !== newStatut) {
-              dossier.statut = newStatut;
-              this.upsertDossier(dossier);
-            }
+          if (dossier.statut !== newStatut) {
+            dossier.statut = newStatut;
+            this.upsertDossier(dossier);
           }
         }
-      } catch (dossierSyncErr) {
-        console.warn('Erreur synchronisation statut dossier lors de la clôture:', dossierSyncErr);
       }
 
       this.db.exec('COMMIT');
@@ -1357,15 +1529,115 @@ class AtelierDatabase {
     }
   }
 
-  deleteSuiviOF(id: string) {
+  /**
+   * Rétablit le stock et repasse un OF clôturé en attente de retour (Point 3.3 de l'audit)
+   */
+  rollbackClotureOF(id: string) {
+    this.db.exec('BEGIN TRANSACTION');
     try {
+      const row = this.db.prepare('SELECT json_data, statut FROM suivis_of WHERE id = ?').get(id) as { json_data?: string; statut?: string } | undefined;
+      if (!row) throw new Error(`OF ${id} introuvable`);
+      const s: SuiviOF = JSON.parse(row.json_data || '{}');
+
+      // Restaurer le stock physique décompté
+      this.rollbackStockForClosedOF(id);
+
+      // Repasser l'OF en statut RETOUR_EN_ATTENTE
+      s.statut = 'RETOUR_EN_ATTENTE';
+      delete s.dateRetour;
+      delete s.dateLivraison;
+      delete s.nomChauffeur;
+      delete s.ficheTransfertId;
+
+      this.internalUpsertSuiviOF(s);
+
+      // Mettre à jour les dossiers de commande correspondants vers EN_COURS
+      const cmdRefs = (s.numCommande || '')
+        .split(/[\s,+/]+/)
+        .map(c => c.trim().toLowerCase())
+        .filter(Boolean);
+
+      const allDossiers = this.getDossiers();
+      for (const dossier of allDossiers) {
+        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+        const matchesClient = s.nomClient && dossier.nomClientFinal &&
+          dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+
+        if (matchesCmd || matchesClient) {
+          if (dossier.statut === 'FABRIQUE' || dossier.statut === 'CLOTURE') {
+            dossier.statut = 'EN_COURS';
+            this.upsertDossier(dossier);
+          }
+        }
+      }
+
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
+   * Annule un OF émis ou en attente et libère ses réservations (Option annulation fiable)
+   */
+  annulerOF(id: string) {
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      const row = this.db.prepare('SELECT json_data, statut FROM suivis_of WHERE id = ?').get(id) as { json_data?: string; statut?: string } | undefined;
+      if (!row) throw new Error(`OF ${id} introuvable`);
+      const s: SuiviOF = JSON.parse(row.json_data || '{}');
+
+      // Si l'OF était clôturé ou livré, restaurer d'abord son stock
+      if (s.statut === 'CLOTURE' || s.statut === 'LIVRE') {
+        this.rollbackStockForClosedOF(id);
+      }
+
+      // Libérer toutes les réservations
       this.db.prepare('DELETE FROM reservations_chutes WHERE of_id = ?').run(id);
       this.db.prepare('DELETE FROM reservations_barres WHERE of_id = ?').run(id);
       this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(id);
-      this.db.prepare('DELETE FROM suivis_of WHERE id = ?').run(id);
+
+      s.statut = 'ANNULE';
+      const updateStmt = this.db.prepare(`
+        UPDATE suivis_of SET
+          statut = 'ANNULE', json_data = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      updateStmt.run(JSON.stringify(s), id);
+
       this.syncArticlesQuantiteReservee();
+      this.db.exec('COMMIT');
     } catch (e) {
-      console.warn('Erreur deleteSuiviOF:', e);
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
+   * Supprime un OF en restaurant automatiquement et fidèlement le stock s'il était clôturé (Point 3.3 de l'audit)
+   */
+  deleteSuiviOF(id: string) {
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      const row = this.db.prepare('SELECT statut FROM suivis_of WHERE id = ?').get(id) as { statut?: string } | undefined;
+      if (row?.statut === 'CLOTURE' || row?.statut === 'LIVRE') {
+        // Restaurer automatiquement et rigoureusement le stock physique pour éviter les barres/chutes fantômes
+        this.rollbackStockForClosedOF(id);
+      }
+
+      this.db.prepare('DELETE FROM reservations_chutes WHERE of_id = ?').run(id);
+      this.db.prepare('DELETE FROM reservations_barres WHERE of_id = ?').run(id);
+      this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(id);
+      this.db.prepare('DELETE FROM mouvements_stock WHERE of_id = ?').run(id);
+      this.db.prepare('DELETE FROM suivis_of WHERE id = ?').run(id);
+
+      this.syncArticlesQuantiteReservee();
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
     }
   }
 

@@ -40,7 +40,9 @@ import {
   Tag,
   Sparkles,
   Truck,
-  FileCheck
+  FileCheck,
+  RotateCcw,
+  Ban
 } from 'lucide-react';
 
 interface OrdresEnCoursTabProps {
@@ -214,10 +216,41 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     onRefreshData();
   };
 
+  const handleRollbackCloture = async (of: SuiviOF) => {
+    if (confirm(`Voulez-vous annuler la clôture de l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nLe stock physique et les chutes consommées seront immédiatement restaurés dans l'inventaire, et l'OF repassera en "Retour Reçu" pour correction.`)) {
+      try {
+        await StorageService.rollbackClotureOF(of.id);
+        onRefreshData();
+      } catch (err: any) {
+        alert("Erreur lors de l'annulation de la clôture : " + (err.message || err));
+      }
+    }
+  };
+
+  const handleAnnulerOF = async (of: SuiviOF) => {
+    if (confirm(`Voulez-vous marquer comme ANNULÉ l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nToutes les réservations (barres et chutes) seront immédiatement libérées sans altérer les stocks physiques.`)) {
+      try {
+        await StorageService.annulerOF(of.id);
+        onRefreshData();
+      } catch (err: any) {
+        alert("Erreur lors de l'annulation de l'OF : " + (err.message || err));
+      }
+    }
+  };
+
   const handleSupprimerOF = async (of: SuiviOF) => {
-    if (confirm(`Voulez-vous vraiment supprimer le suivi de l'OF N° "${of.numCommande}" (${of.nomClient}) ?`)) {
-      await StorageService.deleteSuiviOF(of.id);
-      onRefreshData();
+    const isClosed = of.statut === 'CLOTURE' || of.statut === 'LIVRE';
+    const message = isClosed
+      ? `Voulez-vous vraiment supprimer l'OF clôturé N° "${of.numCommande}" (${of.nomClient}) ?\n\n⚠️ IMPORTANT : Le stock physique sera intégralement et fidèlement restauré (restitution des barres neuves et chutes consommées, retrait des chutes générées).`
+      : `Voulez-vous vraiment supprimer le suivi de l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nToutes les réservations associées seront libérées.`;
+
+    if (confirm(message)) {
+      try {
+        await StorageService.deleteSuiviOF(of.id);
+        onRefreshData();
+      } catch (err: any) {
+        alert("Erreur lors de la suppression de l'OF : " + (err.message || err));
+      }
     }
   };
 
@@ -643,6 +676,29 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             </button>
                           )}
 
+                          {/* Bouton Annuler Clôture / Rouvrir l'OF (Point 3.3 de l'audit) */}
+                          {(isCloture || isLivre) && (
+                            <button
+                              onClick={() => handleRollbackCloture(of)}
+                              className="px-2 py-1.5 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                              title="Annuler la clôture : restituer le stock et rouvrir l'OF pour correction"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span className="hidden xl:inline">Rouvrir</span>
+                            </button>
+                          )}
+
+                          {/* Bouton Annuler OF (si non clôturé) */}
+                          {(isEmis || isAttente) && of.statut !== 'ANNULE' && (
+                            <button
+                              onClick={() => handleAnnulerOF(of)}
+                              className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                              title="Annuler cet OF et libérer ses réservations"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
                           {/* Bouton Voir Fiche Transfert si Livré */}
                           {isLivre && (
                             <button
@@ -667,7 +723,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           <button
                             onClick={() => handleSupprimerOF(of)}
                             className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
-                            title="Supprimer cet OF"
+                            title={isCloture || isLivre ? "Supprimer cet OF (restaure automatiquement le stock)" : "Supprimer cet OF"}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

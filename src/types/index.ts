@@ -88,6 +88,7 @@ export interface ResultatBarre {
 
 export interface ResultatChute {
   id: string;
+  chuteIdStock?: string; // ID physique de la chute en stock
   pieces: PieceCoupee[];
   longueur_chute_depart: number;
   utilise: number;
@@ -331,7 +332,7 @@ export interface ModeleMoustiquaireConfig {
 // ============================================================================
 
 /** État d'avancement d'un Ordre de Fabrication */
-export type StatutOF = 'EMIS' | 'RETOUR_EN_ATTENTE' | 'EN_COURS' | 'CLOTURE' | 'LIVRE';
+export type StatutOF = 'EMIS' | 'RETOUR_EN_ATTENTE' | 'EN_COURS' | 'CLOTURE' | 'LIVRE' | 'ANNULE';
 
 /**
  * Ligne de retour opérateur pour une barre/chute utilisée dans l'OF.
@@ -380,6 +381,8 @@ export interface LigneRetourOF {
   piecesInfoStr?: string;
   /** Remarque libre (optionnel) */
   remarque?: string;
+  /** Identifiant physique exact de la chute en base de données si connue */
+  chuteId?: string;
 }
 
 /**
@@ -464,6 +467,7 @@ export interface MouvementStock {
   longueurMm?: number;   // Pour barres/chutes
   quantite?: number;     // Pour barres neuves
   remarque?: string;
+  chuteId?: string;      // ID physique de la chute découpée ou restituée
 }
 
 // ============================================================================

@@ -79,6 +79,7 @@ interface GroupeChuteRecup {
   utilise: number;
   reste: number;
   chuteIndices: number[];
+  chuteId?: string;
 }
 
 interface SectionTraitee {
@@ -499,12 +500,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             piecesInfo,
             utilise: c.utilise,
             reste: c.reste,
-            chuteIndices: []
+            chuteIndices: [],
+            chuteId: c.chuteIdStock
           });
         }
         const g = mapChutes.get(sig)!;
         g.quantite += 1;
         g.chuteIndices.push(cIdx + 1);
+        if (!g.chuteId && c.chuteIdStock) {
+          g.chuteId = c.chuteIdStock;
+        }
       });
       const groupesChutesRecup = Array.from(mapChutes.values()).sort((a, b) => b.support - a.support);
 
@@ -1102,7 +1107,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             sourceReelle: 'CONFORME',
             actionReste: initialAction,
             piecesInfoStr: piecesStr,
-            saisieOperateur: ''
+            saisieOperateur: '',
+            chuteId: g.chuteId
           });
         }
       });
@@ -1152,7 +1158,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           sheetName: sheetName.trim(),
           longueur: Math.round(g.support),
           quantite: g.quantite,
-          articleCode: sec.article?.code_art
+          articleCode: sec.article?.code_art,
+          chuteId: g.chuteId
         });
       });
     });

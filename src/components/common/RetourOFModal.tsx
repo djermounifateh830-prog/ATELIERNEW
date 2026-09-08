@@ -640,7 +640,8 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           nomClient: suivi.nomClient,
           longueurMm: realSupportLg,
           quantite: 1,
-          remarque: `Chute stock débitée (${realSupportLg}mm) — Repère(s): ${repereTxt} ${piecesTxt}`
+          remarque: `Chute stock débitée (${realSupportLg}mm) — Repère(s): ${repereTxt} ${piecesTxt}`,
+          chuteId: (ligne as any).chuteId
         });
       }
 

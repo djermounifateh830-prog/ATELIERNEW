@@ -747,6 +747,32 @@ export class StorageService {
     }
   }
 
+  static async rollbackClotureOF(id: string): Promise<void> {
+    try {
+      await this.request(`/api/of/${encodeURIComponent(id)}/rollback-cloture`, {
+        method: 'POST'
+      });
+      logger.sqlite('Annulation Clôture OF', `Clôture de l'OF ID ${id} annulée : stock physique et chutes restaurés.`);
+    } catch (e: any) {
+      console.error('Erreur rollback clôture OF:', e);
+      logger.error('Annulation Clôture OF', `Erreur lors de la réouverture de l'OF ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async annulerOF(id: string): Promise<void> {
+    try {
+      await this.request(`/api/of/${encodeURIComponent(id)}/annuler`, {
+        method: 'POST'
+      });
+      logger.sqlite('Annulation OF', `OF ID ${id} passé en statut ANNULÉ : réservations et stock restaurés.`);
+    } catch (e: any) {
+      console.error('Erreur annulation OF:', e);
+      logger.error('Annulation OF', `Erreur annulation de l'OF ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
   static async deleteSuiviOF(id: string): Promise<void> {
     try {
       await this.request(`/api/of/${encodeURIComponent(id)}`, { method: 'DELETE' });
