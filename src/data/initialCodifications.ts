@@ -6,7 +6,7 @@ export const INITIAL_CLIENT_CODIFICATIONS: ClientCodification[] = [
     code: 'CRISTAL-ORAN',
     nom: 'CRISTAL Oran',
     prefixeCommande: 'O-',
-    prefixeRepereSpecial: '', // Déduit 'O' + 1ère lettre client
+    prefixeRepereSpecial: 'O', // Repère spécial: O + 1ère lettre client (ex: OF1)
     type: 'CRISTAL',
     badgeColor: 'text-purple-300',
     badgeBg: 'bg-purple-500/20 border-purple-500/30',

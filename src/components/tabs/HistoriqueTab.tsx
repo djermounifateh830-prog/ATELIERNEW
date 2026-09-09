@@ -42,13 +42,33 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   const filteredDossiers = useMemo(() => {
     return dossiers.filter(d => {
       const term = searchTerm.toLowerCase().trim();
-      const matchSearch =
-        !term ||
+      if (!term) {
+        return statusFilter === 'TOUS' || d.statut === statusFilter;
+      }
+
+      // Recherche dans les métadonnées globales du dossier
+      const matchMeta =
         d.refCommande.toLowerCase().includes(term) ||
         d.nomClientFinal.toLowerCase().includes(term) ||
         d.donneurOrdre.toLowerCase().includes(term) ||
         (d.notes && d.notes.toLowerCase().includes(term));
 
+      // Recherche par REPÈRE DE LIGNE COMMANDE (pour l'opérateur caisson et atelier)
+      const matchRepereCaisson = (d.articlesCaissons || []).some(c =>
+        (c.repere || '').toLowerCase().includes(term)
+      );
+      const matchRepereTablier = (d.articlesTabliers || []).some(t =>
+        (t.repere || '').toLowerCase().includes(term)
+      );
+      const matchRepereMstq = (d.articlesMoustiquaires || []).some(m =>
+        (m.repere || '').toLowerCase().includes(term)
+      );
+      const matchReperePrecadre = (d.articlesPrecadres || []).some(p =>
+        (p.repere || '').toLowerCase().includes(term)
+      );
+
+      const matchRepere = matchRepereCaisson || matchRepereTablier || matchRepereMstq || matchReperePrecadre;
+      const matchSearch = matchMeta || matchRepere;
       const matchStatus = statusFilter === 'TOUS' || d.statut === statusFilter;
 
       return matchSearch && matchStatus;
@@ -155,7 +175,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               type="text"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              placeholder="Rechercher par N° commande, Nom client, Donneur d'ordre..."
+              placeholder="Rechercher par Repère de pièce (ex: CF1, DF2...), N° commande, Client, Donneur d'ordre..."
               className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
             />
           </div>
@@ -309,6 +329,48 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                       <span className="text-slate-500 italic">Dossier vide</span>
                     )}
                   </div>
+
+                  {/* Mise en avant des repères trouvés lors d'une recherche par repère */}
+                  {searchTerm && (() => {
+                    const term = searchTerm.toLowerCase().trim();
+                    const matchedCaissons = (dossier.articlesCaissons || []).filter(c => (c.repere || '').toLowerCase().includes(term));
+                    const matchedTabliers = (dossier.articlesTabliers || []).filter(t => (t.repere || '').toLowerCase().includes(term));
+                    const matchedMstq = (dossier.articlesMoustiquaires || []).filter(m => (m.repere || '').toLowerCase().includes(term));
+                    const matchedPrecadres = (dossier.articlesPrecadres || []).filter(p => (p.repere || '').toLowerCase().includes(term));
+                    const totalMatches = matchedCaissons.length + matchedTabliers.length + matchedMstq.length + matchedPrecadres.length;
+
+                    if (totalMatches === 0) return null;
+
+                    return (
+                      <div className="bg-amber-950/40 border border-amber-500/50 rounded-lg p-2 text-xs space-y-1">
+                        <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                          <span>🎯 Repère(s) trouvé(s) pour « {searchTerm} » :</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 font-mono">
+                          {matchedCaissons.map((c, i) => (
+                            <span key={'c-' + i} className="bg-emerald-950 text-emerald-200 border border-emerald-500/50 px-2 py-0.5 rounded font-black text-[11px]">
+                              📦 Caisson: {c.repere} ({c.longueur}mm)
+                            </span>
+                          ))}
+                          {matchedTabliers.map((t, i) => (
+                            <span key={'t-' + i} className="bg-sky-950 text-sky-200 border border-sky-500/50 px-2 py-0.5 rounded font-black text-[11px]">
+                              🪟 Volet: {t.repere} ({t.largeur}×{t.hauteur}mm)
+                            </span>
+                          ))}
+                          {matchedMstq.map((m, i) => (
+                            <span key={'m-' + i} className="bg-amber-950 text-amber-200 border border-amber-500/50 px-2 py-0.5 rounded font-black text-[11px]">
+                              🦟 Mstq: {m.repere} ({m.largeur}×{m.hauteur}mm)
+                            </span>
+                          ))}
+                          {matchedPrecadres.map((p, i) => (
+                            <span key={'p-' + i} className="bg-purple-950 text-purple-200 border border-purple-500/50 px-2 py-0.5 rounded font-black text-[11px]">
+                              🚪 Précadre: {p.repere} ({p.largeur}×{p.hauteur}mm)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {dossier.notes && (
                     <p className="text-[11px] text-slate-400 italic bg-slate-950/50 p-2 rounded border border-slate-850">

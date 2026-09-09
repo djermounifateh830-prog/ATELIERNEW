@@ -927,9 +927,30 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <meta charset="UTF-8">
   <title>Ordre de Fabrication — ${cmdAffichee} — ${clientAffiche}</title>
   <style>
-    @page { size: A4 portrait; margin: 8mm 8mm 8mm 8mm; }
+    @page { size: A4 portrait; margin: 8mm 8mm 14mm 8mm; }
     *, *::before, *::after { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; background: #fff; font-size: 13px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .print-footer-fixed {
+      display: flex;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 10mm;
+      border-top: 2px solid #000;
+      padding: 2mm 5mm 0 5mm;
+      font-size: 10pt;
+      font-weight: 800;
+      color: #000;
+      background: #fff;
+      justify-content: space-between;
+      align-items: center;
+      font-family: Arial, sans-serif;
+      z-index: 99999;
+    }
+    .print-footer-page-num::after {
+      content: "Page " counter(page);
+    }
     .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; border-bottom:3px solid #000; padding-bottom:6px; }
     .header-left h1 { font-size:15px; font-weight:900; margin:0 0 4px 0; text-transform:uppercase; color:#000; letter-spacing:0.5px; }
     .header-left .cmd-highlight { font-size:22px; font-weight:900; font-family:Consolas,monospace; color:#000; background:#fff; padding:2px 8px; border:2px solid #000; border-radius:4px; display:inline-block; }
@@ -1044,6 +1065,13 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     ${tabliersHTML}
     ${precadresHTML}
     ${mstqHTML}
+  </div>
+
+  <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) -->
+  <div class="print-footer-fixed">
+    <div><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
+    <div><strong>COMMANDE N° :</strong> ${cmdAffichee}</div>
+    <div><span class="print-footer-page-num"></span></div>
   </div>
 </body>
 </html>`;
@@ -1535,7 +1563,28 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm 8mm 8mm 8mm;
+            margin: 8mm 8mm 14mm 8mm;
+          }
+          .print-footer-fixed {
+            display: flex !important;
+            position: fixed !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            height: 10mm !important;
+            border-top: 2px solid #000000 !important;
+            padding: 2mm 4mm 0 4mm !important;
+            font-size: 9.5pt !important;
+            font-weight: 800 !important;
+            color: #000000 !important;
+            background: #ffffff !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            z-index: 99999 !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+          }
+          .print-footer-page-num::after {
+            content: "Page " counter(page);
           }
           html, body {
             height: auto !important;
@@ -2027,6 +2076,22 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
               {/* Profilés Moustiquaires */}
               {sectionsParFamille.moustiquaires.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
+            </div>
+
+            {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) */}
+            <div className="print-footer-fixed">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-800">CLIENT :</span>
+                <span className="font-black text-black">{clientAffiche}</span>
+                {donneurOrdre && <span className="font-semibold text-slate-700">({donneurOrdre})</span>}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-800">COMMANDE N° :</span>
+                <span className="font-mono font-black text-black">{cmdAffichee}</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="print-footer-page-num font-mono font-black text-black"></span>
+              </div>
             </div>
 
           </div>

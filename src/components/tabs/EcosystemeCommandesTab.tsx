@@ -189,6 +189,115 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   const [clientDeMonClient, setClientDeMonClient] = useState<string>('');
   const [dateCommande, setDateCommande] = useState<string>(() => getTodayDateString());
 
+  // --- MÉMOIRE INCRÉMENTALE & SUGGESTIONS DU CLIENT DU CLIENT (CHANTIER / PROMOTEUR) ---
+  const [showClientSuggestions, setShowClientSuggestions] = useState<boolean>(false);
+  const clientSuggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Historique unifié (Dossiers SQLite + Mémoire incrémentale persistée dans localStorage)
+  const clientsHistoriqueComplet = useMemo(() => {
+    const map = new Map<string, { nom: string; donneurOrdre: string; derniereDate: string; nb: number }>();
+
+    // 1. Depuis les dossiers existants dans SQLite
+    (dossiers || []).forEach(d => {
+      const nom = (d.nomClientFinal || '').trim();
+      if (!nom) return;
+      const key = nom.toUpperCase();
+      const existing = map.get(key);
+      if (existing) {
+        existing.nb += 1;
+        if (d.dateCommande) existing.derniereDate = d.dateCommande;
+        if (!existing.donneurOrdre && d.donneurOrdre) existing.donneurOrdre = d.donneurOrdre;
+      } else {
+        map.set(key, {
+          nom: nom,
+          donneurOrdre: d.donneurOrdre || '',
+          derniereDate: d.dateCommande || '',
+          nb: 1
+        });
+      }
+    });
+
+    // 2. Depuis le stockage local de persistance incrémentale
+    try {
+      const raw = localStorage.getItem('3m_clients_finaux_incremental');
+      if (raw) {
+        const storedList = JSON.parse(raw);
+        if (Array.isArray(storedList)) {
+          storedList.forEach((item: any) => {
+            const nom = (item.nom || '').trim();
+            if (!nom) return;
+            const key = nom.toUpperCase();
+            const existing = map.get(key);
+            if (existing) {
+              existing.nb = Math.max(existing.nb, item.nb || 1);
+              if (item.donneurOrdre && !existing.donneurOrdre) existing.donneurOrdre = item.donneurOrdre;
+            } else {
+              map.set(key, {
+                nom: nom,
+                donneurOrdre: item.donneurOrdre || '',
+                derniereDate: item.derniereDate || '',
+                nb: item.nb || 1
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {}
+
+    return Array.from(map.values()).sort((a, b) => b.nb - a.nb || a.nom.localeCompare(b.nom));
+  }, [dossiers]);
+
+  // Filtrer les suggestions selon la saisie en cours
+  const suggestionsClientsFiltrees = useMemo(() => {
+    const q = clientDeMonClient.trim().toLowerCase();
+    if (!q) {
+      if (monClient) {
+        const clientsAgence = clientsHistoriqueComplet.filter(c => c.donneurOrdre.toLowerCase() === monClient.toLowerCase());
+        return clientsAgence.length > 0 ? clientsAgence.slice(0, 10) : clientsHistoriqueComplet.slice(0, 10);
+      }
+      return clientsHistoriqueComplet.slice(0, 10);
+    }
+    return clientsHistoriqueComplet
+      .filter(c => c.nom.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [clientsHistoriqueComplet, clientDeMonClient, monClient]);
+
+  // Enregistrer le client dans la mémoire incrémentale persistante
+  const enregistrerClientDansHistoriqueIncremental = useCallback((nomClient: string, donneur: string) => {
+    const propre = nomClient.trim();
+    if (!propre) return;
+    try {
+      const raw = localStorage.getItem('3m_clients_finaux_incremental');
+      let list: any[] = [];
+      if (raw) {
+        try { list = JSON.parse(raw); } catch (e) { list = []; }
+      }
+      if (!Array.isArray(list)) list = [];
+      const index = list.findIndex(i => (i.nom || '').toUpperCase().trim() === propre.toUpperCase());
+      if (index >= 0) {
+        list[index].nb = (list[index].nb || 1) + 1;
+        list[index].derniereDate = getTodayDateString();
+        if (donneur) list[index].donneurOrdre = donneur;
+      } else {
+        list.push({
+          nom: propre,
+          donneurOrdre: donneur || '',
+          derniereDate: getTodayDateString(),
+          nb: 1
+        });
+      }
+      localStorage.setItem('3m_clients_finaux_incremental', JSON.stringify(list));
+    } catch (e) {}
+  }, []);
+
+  const handleSelectClientSuggestion = (suggestion: { nom: string; donneurOrdre: string }) => {
+    setClientDeMonClient(suggestion.nom);
+    setShowClientSuggestions(false);
+    if ((!monClient || !monClient.trim()) && suggestion.donneurOrdre) {
+      handleMonClientChange(suggestion.donneurOrdre);
+    }
+  };
+
   // ID du dossier en cours d'édition (null si nouveau dossier)
   const [editingDossierId, setEditingDossierId] = useState<string | null>(null);
 
@@ -3566,6 +3675,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         });
 
         await StorageService.saveDossiers(updatedDossiers);
+        enregistrerClientDansHistoriqueIncremental(nomClientFinalPropre, monClient);
         if (onDossiersUpdated) onDossiersUpdated();
         showFlashNotification(`✓ Dossier ${refPrincipal} (${nomClientFinalPropre}) mis à jour (${totalLignesEnCours} lignes) dans SQLite !`, 'success');
       } else {
@@ -3591,6 +3701,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
         const updated = [nouveauDossier, ...dossiers];
         await StorageService.saveDossiers(updated);
+        enregistrerClientDansHistoriqueIncremental(nomClientFinalPropre, monClient);
         setEditingDossierId(nouveauDossier.id);
         if (onDossiersUpdated) onDossiersUpdated();
         showFlashNotification(`✓ Nouveau dossier ${refPrincipal} (${nomClientFinalPropre}) enregistré dans SQLite !`, 'success');
@@ -3636,7 +3747,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         const mCli = client.toLowerCase().includes(q);
         const mDon = donneur.toLowerCase().includes(q);
         const mDat = (d.dateCommande || '').toLowerCase().includes(q);
-        if (!mRef && !mCli && !mDon && !mDat) return false;
+        // Recherche par REPÈRE de ligne de commande (pour l'opérateur caisson)
+        const mRepCaisson = (d.articlesCaissons || []).some(c => (c.repere || '').toLowerCase().includes(q));
+        const mRepTablier = (d.articlesTabliers || []).some(t => (t.repere || '').toLowerCase().includes(q));
+        const mRepMstq = (d.articlesMoustiquaires || []).some(m => (m.repere || '').toLowerCase().includes(q));
+        const mRepPrecadre = (d.articlesPrecadres || []).some(p => (p.repere || '').toLowerCase().includes(q));
+        const mRep = mRepCaisson || mRepTablier || mRepMstq || mRepPrecadre;
+
+        if (!mRef && !mCli && !mDon && !mDat && !mRep) return false;
       }
       return true;
     });
@@ -3713,6 +3831,25 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               </button>
             )}
 
+            {/* BOUTON HISTORIQUE AVEC LIEN NOUVEL ONGLET */}
+            <a
+              href="?tab=historique"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => {
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                  e.preventDefault();
+                  onNavigateToTab('historique');
+                }
+              }}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-purple-500/30 hover:border-purple-400 shadow-md transition active:scale-95 cursor-pointer"
+              title="Ouvrir l'Historique (Clic normal ou Clic-droit / Ctrl+Clic pour ouvrir dans un nouvel onglet)"
+            >
+              <History className="w-4 h-4 text-purple-400" />
+              <span>📜 Historique</span>
+              <ExternalLink className="w-3 h-3 text-purple-400/70" />
+            </a>
+
             {/* BOUTON 1 : NOUVEAU DOSSIER */}
             <button
               type="button"
@@ -3762,30 +3899,111 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             </select>
           </div>
 
-          {/* Le Client de Mon Client (Client final / Chantier) */}
-          <div className="lg:col-span-5">
-            <label className="block text-[11px] font-semibold text-emerald-300 mb-1 flex items-center gap-1">
-              <User className="w-3.5 h-3.5" />
-              <span>Nom du Client de Mon Client (Chantier / Promoteur) *</span>
-            </label>
-            <input
-              ref={inputClientRef}
-              type="text"
-              value={clientDeMonClient}
-              onChange={e => setClientDeMonClient(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  inputNumCmdRef.current?.focus();
-                }
-              }}
-              placeholder="Nom du Client / Chantier / Promoteur (Obligatoire) *"
-              className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-xs text-slate-100 font-semibold focus:outline-none focus:ring-2 shadow-inner transition ${
-                !clientDeMonClient.trim()
-                  ? 'border-amber-500/80 text-amber-200 ring-2 ring-amber-500/20 bg-amber-950/20 placeholder:text-amber-400/60'
-                  : 'border-emerald-500/40 focus:ring-emerald-500'
-              }`}
-            />
+          {/* Le Client de Mon Client (Client final / Chantier avec mémoire incrémentale) */}
+          <div className="lg:col-span-5 relative">
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-[11px] font-semibold text-emerald-300 flex items-center gap-1">
+                <User className="w-3.5 h-3.5" />
+                <span>Nom du Client de Mon Client (Chantier / Promoteur) *</span>
+              </label>
+              {clientsHistoriqueComplet.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowClientSuggestions(prev => !prev)}
+                  className="text-[10px] text-emerald-400 hover:text-emerald-300 underline font-medium flex items-center gap-0.5 cursor-pointer"
+                  title="Afficher les clients mémorisés dans l'historique"
+                >
+                  <History className="w-3 h-3" />
+                  <span>{clientsHistoriqueComplet.length} mémorisés</span>
+                </button>
+              )}
+            </div>
+
+            <div className="relative">
+              <input
+                ref={inputClientRef}
+                type="text"
+                list="clients-finaux-datalist"
+                value={clientDeMonClient}
+                onFocus={() => setShowClientSuggestions(true)}
+                onChange={e => {
+                  setClientDeMonClient(e.target.value);
+                  setShowClientSuggestions(true);
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    setShowClientSuggestions(false);
+                    enregistrerClientDansHistoriqueIncremental(clientDeMonClient, monClient);
+                    inputNumCmdRef.current?.focus();
+                  } else if (e.key === 'Escape') {
+                    setShowClientSuggestions(false);
+                  }
+                }}
+                placeholder="Nom du Client / Chantier / Promoteur (ex: Résidence El Bahia...) *"
+                className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-xs text-slate-100 font-semibold focus:outline-none focus:ring-2 shadow-inner transition ${
+                  !clientDeMonClient.trim()
+                    ? 'border-amber-500/80 text-amber-200 ring-2 ring-amber-500/20 bg-amber-950/20 placeholder:text-amber-400/60'
+                    : 'border-emerald-500/40 focus:ring-emerald-500'
+                }`}
+              />
+
+              {/* Datalist standard pour complétion navigateur */}
+              <datalist id="clients-finaux-datalist">
+                {clientsHistoriqueComplet.map((c, i) => (
+                  <option key={i} value={c.nom}>
+                    {c.donneurOrdre ? `${c.nom} (${c.donneurOrdre})` : c.nom}
+                  </option>
+                ))}
+              </datalist>
+
+              {/* Dropdown interactif d'auto-complétion incrémentale */}
+              {showClientSuggestions && suggestionsClientsFiltrees.length > 0 && (
+                <div
+                  ref={clientSuggestionsRef}
+                  className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 max-h-60 overflow-y-auto space-y-1"
+                >
+                  <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Clients saisis récemment ({suggestionsClientsFiltrees.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowClientSuggestions(false)}
+                      className="text-slate-500 hover:text-slate-300 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {suggestionsClientsFiltrees.map((sug, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSelectClientSuggestion(sug)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800/90 text-xs text-slate-200 flex items-center justify-between gap-2 transition cursor-pointer group"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span className="font-bold text-slate-100 group-hover:text-emerald-300 truncate">
+                          {sug.nom}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
+                        {sug.donneurOrdre && (
+                          <span className="px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-500/30 font-medium">
+                            {sug.donneurOrdre}
+                          </span>
+                        )}
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                          {sug.nb} cmd{sug.nb > 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Date de la Commande */}
@@ -7489,15 +7707,23 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <span>➕ Autre Commande pour ce Client</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => onNavigateToTab('historique')}
+            <a
+              href="?tab=historique"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => {
+                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                  e.preventDefault();
+                  onNavigateToTab('historique');
+                }
+              }}
               className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
-              title="Consulter tous les dossiers de tous les clients"
+              title="Consulter l'Historique (Clic normal ou Clic-droit / Ctrl+Clic pour ouvrir dans un nouvel onglet)"
             >
               <History className="w-3.5 h-3.5 text-purple-400" />
-              <span>📜 Historique Global Tous Dossiers ({dossiers.length})</span>
-            </button>
+              <span>📜 Historique Global ({dossiers.length})</span>
+              <ExternalLink className="w-3 h-3 text-purple-400/80" />
+            </a>
           </div>
         </div>
 

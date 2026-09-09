@@ -111,14 +111,20 @@ export function getBasePrefixeRepere(
     if (codif.prefixeRepereSpecial && codif.prefixeRepereSpecial.trim()) {
       return codif.prefixeRepereSpecial.trim().toUpperCase();
     }
+    const upperNom = (codif.nom || '').toUpperCase();
+    if (codif.type === 'CRISTAL' || upperNom.includes('CRISTAL')) {
+      if (upperNom.includes('CONST') || upperNom.includes('CNE') || upperNom.includes('CST')) return 'D';
+      if (upperNom.includes('ALGER') || upperNom.includes('ALG')) return 'C';
+      if (upperNom.includes('ORAN')) return 'O';
+    }
     // Sinon, on reprend le préfixe de la commande sans tiret
     return (codif.prefixeCommande || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
   }
 
   // Règle de repli par détection de texte
   const upper = (donneurOrdreNom || '').toUpperCase();
-  if (upper.includes('CRISTAL') && (upper.includes('ALGER') || upper.includes('ALG'))) return 'C';
   if (upper.includes('CRISTAL') && (upper.includes('CONST') || upper.includes('CNE') || upper.includes('CST'))) return 'D';
+  if (upper.includes('CRISTAL') && (upper.includes('ALGER') || upper.includes('ALG'))) return 'C';
   if (upper.includes('CRISTAL') && upper.includes('ORAN')) return 'O';
   if (upper.includes('SOMODAL') || upper.includes('SOMADAL')) {
     if (upper.includes('ALGER')) return 'SA';
@@ -196,8 +202,17 @@ export function genererRepereCaissonSousFace(params: {
     }
   }
 
-  // Si collision détectée et qu'on a une 2ème lettre, on utilise la 2ème lettre (ex: SAFA1 au lieu de SAF1)
-  const prefixFinal = collisionDetectee && l2 ? `${basePrefix}${l1}${l2}` : prefixCourt;
+  // Règle spécifique Cristal (Oran, Alger, CNE / Constantine) :
+  // Le repère ne doit STRICTEMENT JAMAIS dépasser DEUX lettres alphabétiques au total :
+  // - CRISTAL CNE : D + 1 lettre alphabétique + numéro (ex: DA1, DA2, DF1...)
+  // - CRISTAL Alger : C + 1 lettre alphabétique + numéro (ex: CA1, CA2, CF1...)
+  // - CRISTAL Oran : O + 1 lettre alphabétique + numéro (ex: OA1, OA2, OF1...)
+  const isCristal = donneurOrdreNom.toUpperCase().includes('CRISTAL') ||
+    ['C', 'D', 'O'].includes(basePrefix);
+
+  // Pour Cristal, on utilise STRICTEMENT le préfixe à 2 lettres (basePrefix + 1 lettre client),
+  // sans jamais ajouter de 2ème lettre additionnelle.
+  const prefixFinal = (!isCristal && collisionDetectee && l2) ? `${basePrefix}${l1}${l2}` : prefixCourt;
 
   // Calculer le prochain indice séquentiel
   // On regarde les repères déjà attribués dans les lignes actuelles qui commencent par ce préfixe

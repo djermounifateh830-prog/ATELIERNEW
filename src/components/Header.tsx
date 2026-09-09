@@ -170,10 +170,16 @@ export const Header: React.FC<HeaderProps> = ({
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
-              <button
+              <a
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all ${
+                href={`?tab=${tab.id}`}
+                onClick={(e) => {
+                  if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                    e.preventDefault();
+                    setActiveTab(tab.id);
+                  }
+                }}
+                className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-all cursor-pointer ${
                   isActive
                     ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
                     : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
@@ -188,7 +194,7 @@ export const Header: React.FC<HeaderProps> = ({
                     {tab.badge}
                   </span>
                 )}
-              </button>
+              </a>
             );
           })}
         </nav>

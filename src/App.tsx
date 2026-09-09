@@ -13,9 +13,37 @@ import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
 import { StorageService } from './services/storage';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
 
+const getInitialTab = (): string => {
+  try {
+    const searchParams = new URLSearchParams(window.location.search);
+    const tabParam = searchParams.get('tab');
+    if (tabParam) return tabParam;
+    const hashParam = window.location.hash.replace('#', '');
+    if (hashParam) return hashParam;
+  } catch (e) {}
+  return 'ecosysteme';
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>('ecosysteme');
+  const [activeTab, setActiveTab] = useState<string>(getInitialTab);
   const [selectedDossierToLoad, setSelectedDossierToLoad] = useState<DossierCommandeGlobal | null>(null);
+
+  const handleSetActiveTab = useCallback((tabId: string) => {
+    setActiveTab(tabId);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tabId);
+      window.history.pushState({ tab: tabId }, '', url.toString());
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTab(getInitialTab());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Application Data States (Pure SQLite — Source Unique de Vérité)
   const [articles, setArticles] = useState<Article[]>([]);
@@ -67,7 +95,7 @@ export default function App() {
 
   const handleLoadDossierFromHistorique = (dossier: DossierCommandeGlobal) => {
     setSelectedDossierToLoad(dossier);
-    setActiveTab('ecosysteme');
+    handleSetActiveTab('ecosysteme');
   };
 
   return (
@@ -75,7 +103,7 @@ export default function App() {
       {/* Header */}
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleSetActiveTab}
         articles={articles}
         chutesBarres={chutesBarres}
         chutesMaille={chutesMaille}
@@ -95,7 +123,7 @@ export default function App() {
             mapping={mapping}
             dossiers={dossiers}
             onDossiersUpdated={loadData}
-            onNavigateToTab={(tabId) => setActiveTab(tabId)}
+            onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
             selectedDossierToLoad={selectedDossierToLoad}
           />
         )}
