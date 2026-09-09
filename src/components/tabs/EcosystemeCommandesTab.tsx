@@ -88,6 +88,7 @@ export interface SectionMultiArticleCaisson {
   avecPeinture?: boolean;
   avecSousFace?: boolean;
   montageSousFace?: string;
+  avecPlaque?: boolean;
 }
 
 export const getSectionFamille = (sec: SectionMultiArticleCaisson): FamilleProduit => {
@@ -518,11 +519,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       res.refCommande = refTitre;
       res.nomClient = clientDeMonClient.trim() || 'CLIENT';
       res.donneurOrdre = monClient;
-      res.dateCommande = dateCommande;      // Agréger avecPeinture : true si AU MOINS une ligne du groupe demande la peinture
+      res.dateCommande = dateCommande;
+      // Agréger avecPeinture : true si AU MOINS une ligne du groupe demande la peinture
       const avecPeintureCT = lignesGroup.some(c => c.avecPeinture);
       // Agréger avecSousFace et montageSousFace pour info OF
       const avecSousFaceCT = lignesGroup.some(c => c.avecSousFace);
       const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
+      const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
       generatedSections.push({
         articleCode: artObj.code_art,
@@ -534,7 +537,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         commandesInvolved: refsInvolved,
         avecPeinture: avecPeintureCT,
         avecSousFace: avecSousFaceCT,
-        montageSousFace: montageCT
+        montageSousFace: montageCT,
+        avecPlaque: avecPlaqueCT
       });
     });
 
@@ -1770,7 +1774,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     const label = newFigure === 'VIDE' ? '1. Vide (sans renfort)'
       : newFigure === 'RENFORT_L1' ? '2. + Renfort Horizontal L1'
       : newFigure === 'RENFORT_H1' ? '3. + Renfort Vertical H1'
-      : '4. Croisé L1+H1';
+      : '4. Croisé R1/R2 + H1';
     showFlashNotification(`✓ Configuration figure sélectionnée : ${label}`, 'info');
   };
 
@@ -1900,20 +1904,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             refCommande: cmdTag || 'CMD-01'
           });
         } else if (c.figure === 'RENFORT_CROISE') {
-          // Demi-renfort 1 (L1)
+          // Demi-renfort 1 (R1)
           piecesToCut.push({
             longueur: lDemiRenfortCroise,
             quantite: 1 * c.quantite,
-            label: `L1-${c.repere} (Demi-Renfort Horizontal 1 — L1=${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: `L1-${c.repere}`,
+            label: `R1-${c.repere} (Demi-Renfort Horizontal 1 — R1=${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+            repere: `R1-${c.repere}`,
             refCommande: cmdTag || 'CMD-01'
           });
-          // Demi-renfort 2 (L2)
+          // Demi-renfort 2 (R2)
           piecesToCut.push({
             longueur: lDemiRenfortCroise,
             quantite: 1 * c.quantite,
-            label: `L2-${c.repere} (Demi-Renfort Horizontal 2 — L2=${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
-            repere: `L2-${c.repere}`,
+            label: `R2-${c.repere} (Demi-Renfort Horizontal 2 — R2=${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
+            repere: `R2-${c.repere}`,
             refCommande: cmdTag || 'CMD-01'
           });
         }
@@ -2024,6 +2028,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         avecPeinture: isCT ? (sec.avecPeinture ?? false) : false,
         avecSousFace: isCT ? (sec.avecSousFace ?? false) : false,
         montageSousFace: sec.montageSousFace ?? 'NON_MONTEE',
+        avecPlaque: isCT ? (sec.avecPlaque ?? caissonConfig.avecPlaque) : undefined,
         isSousFace: sec.type === 'SF',
         famille: fam,
         type: sec.type,
@@ -2275,6 +2280,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const avecPeintureCT = lignesGroup.some(c => c.avecPeinture);
           const avecSousFaceCT = lignesGroup.some(c => c.avecSousFace);
           const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
+          const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
           generatedSections.push({
             articleCode: artObj?.code_art || artCode,
@@ -2286,7 +2292,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             commandesInvolved: refsCaissonsInvolved,
             avecPeinture: avecPeintureCT,
             avecSousFace: avecSousFaceCT,
-            montageSousFace: montageCT
+            montageSousFace: montageCT,
+            avecPlaque: avecPlaqueCT
           });
         }
 
@@ -2677,8 +2684,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             if (c.figure === 'RENFORT_L1') {
               piecesToCut.push({ longueur: lRenfortSeul, quantite: 1 * c.quantite, label: `L1-${c.repere} (Renfort Horizontal — ${lRenfortSeul}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
             } else if (c.figure === 'RENFORT_CROISE') {
-              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L1-${c.repere} (Demi-Renfort 1 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
-              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `L2-${c.repere} (Demi-Renfort 2 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `L2-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `R1-${c.repere} (Demi-Renfort 1 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `R1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
+              piecesToCut.push({ longueur: lDemiRenfortCroise, quantite: 1 * c.quantite, label: `R2-${c.repere} (Demi-Renfort 2 — ${lDemiRenfortCroise}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `R2-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
               piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
             } else if (c.figure === 'RENFORT_H1') {
               piecesToCut.push({ longueur: hRenfort, quantite: 1 * c.quantite, label: `H1-${c.repere} (Renfort Vert — ${hRenfort}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `H1-${c.repere}`, refCommande: cmdTag || 'CMD-01' });
@@ -5342,7 +5349,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     {precadreConfig.figure === 'VIDE' && '2 Montants + 1 TRH + 1 TRB — Aucun renfort'}
                     {precadreConfig.figure === 'RENFORT_L1' && '+ 1 Renfort Horizontal L1 (traverse centrale)'}
                     {precadreConfig.figure === 'RENFORT_H1' && '+ 1 Renfort Vertical H1 (montant central)'}
-                    {precadreConfig.figure === 'RENFORT_CROISE' && '+ 1 L1 Horizontal + 1 H1 Vertical (croisé)'}
+                    {precadreConfig.figure === 'RENFORT_CROISE' && '+ 2 Demi-Renforts R1/R2 Horiz. + 1 H1 Vertical (croisé)'}
                   </span>
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -5404,7 +5411,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       <line x1="18" y1="1" x2="18" y2="27" stroke="currentColor" strokeWidth="2"/>
                       <line x1="1" y1="14" x2="35" y2="14" stroke="currentColor" strokeWidth="2"/>
                     </svg>
-                    <span>Croisé L1+H1</span>
+                    <span>Croisé R1/R2 + H1</span>
                   </button>
                 </div>
               </div>
@@ -7159,7 +7166,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                   <option value="VIDE">1. Vide (aucun renfort)</option>
                                   <option value="RENFORT_L1">2. + Renfort Horizontal L1</option>
                                   <option value="RENFORT_H1">3. + Renfort Vertical H1</option>
-                                  <option value="RENFORT_CROISE">4. Croisé L1 + H1</option>
+                                  <option value="RENFORT_CROISE">4. Croisé R1/R2 + H1</option>
                                 </select>
                                 <select
                                   value={editPrecadreForm.modeDebordement}
@@ -7200,7 +7207,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         const figureLabel = p.figure === 'VIDE' ? '⬜ Vide'
                           : p.figure === 'RENFORT_L1' ? '— + L1 Horizontal'
                           : p.figure === 'RENFORT_H1' ? '| + H1 Vertical'
-                          : '+ Croisé L1+H1';
+                          : '+ Croisé R1/R2 + H1';
 
                         const debSup = p.debordementSuperieur !== undefined ? p.debordementSuperieur : 100;
                         const debInf = p.debordementInferieur !== undefined ? p.debordementInferieur : 300;
@@ -7266,7 +7273,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                     onChange={e => {
                                       const fig = e.target.value as FigurePrecadre;
                                       setLignesPrecadres(prev => prev.map(item => item.id === p.id ? { ...item, figure: fig } : item));
-                                      const figLabel = fig === 'VIDE' ? '1. Vide' : fig === 'RENFORT_L1' ? '2. + Renfort L1' : fig === 'RENFORT_H1' ? '3. + Renfort H1' : '4. Croisé L1+H1';
+                                      const figLabel = fig === 'VIDE' ? '1. Vide' : fig === 'RENFORT_L1' ? '2. + Renfort L1' : fig === 'RENFORT_H1' ? '3. + Renfort H1' : '4. Croisé R1/R2 + H1';
                                       showFlashNotification(`✓ Ligne ${p.repere} : Figure actualisée en "${figLabel}"`, 'success');
                                     }}
                                     className="w-full bg-slate-950 border border-slate-700 hover:border-purple-400 rounded-md px-1.5 py-0.5 text-xs text-slate-200 font-semibold focus:outline-none focus:ring-1 focus:ring-purple-400 cursor-pointer"
@@ -7275,7 +7282,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                     <option value="VIDE">⬜ 1. Vide (sans renfort)</option>
                                     <option value="RENFORT_L1">— 2. + Renfort L1 (Horiz)</option>
                                     <option value="RENFORT_H1">| 3. + Renfort H1 (Vert)</option>
-                                    <option value="RENFORT_CROISE">➕ 4. Croisé L1+H1</option>
+                                    <option value="RENFORT_CROISE">➕ 4. Croisé R1/R2 + H1</option>
                                   </select>
                                 </div>
                                 <div>
@@ -7307,7 +7314,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                 )}
                                 {p.figure === 'RENFORT_CROISE' && (
                                   <div className="text-sky-300 font-bold">
-                                    + 2 × Demi-Renforts = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
+                                    + 2 × Demi-Renforts (R1 &amp; R2) = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
                                   </div>
                                 )}
                                 {(p.figure === 'RENFORT_H1' || p.figure === 'RENFORT_CROISE') && (

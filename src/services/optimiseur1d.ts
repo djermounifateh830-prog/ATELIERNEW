@@ -2,7 +2,8 @@ import {
   PieceCoupee,
   ResultatBarre,
   ResultatChute,
-  ResultatOptimisation
+  ResultatOptimisation,
+  ChuteItem
 } from '../types';
 import { logger } from './logger';
 
@@ -924,7 +925,7 @@ export class OptimiseurCoupe1D {
 
   public optimiser(
     piecesDemandes: { longueur: number; quantite: number; label?: string; repere?: string; refCommande?: string; nomClient?: string; donneurOrdre?: string }[],
-    chutesStock: { longueur: number; quantite: number }[] = []
+    chutesStock: (ChuteItem | { id?: string; longueur: number; quantite: number })[] = []
   ): ResultatOptimisation {
     const initialPool: PieceItem[] = [];
     let pieceUid = 1;

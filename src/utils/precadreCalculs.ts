@@ -18,9 +18,9 @@ export const EPAISSEUR_BARRE_PRECADRE_MM = 19;
  * 3. Renfort vertical (H1) (seul ou croisé) :
  *    - Se loge à l'intérieur du cadre entre la traverse haute (positionnée à debSup) et la traverse basse (positionnée à debInf).
  *    - Hauteur nette entre traverses = Hauteur - debSup - debInf - 2 × épaisseur de traverse (2 × 19 mm = 38 mm).
- * 4. Renfort croisé (L1 + H1) :
+ * 4. Renfort croisé (R1/R2 + H1) :
  *    - Le montant central vertical H1 sépare la largeur en 2 parties.
- *    - Les 2 demi-renforts horizontaux (L1 et L2) valent chacun : (Largeur - 19 mm) / 2.
+ *    - Les 2 demi-renforts horizontaux (R1 et R2) valent chacun : (Largeur - 19 mm) / 2.
  */
 export const getDimensionsPrecadrePiece = (
   largeur: number,
@@ -66,7 +66,7 @@ export const getDimensionsPrecadrePiece = (
   // 3. Renfort horizontal seul L1 : L tel quel
   const lRenfortSeul = Math.max(0, Math.round(largeur * 10) / 10);
 
-  // 4. Demi-renforts horizontaux L1 et L2 (pour renfort croisé L1 + H1) :
+  // 4. Demi-renforts horizontaux R1 et R2 (pour renfort croisé R1/R2 + H1) :
   // Mesure = (Largeur intérieure - 19 mm épaisseur du montant central H1) / 2
   const lDemiRenfortCroise = Math.max(
     0,

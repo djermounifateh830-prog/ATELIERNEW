@@ -22,6 +22,7 @@ export interface SectionDebitOF {
   avecPeinture?: boolean;
   avecSousFace?: boolean;
   montageSousFace?: string;
+  avecPlaque?: boolean;
   isSousFace?: boolean;
   famille?: FamilleProduit | string;
   type?: 'CT' | 'SF' | 'LF' | 'GL' | 'PRC' | 'CADRE' | string;
@@ -93,6 +94,7 @@ interface SectionTraitee {
   avecPeinture: boolean;
   avecSousFace: boolean;
   montageSousFace: string;
+  avecPlaque?: boolean;
   isSousFace: boolean;
   famille: FamilleOF;
   commandesInvolved?: string[];
@@ -536,6 +538,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         avecPeinture: !!sec.avecPeinture,
         avecSousFace: !!sec.avecSousFace,
         montageSousFace: sec.montageSousFace || 'NON_MONTEE',
+        avecPlaque: sec.avecPlaque,
         isSousFace: isSousFaceDetected,
         famille: familleCalculee,
         commandesInvolved: sec.commandesInvolved,
@@ -678,7 +681,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     const { familleLabel, profileDesignation } = separerFamilleEtProfile(sec);
     const conditionsHtml = sec.titre.toUpperCase().includes('CAISSON') ? [
       labelFinition(sec.avecPeinture),
-      sec.avecSousFace ? labelMontage(sec.avecSousFace, sec.montageSousFace) : ''
+      sec.avecSousFace ? labelMontage(sec.avecSousFace, sec.montageSousFace) : '',
+      sec.avecPlaque !== undefined ? (sec.avecPlaque ? 'AVEC PLAQUE' : 'SANS PLAQUE') : ''
     ].filter(Boolean).join(' | ') : '';
 
     const barresHTML = sec.groupesBarresNeuves.map(g => {
@@ -689,18 +693,18 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         return `
         <tr>
           ${pIdx === 0 ? `
-            <td rowspan="${nbPieces}" class="border-bar-solid" style="width:6%;text-align:center;font-weight:900;color:#000;font-size:20px;background:#fff;padding:6px 2px;vertical-align:middle;">${g.quantite}</td>
+            <td rowspan="${nbPieces}" class="border-bar-solid" style="width:6%;text-align:center;font-weight:900;color:#000;font-size:26px;background:#fff;padding:6px 2px;vertical-align:middle;">${g.quantite}</td>
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:12%;text-align:center;font-family:Consolas,monospace;font-weight:900;font-size:14px;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">Barre ${Math.round(sec.barreLongueur || 6000)} mm</td>
           ` : ''}
           <td class="${cutBorderClass}" style="width:14%;font-family:Consolas,monospace;padding:6px 2px;vertical-align:middle;text-align:center;">
-            <span class="repere-badge" style="font-size:26px;font-weight:900;color:#000;display:inline-block;letter-spacing:1px;">${p.repere}</span>
+            <span class="repere-badge" style="font-size:19px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.repere}</span>
           </td>
           <td class="${cutBorderClass}" style="width:30%;font-family:Consolas,monospace;font-weight:900;padding:6px 4px;vertical-align:middle;text-align:center;">
-            <span class="longueur-coupe" style="font-size:32px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.longueur} mm</span>
+            <span class="longueur-coupe" style="font-size:23px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.longueur} mm</span>
           </td>
           ${pIdx === 0 ? `
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:14%;text-align:center;font-weight:900;font-family:Consolas,monospace;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">
-              <span class="reste-badge" style="font-size:24px;font-weight:900;color:#000;display:inline-block;">${Math.round(g.chute)} mm</span>
+              <span class="reste-badge" style="font-size:19px;font-weight:900;color:#000;display:inline-block;">${Math.round(g.chute)} mm</span>
             </td>
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:11%;text-align:center;font-weight:900;font-size:13px;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">
               <span style="font-weight:900;display:inline-block;">
@@ -726,18 +730,18 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         return `
         <tr>
           ${pIdx === 0 ? `
-            <td rowspan="${nbPieces}" class="border-bar-solid" style="width:6%;text-align:center;font-weight:900;color:#000;font-size:20px;background:#fff;padding:6px 2px;vertical-align:middle;">${g.quantite}</td>
+            <td rowspan="${nbPieces}" class="border-bar-solid" style="width:6%;text-align:center;font-weight:900;color:#000;font-size:26px;background:#fff;padding:6px 2px;vertical-align:middle;">${g.quantite}</td>
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:12%;text-align:center;font-family:Consolas,monospace;font-weight:900;font-size:14px;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">Chute ${Math.round(g.support)} mm</td>
           ` : ''}
           <td class="${cutBorderClass}" style="width:14%;font-family:Consolas,monospace;padding:6px 2px;vertical-align:middle;text-align:center;">
-            <span class="repere-badge" style="font-size:26px;font-weight:900;color:#000;display:inline-block;letter-spacing:1px;">${p.repere}</span>
+            <span class="repere-badge" style="font-size:19px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.repere}</span>
           </td>
           <td class="${cutBorderClass}" style="width:30%;font-family:Consolas,monospace;font-weight:900;padding:6px 4px;vertical-align:middle;text-align:center;">
-            <span class="longueur-coupe" style="font-size:32px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.longueur} mm</span>
+            <span class="longueur-coupe" style="font-size:23px;font-weight:900;color:#000;display:inline-block;letter-spacing:0.5px;">${p.longueur} mm</span>
           </td>
           ${pIdx === 0 ? `
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:14%;text-align:center;font-weight:900;font-family:Consolas,monospace;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">
-              <span class="reste-badge" style="font-size:24px;font-weight:900;color:#000;display:inline-block;">${Math.round(g.reste)} mm</span>
+              <span class="reste-badge" style="font-size:19px;font-weight:900;color:#000;display:inline-block;">${Math.round(g.reste)} mm</span>
             </td>
             <td rowspan="${nbPieces}" class="border-bar-solid" style="width:11%;text-align:center;font-weight:900;font-size:13px;color:#000;background:#fff;padding:6px 2px;vertical-align:middle;">
               <span style="font-weight:900;display:inline-block;">${chuteStatut}</span>
@@ -777,11 +781,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <col style="width:13%;">
         </colgroup>
         <thead><tr style="background:#fff;border-bottom:2.5px solid #000;">
-          <th style="width:6%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Qté</th>
+          <th style="width:6%;text-align:center;font-size:16px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Qté</th>
           <th style="width:12%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Origine</th>
-          <th style="width:14%;font-size:16px;font-weight:900;padding:6px 4px;border-right:2px solid #000;text-align:center;background:#fff;color:#000;">Repère</th>
-          <th style="width:30%;text-align:center;font-size:15px;font-weight:900;padding:6px 4px;border-right:2px solid #000;background:#fff;color:#000;">Longueur(s) Coupe</th>
-          <th style="width:14%;text-align:center;font-size:16px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Reste</th>
+          <th style="width:14%;font-size:14px;font-weight:900;padding:6px 4px;border-right:2px solid #000;text-align:center;background:#fff;color:#000;">Repère</th>
+          <th style="width:30%;text-align:center;font-size:14px;font-weight:900;padding:6px 4px;border-right:2px solid #000;background:#fff;color:#000;">Longueur(s) Coupe</th>
+          <th style="width:14%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Reste</th>
           <th style="width:11%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Statut</th>
           <th style="width:13%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;background:#fff;color:#000;">Nouvelle Chute</th>
         </tr></thead>
@@ -802,11 +806,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <col style="width:13%;">
         </colgroup>
         <thead><tr style="background:#fff;border-bottom:2.5px solid #000;">
-          <th style="width:6%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Qté</th>
+          <th style="width:6%;text-align:center;font-size:16px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Qté</th>
           <th style="width:12%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Origine</th>
-          <th style="width:14%;font-size:16px;font-weight:900;padding:6px 4px;border-right:2px solid #000;text-align:center;background:#fff;color:#000;">Repère</th>
-          <th style="width:30%;text-align:center;font-size:15px;font-weight:900;padding:6px 4px;border-right:2px solid #000;background:#fff;color:#000;">Longueur(s) Coupe</th>
-          <th style="width:14%;text-align:center;font-size:16px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Reste</th>
+          <th style="width:14%;font-size:14px;font-weight:900;padding:6px 4px;border-right:2px solid #000;text-align:center;background:#fff;color:#000;">Repère</th>
+          <th style="width:30%;text-align:center;font-size:14px;font-weight:900;padding:6px 4px;border-right:2px solid #000;background:#fff;color:#000;">Longueur(s) Coupe</th>
+          <th style="width:14%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Reste</th>
           <th style="width:11%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;border-right:2px solid #000;background:#fff;color:#000;">Statut</th>
           <th style="width:13%;text-align:center;font-size:14px;font-weight:900;padding:6px 2px;background:#fff;color:#000;">Nouvelle Chute</th>
         </tr></thead>
@@ -1296,6 +1300,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       if (sec.avecSousFace) {
         conditionsParts.push(sec.montageSousFace === 'MONTEE_ATELIER' ? 'AVEC MONTAGE' : 'SANS MONTAGE');
       }
+      if (sec.avecPlaque !== undefined) {
+        conditionsParts.push(sec.avecPlaque ? 'AVEC PLAQUE' : 'SANS PLAQUE');
+      }
     }
 
     const { familleLabel, profileDesignation } = separerFamilleEtProfile(sec);
@@ -1337,11 +1344,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               <table className="w-full text-left text-sm border-collapse table-fixed">
                 <thead className="bg-white text-black font-black border-b-[3px] border-black text-sm sm:text-base">
                   <tr>
-                    <th className="py-2.5 px-1 text-center w-[6%] border-r-2 border-black">Qté</th>
+                    <th className="py-2.5 px-1 text-center w-[6%] border-r-2 border-black text-base sm:text-lg font-black">Qté</th>
                     <th className="py-2.5 px-1 text-center w-[12%] border-r-2 border-black">Origine</th>
-                    <th className="py-2.5 px-1 border-r-2 border-black w-[14%] text-center text-base sm:text-lg">Repère</th>
-                    <th className="py-2.5 px-1 border-r-2 border-black w-[30%] text-center text-base sm:text-lg">Longueur(s) Coupe</th>
-                    <th className="py-2.5 px-1 text-center w-[14%] border-r-2 border-black text-base sm:text-lg">Reste</th>
+                    <th className="py-2.5 px-1 border-r-2 border-black w-[14%] text-center text-sm sm:text-base font-black">Repère</th>
+                    <th className="py-2.5 px-1 border-r-2 border-black w-[30%] text-center text-sm sm:text-base font-black">Longueur(s) Coupe</th>
+                    <th className="py-2.5 px-1 text-center w-[14%] border-r-2 border-black text-sm sm:text-base font-black">Reste</th>
                     <th className="py-2.5 px-1 text-center w-[11%] border-r-2 border-black">Statut</th>
                     <th className="py-2.5 px-1 text-center w-[13%]">Nouvelle Chute</th>
                   </tr>
@@ -1361,7 +1368,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                             <>
                               <td
                                 rowSpan={nbPieces}
-                                className="py-2.5 px-1 text-center font-black text-lg sm:text-2xl text-black border-r-2 border-black font-mono bg-white align-middle"
+                                className="py-2.5 px-1 text-center font-black text-2xl sm:text-3xl text-black border-r-2 border-black font-mono bg-white align-middle"
                               >
                                 {g.quantite}
                               </td>
@@ -1374,12 +1381,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                             </>
                           )}
                           <td className="py-2 px-1 border-r-2 border-black font-mono text-center align-middle">
-                            <span className="repere-badge font-mono font-black text-2xl sm:text-3xl text-black inline-block tracking-wider">
+                            <span className="repere-badge font-mono font-black text-lg sm:text-xl text-black inline-block tracking-normal">
                               {p.repere}
                             </span>
                           </td>
                           <td className="py-2 px-1 border-r-2 border-black font-mono text-center align-middle">
-                            <span className="longueur-coupe font-mono font-black text-2xl sm:text-3xl lg:text-4xl text-black inline-block tracking-tight">
+                            <span className="longueur-coupe font-mono font-black text-xl sm:text-2xl text-black inline-block tracking-tight">
                               {p.longueur} mm
                             </span>
                           </td>
@@ -1389,7 +1396,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                                 rowSpan={nbPieces}
                                 className="py-2.5 px-1 text-center font-mono font-black border-r-2 border-black align-middle"
                               >
-                                <span className="reste-badge font-mono font-black text-xl sm:text-2xl lg:text-3xl text-black inline-block tracking-tight">
+                                <span className="reste-badge font-mono font-black text-lg sm:text-xl text-black inline-block tracking-tight">
                                   {Math.round(g.chute)} mm
                                 </span>
                               </td>
@@ -1420,7 +1427,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
         {/* Coupes sur Chutes du Stock */}
         {sec.groupesChutesRecup.length > 0 && (
-          <div className="space-y-1.5 pt-1">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-center text-xs sm:text-sm font-black uppercase text-black px-1 text-center">
               <span className="text-black font-black text-sm sm:text-base">
                 COUPES SUR CHUTES DU STOCK ({sec.resultat.total_chutes_recyclees} chute(s))
@@ -1430,11 +1437,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               <table className="w-full text-left text-sm border-collapse table-fixed">
                 <thead className="bg-white text-black font-black border-b-[3px] border-black text-sm sm:text-base">
                   <tr>
-                    <th className="py-2.5 px-1 text-center w-[6%] border-r-2 border-black">Qté</th>
+                    <th className="py-2.5 px-1 text-center w-[6%] border-r-2 border-black text-base sm:text-lg font-black">Qté</th>
                     <th className="py-2.5 px-1 text-center w-[12%] border-r-2 border-black bg-white text-black">Origine</th>
-                    <th className="py-2.5 px-1 border-r-2 border-black w-[14%] text-center text-base sm:text-lg">Repère</th>
-                    <th className="py-2.5 px-1 border-r-2 border-black w-[30%] text-center text-base sm:text-lg">Longueur(s) Coupe</th>
-                    <th className="py-2.5 px-1 text-center w-[14%] border-r-2 border-black text-base sm:text-lg">Reste</th>
+                    <th className="py-2.5 px-1 border-r-2 border-black w-[14%] text-center text-sm sm:text-base font-black">Repère</th>
+                    <th className="py-2.5 px-1 border-r-2 border-black w-[30%] text-center text-sm sm:text-base font-black">Longueur(s) Coupe</th>
+                    <th className="py-2.5 px-1 text-center w-[14%] border-r-2 border-black text-sm sm:text-base font-black">Reste</th>
                     <th className="py-2.5 px-1 text-center w-[11%] border-r-2 border-black">Statut</th>
                     <th className="py-2.5 px-1 text-center w-[13%]">Nouvelle Chute</th>
                   </tr>
@@ -1459,7 +1466,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                             <>
                               <td
                                 rowSpan={nbPieces}
-                                className="py-2.5 px-1 text-center font-black text-lg sm:text-2xl text-black border-r-2 border-black font-mono bg-white align-middle"
+                                className="py-2.5 px-1 text-center font-black text-2xl sm:text-3xl text-black border-r-2 border-black font-mono bg-white align-middle"
                               >
                                 {g.quantite}
                               </td>
@@ -1472,12 +1479,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                             </>
                           )}
                           <td className="py-2 px-1 border-r-2 border-black font-mono text-center align-middle">
-                            <span className="repere-badge font-mono font-black text-2xl sm:text-3xl text-black inline-block tracking-wider">
+                            <span className="repere-badge font-mono font-black text-lg sm:text-xl text-black inline-block tracking-normal">
                               {p.repere}
                             </span>
                           </td>
                           <td className="py-2 px-1 border-r-2 border-black font-mono text-center align-middle">
-                            <span className="longueur-coupe font-mono font-black text-2xl sm:text-3xl lg:text-4xl text-black inline-block tracking-tight">
+                            <span className="longueur-coupe font-mono font-black text-xl sm:text-2xl text-black inline-block tracking-tight">
                               {p.longueur} mm
                             </span>
                           </td>
@@ -1487,7 +1494,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                                 rowSpan={nbPieces}
                                 className="py-2.5 px-1 text-center font-mono font-black border-r-2 border-black align-middle"
                               >
-                                <span className="reste-badge font-mono font-black text-xl sm:text-2xl lg:text-3xl text-black inline-block tracking-tight">
+                                <span className="reste-badge font-mono font-black text-lg sm:text-xl text-black inline-block tracking-tight">
                                   {Math.round(g.reste)} mm
                                 </span>
                               </td>

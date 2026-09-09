@@ -254,20 +254,20 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
               refCommande: c.refCommande
             });
           } else if (c.figure === 'RENFORT_CROISE') {
-            // Demi-renfort horizontal 1 (L1)
+            // Demi-renfort horizontal 1 (R1)
             piecesPool.push({
               longueur: lDemiRenfortCroise,
               quantite: 1 * c.quantite,
-              label: `L1-${c.repere} (Demi-Renfort Horizontal 1 — L1=${lDemiRenfortCroise}mm)`,
-              repere: `L1-${c.repere}`,
+              label: `R1-${c.repere} (Demi-Renfort Horizontal 1 — R1=${lDemiRenfortCroise}mm)`,
+              repere: `R1-${c.repere}`,
               refCommande: c.refCommande
             });
-            // Demi-renfort horizontal 2 (L2)
+            // Demi-renfort horizontal 2 (R2)
             piecesPool.push({
               longueur: lDemiRenfortCroise,
               quantite: 1 * c.quantite,
-              label: `L2-${c.repere} (Demi-Renfort Horizontal 2 — L2=${lDemiRenfortCroise}mm)`,
-              repere: `L2-${c.repere}`,
+              label: `R2-${c.repere} (Demi-Renfort Horizontal 2 — R2=${lDemiRenfortCroise}mm)`,
+              repere: `R2-${c.repere}`,
               refCommande: c.refCommande
             });
           }
@@ -405,7 +405,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
                 {saisieFigure === 'VIDE' && '2 Montants + 1 TRH + 1 TRB — Aucun renfort'}
                 {saisieFigure === 'RENFORT_L1' && '+ 1 Renfort Horizontal L1 (traverse centrale)'}
                 {saisieFigure === 'RENFORT_H1' && '+ 1 Renfort Vertical H1 (montant central)'}
-                {saisieFigure === 'RENFORT_CROISE' && '+ 1 L1 Horizontal + 1 H1 Vertical (croisé)'}
+                {saisieFigure === 'RENFORT_CROISE' && '+ 2 Demi-Renforts R1/R2 Horiz. + 1 H1 Vertical (croisé)'}
               </span>
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -467,7 +467,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
                   <line x1="1" y1="14" x2="35" y2="14" stroke="currentColor" strokeWidth="2"/>
                   <line x1="18" y1="1" x2="18" y2="27" stroke="currentColor" strokeWidth="2"/>
                 </svg>
-                <span>Croisé L1+H1</span>
+                <span>Croisé R1/R2 + H1</span>
               </button>
             </div>
           </div>
@@ -684,7 +684,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
                             <option value="VIDE">1. Vide (aucun renfort)</option>
                             <option value="RENFORT_L1">2. + Renfort Horizontal L1</option>
                             <option value="RENFORT_H1">3. + Renfort Vertical H1</option>
-                            <option value="RENFORT_CROISE">4. Croisé L1 + H1</option>
+                            <option value="RENFORT_CROISE">4. Croisé R1/R2 + H1</option>
                           </select>
                           <select
                             value={editForm.modeDebordement}
@@ -725,7 +725,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
                   const figureLabel = c.figure === 'VIDE' ? '⬜ Vide'
                     : c.figure === 'RENFORT_L1' ? '— + L1 Horiz.'
                     : c.figure === 'RENFORT_H1' ? '| + H1 Vert.'
-                    : '+ Croisé L1+H1';
+                    : '+ Croisé R1/R2 + H1';
 
                   const debLabel = c.modeDebordement === 'SUPERIEUR_INFERIEUR' ? '⬆️⬇️ Haut(+100)&Bas(+300)'
                     : c.modeDebordement === 'SUPERIEUR_SEUL' ? '⬆️ Haut(+100) seul'
@@ -772,7 +772,7 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
                           )}
                           {c.figure === 'RENFORT_CROISE' && (
                             <div className="text-sky-300 font-bold">
-                              + 2 × Demi-Renforts (L1 &amp; L2) = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
+                              + 2 × Demi-Renforts (R1 &amp; R2) = {lDemiRenfortCroise} mm <span className="text-slate-400 font-normal">[(L-19)/2]</span>
                             </div>
                           )}
                           {(c.figure === 'RENFORT_H1' || c.figure === 'RENFORT_CROISE') && (

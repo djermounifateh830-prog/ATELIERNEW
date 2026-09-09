@@ -200,7 +200,10 @@ class AtelierDatabase {
         badge_bg TEXT,
         description TEXT,
         actif INTEGER NOT NULL DEFAULT 1,
-        ordre INTEGER DEFAULT 0
+        ordre INTEGER DEFAULT 0,
+        peinture_par_defaut INTEGER DEFAULT 0,
+        montage_sous_face_par_defaut INTEGER DEFAULT 1,
+        avec_plaque_par_defaut INTEGER DEFAULT 0
       );
 
       -- Table Métadonnées Système
@@ -259,6 +262,15 @@ class AtelierDatabase {
     try {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_res_chutes_cid ON reservations_chutes(chute_id);');
     } catch {}
+    try {
+      this.db.exec('ALTER TABLE client_codifications ADD COLUMN peinture_par_defaut INTEGER DEFAULT 0;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE client_codifications ADD COLUMN montage_sous_face_par_defaut INTEGER DEFAULT 1;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE client_codifications ADD COLUMN avec_plaque_par_defaut INTEGER DEFAULT 0;');
+    } catch {}
   }
 
   private seedIfEmpty() {
@@ -267,6 +279,24 @@ class AtelierDatabase {
     if (countCodif === 0) {
       console.log('📦 [SQLite] Ensemencement des codifications clients...');
       this.saveClientCodifications(INITIAL_CLIENT_CODIFICATIONS);
+    } else {
+      // S'assurer que les valeurs par défaut de Caisson existent pour les codifications existantes
+      try {
+        for (const initC of INITIAL_CLIENT_CODIFICATIONS) {
+          this.db.prepare(`
+            UPDATE client_codifications
+            SET peinture_par_defaut = COALESCE(peinture_par_defaut, ?),
+                montage_sous_face_par_defaut = COALESCE(montage_sous_face_par_defaut, ?),
+                avec_plaque_par_defaut = COALESCE(avec_plaque_par_defaut, ?)
+            WHERE id = ? AND (peinture_par_defaut IS NULL OR montage_sous_face_par_defaut IS NULL OR avec_plaque_par_defaut IS NULL)
+          `).run(
+            initC.peintureParDefaut ? 1 : 0,
+            initC.montageSousFaceParDefaut !== false ? 1 : 0,
+            initC.avecPlaqueParDefaut ? 1 : 0,
+            initC.id
+          );
+        }
+      } catch {}
     }
 
     // Vérifier si la base a déjà été initialisée
@@ -1607,6 +1637,31 @@ class AtelierDatabase {
       `);
       updateStmt.run(JSON.stringify(s), id);
 
+      // Mettre à jour les dossiers de commande correspondants vers EN_ATTENTE si aucun autre OF n'est actif
+      try {
+        const cmdRefs = (s.numCommande || '')
+          .split(/[\s,+/]+/)
+          .map(c => c.trim().toLowerCase())
+          .filter(Boolean);
+
+        const allDossiers = this.getDossiers();
+        for (const dossier of allDossiers) {
+          const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+          const matchesClient = s.nomClient && dossier.nomClientFinal &&
+            dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+
+          if (matchesCmd || matchesClient) {
+            if (dossier.statut === 'EN_COURS') {
+              dossier.statut = 'EN_ATTENTE';
+              this.upsertDossier(dossier);
+            }
+          }
+        }
+      } catch (errD) {
+        console.warn('Erreur mise à jour statut dossier après annulation OF:', errD);
+      }
+
       this.syncArticlesQuantiteReservee();
       this.db.exec('COMMIT');
     } catch (e) {
@@ -1621,7 +1676,7 @@ class AtelierDatabase {
   deleteSuiviOF(id: string) {
     this.db.exec('BEGIN TRANSACTION');
     try {
-      const row = this.db.prepare('SELECT statut FROM suivis_of WHERE id = ?').get(id) as { statut?: string } | undefined;
+      const row = this.db.prepare('SELECT statut, num_commande, nom_client FROM suivis_of WHERE id = ?').get(id) as { statut?: string; num_commande?: string; nom_client?: string } | undefined;
       if (row?.statut === 'CLOTURE' || row?.statut === 'LIVRE') {
         // Restaurer automatiquement et rigoureusement le stock physique pour éviter les barres/chutes fantômes
         this.rollbackStockForClosedOF(id);
@@ -1632,6 +1687,41 @@ class AtelierDatabase {
       this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(id);
       this.db.prepare('DELETE FROM mouvements_stock WHERE of_id = ?').run(id);
       this.db.prepare('DELETE FROM suivis_of WHERE id = ?').run(id);
+
+      // Si l'OF supprimé était associé à un dossier, vérifier si le dossier doit repasser à EN_ATTENTE
+      if (row) {
+        try {
+          const cmdRefs = (row.num_commande || '')
+            .split(/[\s,+/]+/)
+            .map(c => c.trim().toLowerCase())
+            .filter(Boolean);
+
+          const allDossiers = this.getDossiers();
+          const remainingOFs = this.getSuivisOF() || [];
+          for (const dossier of allDossiers) {
+            const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+            const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+            const matchesClient = row.nom_client && dossier.nomClientFinal &&
+              dossier.nomClientFinal.trim().toLowerCase() === row.nom_client.trim().toLowerCase();
+
+            if (matchesCmd || matchesClient) {
+              const hasActiveOF = remainingOFs.some(o => {
+                if (o.id === id) return false;
+                if (o.statut === 'ANNULE') return false;
+                const oCmds = (o.numCommande || '').toLowerCase();
+                return cmdRefs.some(ref => oCmds.includes(ref)) ||
+                  (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
+              });
+              if (!hasActiveOF && (dossier.statut === 'EN_COURS' || dossier.statut === 'FABRIQUE')) {
+                dossier.statut = 'EN_ATTENTE';
+                this.upsertDossier(dossier);
+              }
+            }
+          }
+        } catch (errD) {
+          console.warn('Erreur mise à jour statut dossier après suppression OF:', errD);
+        }
+      }
 
       this.syncArticlesQuantiteReservee();
       this.db.exec('COMMIT');
@@ -1714,7 +1804,10 @@ class AtelierDatabase {
       badgeBg: r.badge_bg || undefined,
       description: r.description || undefined,
       actif: Boolean(r.actif),
-      ordre: Number(r.ordre || 0)
+      ordre: Number(r.ordre || 0),
+      peintureParDefaut: Boolean(r.peinture_par_defaut),
+      montageSousFaceParDefaut: r.montage_sous_face_par_defaut !== null && r.montage_sous_face_par_defaut !== undefined ? Boolean(r.montage_sous_face_par_defaut) : true,
+      avecPlaqueParDefaut: Boolean(r.avec_plaque_par_defaut)
     }));
   }
 
@@ -1725,14 +1818,18 @@ class AtelierDatabase {
       const stmt = this.db.prepare(`
         INSERT INTO client_codifications (
           id, code, nom, prefixe_commande, prefixe_repere_special,
-          type, badge_color, badge_bg, description, actif, ordre
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          type, badge_color, badge_bg, description, actif, ordre,
+          peinture_par_defaut, montage_sous_face_par_defaut, avec_plaque_par_defaut
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const c of codifs) {
         stmt.run(
           c.id, c.code, c.nom, c.prefixeCommande, c.prefixeRepereSpecial || null,
           c.type, c.badgeColor || null, c.badgeBg || null, c.description || null,
-          c.actif ? 1 : 0, c.ordre || 0
+          c.actif ? 1 : 0, c.ordre || 0,
+          c.peintureParDefaut ? 1 : 0,
+          c.montageSousFaceParDefaut !== false ? 1 : 0,
+          c.avecPlaqueParDefaut ? 1 : 0
         );
       }
       this.db.exec('COMMIT');
@@ -1746,13 +1843,17 @@ class AtelierDatabase {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO client_codifications (
         id, code, nom, prefixe_commande, prefixe_repere_special,
-        type, badge_color, badge_bg, description, actif, ordre
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        type, badge_color, badge_bg, description, actif, ordre,
+        peinture_par_defaut, montage_sous_face_par_defaut, avec_plaque_par_defaut
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       c.id, c.code, c.nom, c.prefixeCommande, c.prefixeRepereSpecial || null,
       c.type, c.badgeColor || null, c.badgeBg || null, c.description || null,
-      c.actif ? 1 : 0, c.ordre || 0
+      c.actif ? 1 : 0, c.ordre || 0,
+      c.peintureParDefaut ? 1 : 0,
+      c.montageSousFaceParDefaut !== false ? 1 : 0,
+      c.avecPlaqueParDefaut ? 1 : 0
     );
   }
 
