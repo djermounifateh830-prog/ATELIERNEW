@@ -1,9 +1,17 @@
 import {
   BesoinMoustiquaire,
   ChuteMaille,
+  DecisionMailleDetail,
   ModeleMoustiquaireConfig,
+  ParametresOptimisationMaille,
   ResultatMoustiquaire
 } from '../types';
+
+export const PARAMETRES_MAILLE_DEFAUT: ParametresOptimisationMaille = {
+  ecartMaxPlis: 5, // Jusqu'à +5 plis autorisés au maximum
+  dechetMaxJeteMm: 100, // 10 cm max jeté à la poubelle
+  longueurMinChuteConserveeMm: 1000 // 1 mètre minimum pour conserver le reste en stock
+};
 
 export const MARGE_SECURITE_PLIS = 2; // Règle d'origine atelier validée (+2 plis)
 
@@ -161,38 +169,178 @@ export function calculerBesoinMaille(besoin: BesoinMoustiquaire): {
   };
 }
 
+export interface ResultatSelectionChuteMaille {
+  chute: ChuteMaille | null;
+  decision: DecisionMailleDetail;
+}
+
+/**
+ * Évalue si une chute de maille est compatible avec le besoin et calcule son score d'efficacité.
+ * Règles d'atelier validées :
+ * 1. Plis : entre 0 et ecartMaxPlis (défaut: 5 plis) en trop.
+ * 2. Longueur : >= dimension requise (impossible d'étirer une toile).
+ * 3. Décision déchet :
+ *    - Si perte <= dechetMaxJeteMm (défaut: 100 mm) -> Coupe autorisée, déchet à la poubelle.
+ *    - Si reste >= longueurMinChuteConserveeMm (défaut: 1000 mm) -> Coupe autorisée, reste réinjecté en stock.
+ *    - Entre les deux (ex: 101 mm à 999 mm) -> Rejet pour éviter de gaspiller une grande chute précieuse.
+ */
+export function evaluerCompatibiliteChuteMaille(
+  chute: ChuteMaille,
+  dimensionFixeRequise: number,
+  nbPlisRequis: number,
+  params: ParametresOptimisationMaille = PARAMETRES_MAILLE_DEFAUT
+): {
+  eligible: boolean;
+  score: number;
+  plisEnTrop: number;
+  deltaLongueur: number;
+  actionReste: 'POUBELLE' | 'NOUVELLE_CHUTE_STOCK' | 'AUCUN';
+  motif: string;
+} {
+  const ecartMax = Math.max(0, params.ecartMaxPlis ?? 5);
+  const dechetMax = Math.max(0, params.dechetMaxJeteMm ?? 100);
+  const longMinStock = Math.max(0, params.longueurMinChuteConserveeMm ?? 1000);
+
+  const plisChute = chute.plis;
+  const plisDiff = plisChute - nbPlisRequis;
+
+  // Règle 1 : La chute doit avoir entre 0 et ecartMax plis en trop
+  if (plisDiff < 0 || plisDiff > ecartMax) {
+    return {
+      eligible: false,
+      score: Infinity,
+      plisEnTrop: plisDiff,
+      deltaLongueur: chute.dimension_fixe - dimensionFixeRequise,
+      actionReste: 'AUCUN',
+      motif: plisDiff < 0
+        ? `Manque ${Math.abs(plisDiff)} pli(s) (${plisChute} disponibles pour ${nbPlisRequis} requis)`
+        : `Trop de plis (+${plisDiff} plis, max autorisé: +${ecartMax})`
+    };
+  }
+
+  // Règle 2 : La longueur de la chute doit être >= dimension requise
+  const deltaL = chute.dimension_fixe - dimensionFixeRequise;
+  if (deltaL < 0) {
+    return {
+      eligible: false,
+      score: Infinity,
+      plisEnTrop: plisDiff,
+      deltaLongueur: deltaL,
+      actionReste: 'AUCUN',
+      motif: `Chute trop courte de ${Math.abs(deltaL)} mm (${chute.dimension_fixe} mm pour ${dimensionFixeRequise} mm requis)`
+    };
+  }
+
+  // Règle 3 : Arbitrage du déchet et du reste
+  if (deltaL <= dechetMax) {
+    // Cas A : Déchet minime jetable (ex: <= 100 mm)
+    // Priorité absolue aux plis exacts (plisDiff = 0), puis à la longueur la plus proche
+    const score = (plisDiff * 2000) + deltaL;
+    return {
+      eligible: true,
+      score,
+      plisEnTrop: plisDiff,
+      deltaLongueur: deltaL,
+      actionReste: 'POUBELLE',
+      motif: plisDiff === 0
+        ? `Chute optimale : plis identiques (${nbPlisRequis} plis), déchet de coupe minime (${deltaL} mm à jeter)`
+        : `Chute acceptée : recouper ${plisDiff} pli(s), déchet de coupe minime (${deltaL} mm à jeter)`
+    };
+  }
+
+  if (deltaL >= longMinStock) {
+    // Cas B : Reste réutilisable à remettre en stock (>= 1000 mm)
+    const score = 10000 + (plisDiff * 2000) + deltaL;
+    return {
+      eligible: true,
+      score,
+      plisEnTrop: plisDiff,
+      deltaLongueur: deltaL,
+      actionReste: 'NOUVELLE_CHUTE_STOCK',
+      motif: plisDiff === 0
+        ? `Chute découpée : plis identiques, reste valorisable de ${deltaL} mm remis en stock`
+        : `Chute découpée : recouper ${plisDiff} pli(s), reste valorisable de ${deltaL} mm remis en stock`
+    };
+  }
+
+  // Cas C : Perte intermédiaire non valorisable (entre 10 cm et 1 m) -> rejet pour préserver la chute
+  return {
+    eligible: false,
+    score: Infinity,
+    plisEnTrop: plisDiff,
+    deltaLongueur: deltaL,
+    actionReste: 'AUCUN',
+    motif: `Perte excessive (${deltaL} mm perdus). Chute préservée pour une commande plus grande.`
+  };
+}
+
 export function chercherChuteCompatible(
   dimensionFixeRequise: number,
   nbPlisRequis: number,
   chutesDisponibles: ChuteMaille[],
-  toleranceDimension: number = 20.0
-): ChuteMaille | null {
-  // 1. Filtrer les chutes candidates dont la dimension fixe correspond (tolérance ±20mm par défaut)
-  //    ET qui possèdent un nombre de plis suffisant (>= nbPlisRequis)
-  const candidates = chutesDisponibles.filter(c => {
-    const diffDim = Math.abs(c.dimension_fixe - dimensionFixeRequise);
-    return diffDim <= toleranceDimension && c.plis >= nbPlisRequis;
-  });
+  params: ParametresOptimisationMaille = PARAMETRES_MAILLE_DEFAUT
+): ResultatSelectionChuteMaille {
+  let meilleureChute: ChuteMaille | null = null;
+  let meilleurScore = Infinity;
+  let meilleureEval: any = null;
 
-  if (candidates.length === 0) return null;
+  for (const chute of (chutesDisponibles || [])) {
+    if ((chute as any).quantite !== undefined && (chute as any).quantite <= 0) continue;
+    if (chute.plis <= 0 || chute.dimension_fixe <= 0) continue;
 
-  // 2. Sélectionner la chute la PLUS PROCHE du besoin (Best-Fit) :
-  //    On cherche à minimiser l'écart (chute.plis - nbPlisRequis) pour éviter de gâcher une grande chute
-  return candidates.reduce((best, curr) => {
-    const diffCurr = curr.plis - nbPlisRequis;
-    const diffBest = best.plis - nbPlisRequis;
-    return diffCurr < diffBest ? curr : best;
-  }, candidates[0]);
+    const evaluation = evaluerCompatibiliteChuteMaille(
+      chute,
+      dimensionFixeRequise,
+      nbPlisRequis,
+      params
+    );
+
+    if (evaluation.eligible && evaluation.score < meilleurScore) {
+      meilleurScore = evaluation.score;
+      meilleureChute = chute;
+      meilleureEval = evaluation;
+    }
+  }
+
+  if (!meilleureChute || !meilleureEval) {
+    return {
+      chute: null,
+      decision: {
+        sourceType: 'PAQUET_NEUF',
+        plisRequis: nbPlisRequis,
+        dimensionRequise: dimensionFixeRequise,
+        actionReste: 'AUCUN',
+        motif: 'Aucune chute adaptée en stock sans gaspillage. Découpe sur paquet neuf recommandée.'
+      }
+    };
+  }
+
+  return {
+    chute: meilleureChute,
+    decision: {
+      chuteId: meilleureChute.id,
+      sourceType: 'CHUTE',
+      plisRequis: nbPlisRequis,
+      plisChute: meilleureChute.plis,
+      plisEnTrop: meilleureEval.plisEnTrop,
+      dimensionRequise: dimensionFixeRequise,
+      dimensionChute: meilleureChute.dimension_fixe,
+      dechetLongueurMm: meilleureEval.actionReste === 'POUBELLE' ? meilleureEval.deltaLongueur : 0,
+      resteLongueurMm: meilleureEval.actionReste === 'NOUVELLE_CHUTE_STOCK' ? meilleureEval.deltaLongueur : 0,
+      actionReste: meilleureEval.actionReste,
+      motif: meilleureEval.motif
+    }
+  };
 }
 
 /**
  * Optimise l'attribution des chutes de maille sur l'ensemble d'une commande (lot de moustiquaires)
- * Évite d'attribuer la même chute 2 fois et met à jour le reliquat de plis disponible.
+ * Évite d'attribuer la même chute 2 fois et régénère les reliquats >= 1m pour les autres pièces.
  */
 export function optimiserLotMoustiquaires(
   besoins: BesoinMoustiquaire[],
   chutesDisponibles: ChuteMaille[],
-  toleranceDimension: number = 20.0
+  params: ParametresOptimisationMaille = PARAMETRES_MAILLE_DEFAUT
 ): ResultatMoustiquaire[] {
   // Copie de travail du stock de chutes pour décompte dynamique
   const poolChutes = (chutesDisponibles || []).map(c => ({ ...c }));
@@ -200,70 +348,111 @@ export function optimiserLotMoustiquaires(
   return (besoins || []).map(besoin => {
     const calc = calculerBesoinMaille(besoin);
     const Q = Math.max(1, besoin.quantite || 1);
-    const detailsUnites: { uniteIndex: number; chute: ChuteMaille | null; restePlis?: number }[] = [];
+    const detailsUnites: {
+      uniteIndex: number;
+      chute: ChuteMaille | null;
+      restePlis?: number;
+      decision?: DecisionMailleDetail;
+    }[] = [];
 
     let premiereChuteTrouvee: ChuteMaille | null = null;
-    let premierRestePlis: number | undefined = undefined;
+    let premiereDecision: DecisionMailleDetail | undefined = undefined;
 
     for (let u = 0; u < Q; u++) {
-      // Trouver la chute la plus proche en nombre de plis dans le pool disponible
+      // Évaluer toutes les chutes restantes dans le pool avec les règles d'atelier
       let bestIdx = -1;
-      let minDiffPlis = Infinity;
+      let meilleurScore = Infinity;
+      let meilleureEval: any = null;
 
       poolChutes.forEach((c, idx) => {
-        const diffDim = Math.abs(c.dimension_fixe - calc.dimension_fixe_requise);
-        if (diffDim <= toleranceDimension && c.plis >= calc.nb_plis_requis) {
-          const diffPlis = c.plis - calc.nb_plis_requis;
-          if (diffPlis < minDiffPlis) {
-            minDiffPlis = diffPlis;
-            bestIdx = idx;
-          }
+        if ((c as any).quantite !== undefined && (c as any).quantite <= 0) return;
+        if (c.plis <= 0 || c.dimension_fixe <= 0) return;
+
+        const ev = evaluerCompatibiliteChuteMaille(
+          c,
+          calc.dimension_fixe_requise,
+          calc.nb_plis_requis,
+          params
+        );
+
+        if (ev.eligible && ev.score < meilleurScore) {
+          meilleurScore = ev.score;
+          bestIdx = idx;
+          meilleureEval = ev;
         }
       });
 
-      if (bestIdx !== -1) {
+      if (bestIdx !== -1 && poolChutes[bestIdx]) {
         const matchedChute = poolChutes[bestIdx];
-        const restePlis = matchedChute.plis - calc.nb_plis_requis;
         const chuteSnapshot: ChuteMaille = { ...matchedChute };
+        const decisionUnit: DecisionMailleDetail = {
+          chuteId: matchedChute.id,
+          sourceType: 'CHUTE',
+          plisRequis: calc.nb_plis_requis,
+          plisChute: matchedChute.plis,
+          plisEnTrop: meilleureEval.plisEnTrop,
+          dimensionRequise: calc.dimension_fixe_requise,
+          dimensionChute: matchedChute.dimension_fixe,
+          dechetLongueurMm: meilleureEval.actionReste === 'POUBELLE' ? meilleureEval.deltaLongueur : 0,
+          resteLongueurMm: meilleureEval.actionReste === 'NOUVELLE_CHUTE_STOCK' ? meilleureEval.deltaLongueur : 0,
+          actionReste: meilleureEval.actionReste,
+          motif: meilleureEval.motif
+        };
 
         if (u === 0) {
           premiereChuteTrouvee = chuteSnapshot;
-          premierRestePlis = restePlis;
+          premiereDecision = decisionUnit;
         }
 
         detailsUnites.push({
           uniteIndex: u + 1,
           chute: chuteSnapshot,
-          restePlis
+          restePlis: matchedChute.plis - calc.nb_plis_requis,
+          decision: decisionUnit
         });
 
-        // Mise à jour de la chute dans le pool :
-        // Si le reliquat est réexploitable (>= 15 plis), on le conserve dans le pool pour une autre pièce
-        if (restePlis >= 15) {
+        // Gestion de la mise à jour du pool de chutes
+        if (meilleureEval.actionReste === 'NOUVELLE_CHUTE_STOCK') {
+          // La chute débitée laisse un reste >= longueurMinChuteConserveeMm (ex: >= 1m)
+          // Ce reste reste disponible dans le pool pour une autre fenêtre de la commande !
           poolChutes[bestIdx] = {
-            ...matchedChute,
-            id: `${matchedChute.id || 'm'}-rel`,
-            plis: restePlis
+            id: `${matchedChute.id || 'm'}-rel-${u + 1}`,
+            dimension_fixe: meilleureEval.deltaLongueur,
+            plis: calc.nb_plis_requis
           };
         } else {
-          // Sinon la chute est entièrement consommée
+          // Déchet jeté (<= 100mm) : chute entièrement consommée
           poolChutes.splice(bestIdx, 1);
         }
       } else {
+        const decisionNeuf: DecisionMailleDetail = {
+          sourceType: 'PAQUET_NEUF',
+          plisRequis: calc.nb_plis_requis,
+          dimensionRequise: calc.dimension_fixe_requise,
+          actionReste: 'AUCUN',
+          motif: 'Aucune chute adaptée en stock sans gaspillage. Découpe sur paquet neuf recommandée.'
+        };
+
+        if (u === 0 && !premiereDecision) {
+          premiereDecision = decisionNeuf;
+        }
+
         detailsUnites.push({
           uniteIndex: u + 1,
-          chute: null
+          chute: null,
+          decision: decisionNeuf
         });
       }
     }
 
-    const resSingle = calculerMoustiquaire(besoin, chutesDisponibles);
+    const resSingle = calculerMoustiquaire(besoin, chutesDisponibles, params);
     const hasAnyChute = detailsUnites.some(d => d.chute !== null);
 
     return {
       ...resSingle,
       chute_trouvee: premiereChuteTrouvee,
-      reste_plis: premierRestePlis,
+      decision_maille: premiereDecision,
+      reste_plis: premiereChuteTrouvee ? Math.max(0, premiereChuteTrouvee.plis - calc.nb_plis_requis) : undefined,
       statut_toile: hasAnyChute ? 'CHUTE_RECYCLEE' : 'PAQUET_NEUF',
       details_chutes_unites: detailsUnites
     };
@@ -272,7 +461,8 @@ export function optimiserLotMoustiquaires(
 
 export function calculerMoustiquaire(
   besoin: BesoinMoustiquaire,
-  chutesDisponibles: ChuteMaille[]
+  chutesDisponibles: ChuteMaille[],
+  params: ParametresOptimisationMaille = PARAMETRES_MAILLE_DEFAUT
 ): ResultatMoustiquaire {
   const {
     dimension_fixe_requise,
@@ -285,12 +475,14 @@ export function calculerMoustiquaire(
     superficie_m2
   } = calculerBesoinMaille(besoin);
 
-  const chuteTrouvee = chercherChuteCompatible(
+  const selection = chercherChuteCompatible(
     dimension_fixe_requise,
     nb_plis_requis,
-    chutesDisponibles
+    chutesDisponibles,
+    params
   );
-  const restePlis = chuteTrouvee ? chuteTrouvee.plis - nb_plis_requis : undefined;
+  const chuteTrouvee = selection.chute;
+  const restePlis = chuteTrouvee ? Math.max(0, chuteTrouvee.plis - nb_plis_requis) : undefined;
 
   const typeKey = normalizeTypeOuverture(besoin.typeOuverture);
   const L = besoin.largeur;
@@ -392,6 +584,7 @@ export function calculerMoustiquaire(
     longueur_corde_totale_m,
     superficie_m2,
     chute_trouvee: chuteTrouvee,
+    decision_maille: selection.decision,
     reste_plis: restePlis,
     statut_toile: chuteTrouvee ? 'CHUTE_RECYCLEE' : 'PAQUET_NEUF',
     pieces_cadre_coulisse: piecesProfiles

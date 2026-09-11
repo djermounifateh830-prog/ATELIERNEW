@@ -13,7 +13,8 @@ import {
   ModeDebordementPrecadre,
   FamilleProduit,
   ResultatOptimisation,
-  ClientCodification
+  ClientCodification,
+  ParametresOptimisationMaille
 } from '../../types';
 import {
   detecterAgence,
@@ -27,12 +28,13 @@ import { INITIAL_CLIENT_CODIFICATIONS } from '../../data/initialCodifications';
 import { StorageService } from '../../services/storage';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { logger } from '../../services/logger';
-import { calculerBesoinMaille } from '../../services/moteurMoustiquaire';
+import { calculerBesoinMaille, PARAMETRES_MAILLE_DEFAUT } from '../../services/moteurMoustiquaire';
 import { getDimensionsPrecadrePiece } from '../../utils/precadreCalculs';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { SelecteurMode } from '../common/SelecteurMode';
 import { ClientCodificationModal } from '../common/ClientCodificationModal';
+import { ParametresMailleModal } from '../common/ParametresMailleModal';
 import {
   Building2,
   Building,
@@ -840,6 +842,27 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [mstqCadreTechParams, setMstqCadreTechParams] = useState({ longeur: 0, lame: 0, debordement: 0, refus_min: 0, refus_max: 0, isDirty: false });
   const [mstqCoulisseTechParams, setMstqCoulisseTechParams] = useState({ longeur: 0, lame: 0, debordement: 0, refus_min: 0, refus_max: 0, isDirty: false });
   const [mstqBarreInfTechParams, setMstqBarreInfTechParams] = useState({ longeur: 0, lame: 0, debordement: 0, refus_min: 0, refus_max: 0, isDirty: false });
+
+  // --- PARAMÈTRES TECHNIQUES OPTIMISATION TOILE / MAILLE MSTQ ---
+  const [paramsMaille, setParamsMaille] = useState<ParametresOptimisationMaille>(() => {
+    try {
+      const saved = localStorage.getItem('3m_params_optimisation_maille');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Erreur chargement params maille:', e);
+    }
+    return PARAMETRES_MAILLE_DEFAUT;
+  });
+  const [showParametresMailleModal, setShowParametresMailleModal] = useState<boolean>(false);
+
+  const handleSaveParamsMaille = (newParams: ParametresOptimisationMaille) => {
+    setParamsMaille(newParams);
+    try {
+      localStorage.setItem('3m_params_optimisation_maille', JSON.stringify(newParams));
+    } catch (e) {
+      console.error('Erreur sauvegarde params maille:', e);
+    }
+  };
 
   // Synchro auto des paramètres techniques dès que l'article sélectionné change
   useEffect(() => {
@@ -5294,21 +5317,31 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               </div>
 
               {/* ROW 4 : ⚙️ CONDITIONS & PARAMÈTRES TECHNIQUES DE DÉCOUPE */}
-              <div className="flex items-center justify-between text-[11px] bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] bg-slate-950/80 px-3 py-1.5 rounded-lg border border-slate-800 gap-2">
                 <span className="text-slate-300 font-bold flex items-center gap-1.5">
                   <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Conditions &amp; Paramètres Techniques de Découpe (Cadre, Coulisse, Barre Inférieure)</span>
+                  <span>Conditions &amp; Paramètres Techniques de Découpe (Toile Plissée, Cadre, Coulisse, Barre Inférieure)</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setShowTechParams(!showTechParams)}
-                  className="text-[11px] text-slate-300 hover:text-amber-300 underline font-semibold ml-2 shrink-0 cursor-pointer"
-                >
-                  {showTechParams ? '▲ Masquer réglages' : '⚙️ Modifier réglages découpe (Barres, Déductions, Marges)'}
-                </button>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => setShowParametresMailleModal(true)}
+                    className="px-2 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                    title="Ouvrir la boîte de dialogue des règles de découpe de la toile"
+                  >
+                    <span>🕸️ Règles Toile: +{paramsMaille.ecartMaxPlis}p · Déchet ≤{paramsMaille.dechetMaxJeteMm}mm · Reste ≥{paramsMaille.longueurMinChuteConserveeMm}mm</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTechParams(!showTechParams)}
+                    className="text-[11px] text-slate-300 hover:text-amber-300 underline font-semibold shrink-0 cursor-pointer"
+                  >
+                    {showTechParams ? '▲ Masquer réglages' : '⚙️ Modifier réglages'}
+                  </button>
+                </div>
               </div>
 
-              {/* PANNEAU TECH PARAMS POUR CADRE, COULISSE ET BARRE INF */}
+              {/* PANNEAU TECH PARAMS POUR TOILE, CADRE, COULISSE ET BARRE INF */}
               {showTechParams && (
                 <div className="pt-2 border-t border-slate-800/80 space-y-2">
                   <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
@@ -5316,7 +5349,64 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <span>Réglage Direct des Marges de Coupe (Modifiable en direct sur écran) :</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+                    {/* Toile / Maille Plissée Tech Params Card */}
+                    <div className="bg-slate-950/90 p-2.5 rounded-lg border border-amber-500/40 space-y-1.5 bg-gradient-to-br from-amber-500/5 to-transparent">
+                      <div className="flex items-center justify-between font-bold text-[11px]">
+                        <span className="text-amber-300 font-mono flex items-center gap-1">
+                          <span>🕸️</span>
+                          <span>TOILE / MAILLE PLISSÉE</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowParametresMailleModal(true)}
+                          className="text-[10px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
+                          title="Modifier les critères d'attribution de la toile"
+                        >
+                          Détails ↗
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1 font-mono text-[11px]">
+                        <div>
+                          <span className="block text-[9px] text-slate-400 uppercase font-sans truncate" title="Écart max plis en trop">Écart Plis</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={paramsMaille.ecartMaxPlis}
+                            onChange={e => handleSaveParamsMaille({ ...paramsMaille, ecartMaxPlis: Math.max(0, Number(e.target.value) || 0) })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-bold text-center"
+                          />
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-400 uppercase font-sans truncate" title="Perte max jetée à la poubelle">Déchet Max</span>
+                          <input
+                            type="number"
+                            step="10"
+                            min="0"
+                            value={paramsMaille.dechetMaxJeteMm}
+                            onChange={e => handleSaveParamsMaille({ ...paramsMaille, dechetMaxJeteMm: Math.max(0, Number(e.target.value) || 0) })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-amber-300 font-bold text-center"
+                          />
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-slate-400 uppercase font-sans truncate" title="Longueur min pour remettre en stock">Reste Stock</span>
+                          <input
+                            type="number"
+                            step="100"
+                            min="100"
+                            value={paramsMaille.longueurMinChuteConserveeMm}
+                            onChange={e => handleSaveParamsMaille({ ...paramsMaille, longueurMinChuteConserveeMm: Math.max(0, Number(e.target.value) || 0) })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-emerald-300 font-bold text-center"
+                          />
+                        </div>
+                      </div>
+                      <div className="text-[9px] text-slate-400 flex items-center justify-between font-sans pt-0.5">
+                        <span className="text-amber-400/90 font-medium">✓ Auto-enregistré</span>
+                        <span className="text-slate-500 font-mono">mm / plis</span>
+                      </div>
+                    </div>
+
                     {/* Cadre Tech Params */}
                     <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 space-y-1.5">
                       <div className="flex items-center justify-between font-bold text-[11px]">
@@ -8218,6 +8308,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             sections={caissonSections}
             articles={articles}
             lignesMoustiquaires={lignesMoustiquaires}
+            chutesMaille={chutesMaille}
+            paramsMaille={paramsMaille}
             mapping={mapping}
             donneurOrdre={monClient}
             numCommandeCaisson={numCommandeCaisson}
@@ -8245,6 +8337,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           coloris="G7024"
           sections={mstqSections}
           lignesMoustiquaires={lignesMoustiquaires}
+          chutesMaille={chutesMaille}
+          paramsMaille={paramsMaille}
           mapping={mapping}
           onOFEmis={onDossiersUpdated}
         />
@@ -8263,6 +8357,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           onDeleteCodification={handleDeleteCodification}
         />
       )}
+
+      {/* ========================================================================= */}
+      {/* 11. MODAL RÉGLAGES PARAMÈTRES TOILE / MAILLE MOUSTIQUAIRE                */}
+      {/* ========================================================================= */}
+      <ParametresMailleModal
+        isOpen={showParametresMailleModal}
+        onClose={() => setShowParametresMailleModal(false)}
+        params={paramsMaille}
+        onSave={handleSaveParamsMaille}
+      />
     </div>
   );
 };

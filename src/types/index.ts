@@ -304,10 +304,12 @@ export interface ResultatMoustiquaire {
   chute_trouvee: ChuteMaille | null;
   reste_plis?: number;
   statut_toile?: 'CHUTE_RECYCLEE' | 'PAQUET_NEUF';
+  decision_maille?: DecisionMailleDetail;
   details_chutes_unites?: {
     uniteIndex: number;
     chute: ChuteMaille | null;
     restePlis?: number;
+    decision?: DecisionMailleDetail;
   }[];
   pieces_cadre_coulisse: {
     longueur: number;
@@ -317,6 +319,26 @@ export interface ResultatMoustiquaire {
     refCommande?: string;
     nomClient?: string;
   }[];
+}
+
+export interface ParametresOptimisationMaille {
+  ecartMaxPlis: number; // Défaut: 5 plis (0 à +5 plis autorisés)
+  dechetMaxJeteMm: number; // Défaut: 100 mm (10 cm max jeté à la poubelle)
+  longueurMinChuteConserveeMm: number; // Défaut: 1000 mm (1 m minimum pour remettre en stock)
+}
+
+export interface DecisionMailleDetail {
+  chuteId?: string;
+  sourceType: 'CHUTE' | 'PAQUET_NEUF';
+  plisRequis: number;
+  plisChute?: number;
+  plisEnTrop?: number;
+  dimensionRequise: number;
+  dimensionChute?: number;
+  dechetLongueurMm?: number;
+  resteLongueurMm?: number;
+  actionReste: 'POUBELLE' | 'NOUVELLE_CHUTE_STOCK' | 'AUCUN';
+  motif: string;
 }
 
 export interface ModeleMoustiquaireConfig {

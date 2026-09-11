@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { 
   ResultatOptimisation, Article, PieceCoupee, BesoinMoustiquaire, 
   ChuteMaille, SuiviOF, LigneRetourOF, FamilleProduit,
-  MappingChutes, ChuteReserveeOF, BarreReserveeOF, ChuteMailleReserveeOF 
+  MappingChutes, ChuteReserveeOF, BarreReserveeOF, ChuteMailleReserveeOF,
+  ParametresOptimisationMaille
 } from '../../types';
 import { detecterAgence } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
@@ -51,6 +52,7 @@ export interface OrdreFabricationModalProps {
   numCommandeTablier?: string;
   numCommandeMoustiquaire?: string;
   numCommandePrecadre?: string;
+  paramsMaille?: ParametresOptimisationMaille;
   onOFEmis?: () => void;
 }
 
@@ -421,6 +423,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   numCommandeTablier = '',
   numCommandeMoustiquaire = '',
   numCommandePrecadre = '',
+  paramsMaille,
   onOFEmis
 }) => {
   const [ofEmis, setOfEmis] = useState<boolean>(false);
@@ -440,8 +443,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   // Calcul et optimisation des attributions chutes pour la maille moustiquaire
   const resultatsMaille = useMemo(() => {
     const mstqToile = (lignesMoustiquaires || []).filter(m => m.typeFabrication !== 'PROFILES_SEULS');
-    return optimiserLotMoustiquaires(mstqToile, chutesMaille);
-  }, [lignesMoustiquaires, chutesMaille]);
+    return optimiserLotMoustiquaires(mstqToile, chutesMaille, paramsMaille);
+  }, [lignesMoustiquaires, chutesMaille, paramsMaille]);
 
   // Traitement et structuration de toutes les sections
   const listeSections: SectionTraitee[] = useMemo(() => {
@@ -854,33 +857,31 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     // 1.d Façonnage Toile Plissée / Maille MSTQ (Placée avec les préparations matière première)
     const mstqToileItems = (lignesMoustiquaires || []).filter(m => m.typeFabrication !== 'PROFILES_SEULS');
     const toilePlisseeHTML = mstqToileItems.length > 0 ? `
-      <div style="margin-top:12px;margin-bottom:12px;page-break-inside:avoid;">
-        <div style="font-weight:900;font-size:14px;margin:12px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;background:#fff;border:2px solid #000;padding:6px 10px;border-radius:4px;">
-          D. Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis &amp; Cordes)
+      <div style="margin-top:14px;margin-bottom:14px;page-break-inside:avoid;">
+        <div style="font-weight:900;font-size:16px;margin:12px 0 6px 0;text-align:center;text-transform:uppercase;color:#000;background:#fff;border:2.5px solid #000;padding:7px 12px;border-radius:4px;letter-spacing:0.5px;">
+          OPTIMISATION MAILLE MSTQ
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12px;border:2px solid #000;margin-bottom:8px;table-layout:fixed;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;border:2.5px solid #000;margin-bottom:8px;table-layout:fixed;">
           <colgroup>
-            <col style="width:8%;">
-            <col style="width:14%;">
-            <col style="width:11%;">
-            <col style="width:13%;">
             <col style="width:9%;">
             <col style="width:16%;">
-            <col style="width:8%;">
-            <col style="width:10%;">
             <col style="width:11%;">
+            <col style="width:15%;">
+            <col style="width:10%;">
+            <col style="width:20%;">
+            <col style="width:7%;">
+            <col style="width:12%;">
           </colgroup>
           <thead>
             <tr style="background:#fff;font-weight:900;border-bottom:2px solid #000;">
-              <th style="padding:5px 4px;text-align:center;border-right:1px solid #000;width:8%;background:#fff;color:#000;">Repère</th>
-              <th style="padding:5px 4px;border-right:1px solid #000;width:14%;background:#fff;color:#000;">Dim. Finie (L×H)</th>
-              <th style="padding:5px 4px;border-right:1px solid #000;width:11%;background:#fff;color:#000;">Ouverture</th>
-              <th style="padding:5px 4px;text-align:center;border-right:1px solid #000;background:#fff;color:#000;width:13%;">Coupe Fixe Maille</th>
-              <th style="padding:5px 4px;text-align:center;border-right:1px solid #000;width:9%;background:#fff;color:#000;">Nb Plis</th>
-              <th style="padding:5px 4px;border-right:1px solid #000;width:16%;background:#fff;color:#000;">Longueur Fil / Corde (Mètres)</th>
-              <th style="padding:5px 4px;text-align:center;border-right:1px solid #000;width:8%;background:#fff;color:#000;">Surface</th>
-              <th style="padding:5px 4px;border-right:1px solid #000;width:10%;background:#fff;color:#000;">Article</th>
-              <th style="padding:5px 4px;width:11%;background:#fff;color:#000;">Source Toile</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:9%;background:#fff;color:#000;font-size:13px;">Repère</th>
+              <th style="padding:6px 4px;border-right:1px solid #000;width:16%;background:#fff;color:#000;font-size:13px;">Dim. Finie (L×H)</th>
+              <th style="padding:6px 4px;border-right:1px solid #000;width:11%;background:#fff;color:#000;font-size:13px;">Ouverture</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;background:#fff;color:#000;width:15%;font-size:13px;">Coupe Fixe Maille</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:10%;background:#fff;color:#000;font-size:13px;">Nb Plis</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:20%;background:#fff;color:#000;font-size:13px;">Longueur Fil / Corde</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:7%;background:#fff;color:#000;font-size:13px;">Surface</th>
+              <th style="padding:6px 4px;width:12%;background:#fff;color:#000;font-size:13px;">Source Toile</th>
             </tr>
           </thead>
           <tbody>
@@ -888,24 +889,41 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               const c = calculerBesoinMaille(m);
               const resMstq = resultatsMaille[idx];
               const chute = resMstq?.chute_trouvee;
-              const sourceHtml = chute
-                ? `<span style="background:#fff;color:#000;padding:2px 5px;border-radius:3px;font-weight:bold;border:1px solid #000;font-size:11px;">♻️ Chute (${chute.dimension_fixe}mm, ${chute.plis}p)</span>${resMstq.reste_plis !== undefined ? `<span style="font-size:11px;color:#000;font-weight:bold;margin-left:4px;">Reste: ${resMstq.reste_plis}p</span>` : ''}`
-                : `<span style="background:#fff;color:#000;padding:2px 5px;border-radius:3px;font-weight:bold;border:1px solid #000;font-size:11px;">📦 Neuf (${c.dimension_fixe_requise}mm)</span>`;
+              const dec = resMstq?.decision_maille;
+              
+              let sourceHtml = '';
+              if (chute) {
+                const plisInfo = dec?.plisEnTrop ? ` · <span style="color:#b45309;font-weight:900;">✂️ -${dec.plisEnTrop}p</span>` : '';
+                const actionInfo = dec?.actionReste === 'NOUVELLE_CHUTE_STOCK'
+                  ? `<div style="font-size:11px;color:#0369a1;font-weight:bold;margin-top:2px;">🏬 Garder ${dec.resteLongueurMm}mm</div>`
+                  : `<div style="font-size:11px;color:#444;margin-top:2px;">Perte: ${dec?.dechetLongueurMm ?? 0}mm</div>`;
+                sourceHtml = `
+                  <div style="background:#fff;color:#000;padding:3px 4px;border-radius:3px;border:1px solid #000;font-size:12px;line-height:1.2;">
+                    <strong>♻️ #${chute.id || 'chute'}</strong> (${chute.dimension_fixe}mm${plisInfo})
+                    ${actionInfo}
+                  </div>
+                `;
+              } else {
+                sourceHtml = `
+                  <div style="background:#fff;color:#000;padding:3px 4px;border-radius:3px;border:1px solid #000;font-size:12px;line-height:1.2;">
+                    <strong>📦 Paquet Neuf</strong>
+                    <div style="font-size:11px;color:#444;margin-top:2px;">Coupe ${c.dimension_fixe_requise}mm (${c.nb_plis_requis}p)</div>
+                  </div>
+                `;
+              }
 
               return `
                 <tr style="border-bottom:1px solid #000;background:#fff;">
-                  <td style="padding:5px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:13px;">${m.repere}</td>
-                  <td style="padding:5px 4px;font-weight:900;border-right:1px solid #000;font-size:12px;color:#000;">${m.largeur} × ${m.hauteur} mm (×${m.quantite})</td>
-                  <td style="padding:5px 4px;border-right:1px solid #000;font-size:12px;color:#000;">${m.typeOuverture}</td>
-                  <td style="padding:5px 4px;text-align:center;font-weight:900;background:#fff;color:#000;border-right:1px solid #000;font-size:13px;">${c.dimension_fixe_requise} mm (${c.dimension_fixe_est})</td>
-                  <td style="padding:5px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:13px;">${c.nb_plis_requis} plis</td>
-                  <td style="padding:5px 4px;border-right:1px solid #000;background:#fff;color:#000;">
-                    <div style="font-weight:900;color:#000;font-size:15px;font-family:Consolas,monospace;">${c.longueur_corde_totale_m} m <span style="font-size:12px;font-weight:bold;color:#000;">(${c.longueur_corde_totale_m} Mètres)</span></div>
-                    <div style="font-size:11px;color:#000;margin-top:2px;"><strong style="color:#000;">${c.nb_fils_guidage} fils</strong> · ${c.longueur_corde_unitaire_m} m / fil · entraxe ${(c.distance_cordes / 1000).toFixed(2)} m (${c.distance_cordes} mm)</div>
+                  <td style="padding:7px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${m.repere}</td>
+                  <td style="padding:7px 4px;font-weight:900;border-right:1px solid #000;font-size:14px;color:#000;font-family:Consolas,monospace;">${m.largeur} × ${m.hauteur} mm (×${m.quantite})</td>
+                  <td style="padding:7px 4px;border-right:1px solid #000;font-size:13px;font-weight:bold;color:#000;">${m.typeOuverture}</td>
+                  <td style="padding:7px 4px;text-align:center;font-weight:900;background:#fff;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${c.dimension_fixe_requise} mm <span style="font-size:12px;font-weight:normal;">(${c.dimension_fixe_est})</span></td>
+                  <td style="padding:7px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${c.nb_plis_requis} plis</td>
+                  <td style="padding:7px 4px;border-right:1px solid #000;background:#fff;color:#000;text-align:center;">
+                    <span style="font-weight:900;color:#000;font-size:15px;font-family:Consolas,monospace;white-space:nowrap;">${c.longueur_corde_unitaire_m} m/fil - ${c.nb_fils_guidage} trous</span>
                   </td>
-                  <td style="padding:5px 4px;text-align:center;font-weight:bold;border-right:1px solid #000;font-size:12px;color:#000;">${c.superficie_m2} m²</td>
-                  <td style="padding:5px 4px;border-right:1px solid #000;font-size:11px;color:#000;">${m.articleDesignationMaille || 'MSTQ MAILLE 20mm'}</td>
-                  <td style="padding:5px 4px;color:#000;">${sourceHtml}</td>
+                  <td style="padding:7px 4px;text-align:center;font-weight:bold;border-right:1px solid #000;font-size:13px;color:#000;">${c.superficie_m2} m²</td>
+                  <td style="padding:7px 4px;color:#000;">${sourceHtml}</td>
                 </tr>
               `;
             }).join('')}
@@ -931,22 +949,33 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     *, *::before, *::after { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; background: #fff; font-size: 13px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .print-footer-fixed {
-      display: flex;
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 10mm;
-      border-top: 2px solid #000;
-      padding: 2mm 5mm 0 5mm;
-      font-size: 10pt;
-      font-weight: 800;
-      color: #000;
-      background: #fff;
-      justify-content: space-between;
-      align-items: center;
-      font-family: Arial, sans-serif;
-      z-index: 99999;
+      display: flex !important;
+      flex-direction: row !important;
+      flex-wrap: nowrap !important;
+      white-space: nowrap !important;
+      position: fixed !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      height: 8mm !important;
+      border-top: 2px solid #000 !important;
+      padding: 1.5mm 6mm 0 6mm !important;
+      font-size: 10pt !important;
+      font-weight: 800 !important;
+      color: #000 !important;
+      background: #fff !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      font-family: Arial, sans-serif !important;
+      z-index: 99999 !important;
+      box-sizing: border-box !important;
+    }
+    .print-footer-page-num {
+      font-family: Consolas, monospace !important;
+      font-weight: 900 !important;
+      border: 1.5px solid #000 !important;
+      padding: 1px 8px !important;
+      border-radius: 4px !important;
     }
     .print-footer-page-num::after {
       content: "Page " counter(page);
@@ -1067,11 +1096,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     ${mstqHTML}
   </div>
 
-  <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) -->
+  <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE -->
   <div class="print-footer-fixed">
-    <div><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
-    <div><strong>COMMANDE N° :</strong> ${cmdAffichee}</div>
-    <div><span class="print-footer-page-num"></span></div>
+    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%;flex-shrink:1;"><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
+    <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
+    <div style="white-space:nowrap;flex-shrink:0;"><span class="print-footer-page-num"></span></div>
   </div>
 </body>
 </html>`;
@@ -1567,14 +1596,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           }
           .print-footer-fixed {
             display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            white-space: nowrap !important;
             position: fixed !important;
             bottom: 0 !important;
             left: 0 !important;
             right: 0 !important;
-            height: 10mm !important;
+            height: 8mm !important;
             border-top: 2px solid #000000 !important;
-            padding: 2mm 4mm 0 4mm !important;
-            font-size: 9.5pt !important;
+            padding: 1.5mm 6mm 0 6mm !important;
+            font-size: 10pt !important;
             font-weight: 800 !important;
             color: #000000 !important;
             background: #ffffff !important;
@@ -1582,6 +1614,14 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             align-items: center !important;
             z-index: 99999 !important;
             font-family: Arial, Helvetica, sans-serif !important;
+            box-sizing: border-box !important;
+          }
+          .print-footer-page-num {
+            font-family: Consolas, monospace !important;
+            font-weight: 900 !important;
+            border: 1.5px solid #000000 !important;
+            padding: 1px 8px !important;
+            border-radius: 4px !important;
           }
           .print-footer-page-num::after {
             content: "Page " counter(page);
@@ -1971,33 +2011,31 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               {/* TABLEAU D : DÉBIT TOILE PLISSÉE / MAILLE MSTQ (MATIÈRE PREMIÈRE) */}
               {lignesMoustiquaires && lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length > 0 && (
                 <div className="space-y-1.5 pt-1 of-avoid-break">
-                  <div className="text-xs sm:text-sm font-black uppercase text-black text-center">
-                    D. Toile Plissée / Maille MSTQ (Débit Toile, Guidage, Plis &amp; Cordes)
+                  <div className="text-sm sm:text-base font-black uppercase text-black text-center bg-slate-100 border-2 border-black py-1.5 px-3 rounded tracking-wide">
+                    OPTIMISATION MAILLE MSTQ
                   </div>
                   <div className="border-2 border-black overflow-hidden rounded">
                     <table className="w-full text-left text-sm border-collapse table-fixed">
                       <colgroup>
-                        <col className="w-[8%]" />
-                        <col className="w-[14%]" />
-                        <col className="w-[11%]" />
-                        <col className="w-[13%]" />
                         <col className="w-[9%]" />
                         <col className="w-[16%]" />
-                        <col className="w-[8%]" />
-                        <col className="w-[10%]" />
                         <col className="w-[11%]" />
+                        <col className="w-[15%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[20%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[12%]" />
                       </colgroup>
                       <thead className="bg-white text-black font-black border-b-2 border-black text-xs sm:text-sm">
                         <tr>
-                          <th className="py-2 px-2 text-center border-r-2 border-black">Repère</th>
-                          <th className="py-2 px-2 border-r-2 border-black">Dim. Finie (L × H)</th>
-                          <th className="py-2 px-2 border-r-2 border-black">Ouverture</th>
-                          <th className="py-2 px-2 text-center border-r-2 border-black">Coupe Fixe Maille</th>
-                          <th className="py-2 px-2 text-center border-r-2 border-black">Nb Plis (+2)</th>
-                          <th className="py-2 px-2 border-r-2 border-black">Longueur Fil / Corde (Mètres)</th>
-                          <th className="py-2 px-2 text-center border-r-2 border-black">Surface</th>
-                          <th className="py-2 px-2 border-r-2 border-black">Article</th>
-                          <th className="py-2 px-2">Origine Toile</th>
+                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Repère</th>
+                          <th className="py-2.5 px-2 border-r-2 border-black text-xs sm:text-sm">Dim. Finie (L × H)</th>
+                          <th className="py-2.5 px-2 border-r-2 border-black text-xs sm:text-sm">Ouverture</th>
+                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Coupe Fixe Maille</th>
+                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Nb Plis</th>
+                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Longueur Fil / Corde</th>
+                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Surface</th>
+                          <th className="py-2.5 px-2 text-xs sm:text-sm">Origine Toile</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-black font-mono text-sm bg-white">
@@ -2007,36 +2045,53 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                           const chute = resMstq?.chute_trouvee;
                           return (
                             <tr key={m.id || idx} className="hover:bg-slate-50">
-                              <td className="py-2 px-1 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm">{m.repere}</td>
-                              <td className="py-2 px-2 font-black text-black border-r-2 border-black text-xs sm:text-sm">{m.largeur} × {m.hauteur} mm (×{m.quantite})</td>
-                              <td className="py-2 px-1 font-sans text-xs font-bold border-r-2 border-black text-slate-800">
+                              <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono">{m.repere}</td>
+                              <td className="py-2.5 px-2 font-black text-black border-r-2 border-black text-sm sm:text-base font-mono">{m.largeur} × {m.hauteur} mm (×{m.quantite})</td>
+                              <td className="py-2.5 px-2 font-sans text-xs sm:text-sm font-bold border-r-2 border-black text-slate-800">
                                 {m.typeOuverture === 'PORTE_FENETRE' ? 'Porte-Fenêtre' : m.typeOuverture === 'DOUBLE_VANTAUX' ? 'Baie 2 Vtx' : m.typeOuverture === 'CENTRALE' ? 'Centrale' : m.typeOuverture === 'FIXE' ? 'Fixe' : 'Fenêtre'}
                               </td>
-                              <td className="py-2 px-1 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm bg-white">
-                                {c.dimension_fixe_requise} mm <span className="text-[10px] font-normal text-slate-600">({c.dimension_fixe_est === 'H' ? 'H' : 'L'})</span>
+                              <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono bg-white">
+                                {c.dimension_fixe_requise} mm <span className="text-xs font-normal text-slate-600">(${c.dimension_fixe_est === 'H' ? 'H' : 'L'})</span>
                               </td>
-                              <td className="py-2 px-1 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm">{c.nb_plis_requis} plis</td>
-                              <td className="py-2 px-2 text-xs border-r-2 border-black font-sans bg-white">
-                                <div className="font-black text-black font-mono text-sm sm:text-base">
-                                  {c.longueur_corde_totale_m} m
-                                </div>
-                                <div className="text-slate-800 font-semibold text-[11px] mt-0.5">
-                                  <strong className="text-black font-mono">{c.nb_fils_guidage} fils</strong> · {c.longueur_corde_unitaire_m} m/fil · entraxe {(c.distance_cordes / 1000).toFixed(2)} m
-                                </div>
+                              <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono">{c.nb_plis_requis} plis</td>
+                              <td className="py-2.5 px-2 text-center border-r-2 border-black bg-white">
+                                <span className="font-black text-black font-mono text-sm sm:text-base whitespace-nowrap">
+                                  {c.longueur_corde_unitaire_m} m/fil - {c.nb_fils_guidage} trous
+                                </span>
                               </td>
-                              <td className="py-2 px-1 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm">{c.superficie_m2} m²</td>
-                              <td className="py-2 px-1 font-sans text-xs font-semibold text-slate-700 border-r-2 border-black">{m.articleDesignationMaille || 'MSTQ MAILLE PLISSÉE 20mm'}</td>
-                              <td className="py-2 px-1 font-sans text-xs">
+                              <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm font-mono">{c.superficie_m2} m²</td>
+                              <td className="py-2.5 px-2 font-sans text-xs">
                                 {chute ? (
-                                  <div>
-                                    <span className="inline-flex items-center gap-1 font-bold text-black bg-white px-2 py-0.5 rounded border border-black text-[11px]">
-                                      Chute #{chute.id || 'stock'}
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="inline-flex items-center gap-1 font-black text-black bg-white px-2 py-0.5 rounded border border-black text-xs">
+                                      ♻️ Chute #{chute.id || 'stock'} ({chute.dimension_fixe}mm)
                                     </span>
+                                    {resMstq?.decision_maille?.plisEnTrop ? (
+                                      <span className="text-xs text-amber-800 font-black">
+                                        ✂️ Recouper {resMstq.decision_maille.plisEnTrop} pli(s)
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-emerald-800 font-bold">
+                                        ✓ Plis exacts ({c.nb_plis_requis}p)
+                                      </span>
+                                    )}
+                                    {resMstq?.decision_maille?.actionReste === 'NOUVELLE_CHUTE_STOCK' ? (
+                                      <span className="text-xs text-blue-800 font-bold">
+                                        🏬 Reste stock: {resMstq.decision_maille.resteLongueurMm} mm
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-slate-700">
+                                        Perte: {resMstq?.decision_maille?.dechetLongueurMm ?? 0} mm
+                                      </span>
+                                    )}
                                   </div>
                                 ) : (
                                   <div>
-                                    <span className="inline-flex items-center gap-1 font-bold text-black bg-white px-2 py-0.5 rounded border border-black text-[11px]">
-                                      Paquet Neuf
+                                    <span className="inline-flex items-center gap-1 font-black text-black bg-white px-2 py-0.5 rounded border border-black text-xs">
+                                      📦 Paquet Neuf
+                                    </span>
+                                    <span className="text-xs text-slate-700 font-bold block mt-0.5">
+                                      Coupe: {c.dimension_fixe_requise} mm ({c.nb_plis_requis}p)
                                     </span>
                                   </div>
                                 )}
@@ -2078,19 +2133,21 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               {sectionsParFamille.moustiquaires.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
             </div>
 
-            {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) */}
-            <div className="print-footer-fixed">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-slate-800">CLIENT :</span>
-                <span className="font-black text-black">{clientAffiche}</span>
-                {donneurOrdre && <span className="font-semibold text-slate-700">({donneurOrdre})</span>}
+            {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE */}
+            <div className="print-footer-fixed flex flex-row flex-nowrap items-center justify-between whitespace-nowrap border-t-2 border-black pt-2 px-3 mt-4 text-xs sm:text-sm font-black text-black bg-white">
+              <div className="flex items-center gap-1.5 shrink min-w-0 truncate">
+                <span className="font-bold text-slate-800 shrink-0">CLIENT :</span>
+                <span className="font-black text-black truncate">{clientAffiche}</span>
+                {donneurOrdre && <span className="font-semibold text-slate-700 shrink-0">({donneurOrdre})</span>}
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 shrink-0 px-3">
                 <span className="font-bold text-slate-800">COMMANDE N° :</span>
                 <span className="font-mono font-black text-black">{cmdAffichee}</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="print-footer-page-num font-mono font-black text-black"></span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="print-footer-page-num font-mono font-black text-black border-2 border-black px-2 py-0.5 rounded">
+                  <span className="print:hidden">Page 1</span>
+                </span>
               </div>
             </div>
 

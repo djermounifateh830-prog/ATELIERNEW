@@ -5,19 +5,22 @@ import {
   ChuteMaille,
   MappingChutes,
   BesoinMoustiquaire,
+  ParametresOptimisationMaille,
   ResultatMoustiquaire,
   ResultatOptimisation
 } from '../../types';
 import {
   calculerMoustiquaire,
   optimiserLotMoustiquaires,
-  normalizeTypeOuverture
+  normalizeTypeOuverture,
+  PARAMETRES_MAILLE_DEFAUT
 } from '../../services/moteurMoustiquaire';
 import { StorageService } from '../../services/storage';
 import { SelecteurArticle } from '../common/SelecteurArticle';
 import { SelecteurMode } from '../common/SelecteurMode';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
+import { ParametresMailleModal } from '../common/ParametresMailleModal';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
 import {
@@ -147,17 +150,35 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
   const [isCalculating1D, setIsCalculating1D] = useState<boolean>(false);
   const [isOFOpen, setIsOFOpen] = useState<boolean>(false);
 
+  // Paramètres d'optimisation de la maille (modifiables par l'utilisateur avec persistance)
+  const [paramsMaille, setParamsMaille] = useState<ParametresOptimisationMaille>(() => {
+    try {
+      const saved = localStorage.getItem('3m_params_optimisation_maille');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return PARAMETRES_MAILLE_DEFAUT;
+  });
+  const [showParametresModal, setShowParametresModal] = useState<boolean>(false);
+
+  const handleSaveParamsMaille = (newParams: ParametresOptimisationMaille) => {
+    setParamsMaille(newParams);
+    try {
+      localStorage.setItem('3m_params_optimisation_maille', JSON.stringify(newParams));
+    } catch (e) {}
+    setShowParametresModal(false);
+  };
+
   const mappedSheetName = selectedProfileArticle ? mapping[selectedProfileArticle.code_art] || null : null;
   const availableChutesBarres = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-  // Calculs détaillés avec optimisation intelligente du stock de chutes maille (attribution lot sans conflit)
+  // Calculs détaillés avec optimisation intelligente du stock de chutes maille (règles d'atelier)
   const calculsDetailles = useMemo(() => {
-    const resLot = optimiserLotMoustiquaires(moustiquaires, chutesMaille);
+    const resLot = optimiserLotMoustiquaires(moustiquaires, chutesMaille, paramsMaille);
     return moustiquaires.map((item, idx) => ({
       item,
-      res: resLot[idx] || calculerMoustiquaire(item, chutesMaille)
+      res: resLot[idx] || calculerMoustiquaire(item, chutesMaille, paramsMaille)
     }));
-  }, [moustiquaires, chutesMaille]);
+  }, [moustiquaires, chutesMaille, paramsMaille]);
 
   // Statistiques globales de valorisation des chutes maille
   const statsMaille = useMemo(() => {
@@ -515,8 +536,24 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
           </div>
         </div>
 
-        {/* Synthèse valorisation Maille MSTQ */}
-        {moustiquaires.length > 0 && (
+        {/* Synthèse valorisation Maille MSTQ avec bouton réglages */}
+        <div className="space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              Optimisation &amp; Bilan Matière Maille
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowParametresModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-amber-500/40 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer self-start sm:self-auto"
+              title="Modifier les critères d'attribution de la toile"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span>⚙️ Règles Toile : +{paramsMaille.ecartMaxPlis} plis max · Perte ≤{paramsMaille.dechetMaxJeteMm}mm · Reste ≥{paramsMaille.longueurMinChuteConserveeMm}mm</span>
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-sm">
@@ -562,7 +599,7 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
               </div>
             </div>
           </div>
-        )}
+        </div>
 
         {/* Tableau des moustiquaires */}
         {moustiquaires.length > 0 ? (
@@ -735,27 +772,45 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
                         {item.typeFabrication === 'PROFILES_SEULS' ? (
                           <span className="text-slate-500 text-[11px] italic">Sans toile</span>
                         ) : res.chute_trouvee ? (
-                          <div className="inline-flex flex-col items-center">
+                          <div className="inline-flex flex-col items-center gap-0.5">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold">
                               ♻️ Chute #{res.chute_trouvee.id || 'stock'}
                             </span>
-                            <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                            <span className="text-[10px] text-slate-300 font-mono">
                               {res.chute_trouvee.dimension_fixe} mm · {res.chute_trouvee.plis} plis
                             </span>
-                            {res.reste_plis !== undefined && (
+                            {res.decision_maille?.plisEnTrop ? (
+                              <span className="text-[10px] text-amber-400 font-semibold font-mono">
+                                ✂️ Recouper {res.decision_maille.plisEnTrop} pli(s)
+                              </span>
+                            ) : (
                               <span className="text-[10px] text-emerald-400 font-semibold font-mono">
-                                Reste: {res.reste_plis} plis
+                                ✓ Plis exacts ({res.nb_plis_requis}p)
                               </span>
                             )}
+                            {res.decision_maille?.actionReste === 'POUBELLE' ? (
+                              <span className="text-[9px] text-slate-400 font-mono">
+                                Déchet: {res.decision_maille.dechetLongueurMm} mm
+                              </span>
+                            ) : res.decision_maille?.actionReste === 'NOUVELLE_CHUTE_STOCK' ? (
+                              <span className="text-[9px] text-sky-400 font-bold font-mono">
+                                🏬 Reste stock: {res.decision_maille.resteLongueurMm} mm
+                              </span>
+                            ) : null}
                           </div>
                         ) : (
-                          <div className="inline-flex flex-col items-center">
+                          <div className="inline-flex flex-col items-center gap-0.5">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-medium">
                               📦 Paquet Neuf
                             </span>
-                            <span className="text-[10px] text-slate-400 font-mono mt-0.5">
-                              Coupe: {res.dimension_fixe_requise} mm
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              Coupe: {res.dimension_fixe_requise} mm ({res.nb_plis_requis}p)
                             </span>
+                            {res.decision_maille?.motif && (
+                              <span className="text-[9px] text-slate-500 italic max-w-[130px] truncate" title={res.decision_maille.motif}>
+                                {res.decision_maille.motif}
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>
@@ -897,12 +952,21 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
           chutesMaille={chutesMaille}
           mapping={mapping}
           famille="MOUSTIQUAIRE"
+          paramsMaille={paramsMaille}
           onOFEmis={() => {
             onStockUpdated();
             setIsOFOpen(false);
           }}
         />
       )}
+
+      {/* Modal Réglages Paramètres Toile */}
+      <ParametresMailleModal
+        isOpen={showParametresModal}
+        onClose={() => setShowParametresModal(false)}
+        params={paramsMaille}
+        onSave={handleSaveParamsMaille}
+      />
     </div>
   );
 };
