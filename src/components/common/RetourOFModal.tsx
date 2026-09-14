@@ -729,7 +729,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-base font-bold text-slate-100">
+                <span className="text-xs px-2.5 py-0.5 rounded-lg bg-amber-400 text-slate-950 font-mono font-black border border-amber-300 shadow-xs">
+                  {suivi.codeOF || (suivi.numeroEmission ? `OF-${String(suivi.numeroEmission).padStart(3, '0')}` : 'OF')}
+                </span>
+                <span className="text-xs font-bold text-amber-400">
+                  Ordre #{suivi.numeroEmission || '—'}
+                </span>
+                <h2 className="text-base font-bold text-slate-100 ml-1">
                   Retour Atelier &amp; Contrôle Physique des Chutes Mesurées
                 </h2>
                 {isEditingNumCmd ? (

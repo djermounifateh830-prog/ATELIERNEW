@@ -255,6 +255,8 @@ export interface DossierCommandeGlobal {
   statut: StatutDossier;
   ficheTransfertId?: string; // ID de la fiche de transfert associée lors de la livraison
   dateLivraison?: string;    // Date de remise au transporteur
+  dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
+  delaiPrevisionnelJours?: number;
   nomChauffeur?: string;     // Nom du chauffeur transporteur
 }
 
@@ -412,6 +414,10 @@ export interface LigneRetourOF {
  */
 export interface SuiviOF {
   id: string;
+  /** N° de séquence chronologique de l'ordre émis pour l'atelier (ex: 1, 2, 3...) */
+  numeroEmission?: number;
+  /** Code formaté de l'OF pour les opérateurs machine (ex: OF-001, OF-002...) */
+  codeOF?: string;
   /** Référence de la commande (ex: S-A26736) */
   numCommande: string;
   /** Nom du client final */
@@ -442,6 +448,8 @@ export interface SuiviOF {
   /** Fiche de transfert associée lors de la livraison */
   ficheTransfertId?: string;
   dateLivraison?: string;
+  dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
+  delaiPrevisionnelJours?: number;
   nomChauffeur?: string;
 }
 
@@ -513,5 +521,43 @@ export interface ClientCodification {
   montageSousFaceParDefaut?: boolean;  // Montage sous-face atelier par défaut (true: Montée, false: Non montée)
   avecPlaqueParDefaut?: boolean;       // Avec Plaque par défaut
 }
+
+// ============================================================================
+// PARAMÈTRES DE PRODUCTION & CALCUL AUTOMATIQUE DES DÉLAIS PAR FAMILLE
+// ============================================================================
+
+export interface ParametresFamilleProduction {
+  famille: FamilleProduit;
+  libelle: string;
+  tempsUnitaireMinutes: number;       // Temps de fabrication unitaire en minutes (ex: 5 min pour caisson)
+  capaciteJournalierePieces: number;  // Capacité journalière moyenne (ex: 120 caissons/jour)
+  delaiFixeJours?: number;            // Marge fixe optionnelle en jours ouvrés (0 par défaut)
+}
+
+export interface ParametresProductionAtelier {
+  // Jours ouvrés activés (0: Dimanche, 1: Lundi, 2: Mardi, 3: Mercredi, 4: Jeudi, 5: Vendredi, 6: Samedi)
+  joursOuvres: number[];
+  heuresTravailParJour: number;       // ex: 8 heures (ou 10h)
+  familles: Record<FamilleProduit, ParametresFamilleProduction>;
+}
+
+export interface EstimationDelaiDetail {
+  famille: FamilleProduit;
+  libelleFamille: string;
+  piecesCommande: number;
+  piecesEnFileAttente: number;
+  totalPiecesCharge: number;
+  joursOuvresRequis: number;
+  dateLivraisonPrevue: Date;
+  dateLivraisonFormattee: string;     // ex: "MERCREDI 16/09"
+}
+
+export interface EstimationLivraisonDossier {
+  dateMaximale: Date;
+  dateLivraisonFormattee: string;     // ex: "LIVRAISON : MERCREDI 16/09"
+  joursOuvresMax: number;
+  detailsParFamille: Record<string, EstimationDelaiDetail>;
+}
+
 
 

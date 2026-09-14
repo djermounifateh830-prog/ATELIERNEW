@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
 import { SystemLogsModal } from './common/SystemLogsModal';
+import { ParametresProductionModal } from './common/ParametresProductionModal';
 import { Article, ChuteItem, ChuteMaille, SuiviOF } from '../types';
 
 interface HeaderProps {
@@ -45,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshData
 }) => {
   const [isLogsModalOpen, setIsLogsModalOpen] = useState<boolean>(false);
+  const [isProdParamsModalOpen, setIsProdParamsModalOpen] = useState<boolean>(false);
   const articlesFileInputRef = useRef<HTMLInputElement>(null);
   const chutesFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -139,6 +141,14 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Action Buttons */}
         <div className="flex items-center flex-wrap gap-2">
           <button
+            onClick={() => setIsProdParamsModalOpen(true)}
+            title="Configurer les cadences de fabrication par famille et les jours ouvrés de travail"
+            className="px-3 py-1.5 text-xs font-semibold text-sky-300 hover:text-sky-200 bg-sky-950/40 hover:bg-sky-900/60 rounded-lg transition border border-sky-500/40 flex items-center gap-1.5 cursor-pointer shadow"
+          >
+            <Sliders className="w-3.5 h-3.5 text-sky-400" />
+            <span>⚙️ Paramètres Délais &amp; Cadences</span>
+          </button>
+          <button
             onClick={() => setIsLogsModalOpen(true)}
             title="Ouvrir le journal des logs et la traçabilité système"
             className="px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 rounded-lg transition border border-amber-500/40 flex items-center gap-1.5 cursor-pointer shadow"
@@ -148,6 +158,13 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Paramètres Délais & Cadences Modal */}
+      <ParametresProductionModal
+        isOpen={isProdParamsModalOpen}
+        onClose={() => setIsProdParamsModalOpen(false)}
+        onSaved={onRefreshData}
+      />
 
       {/* System Logs Modal */}
       <SystemLogsModal

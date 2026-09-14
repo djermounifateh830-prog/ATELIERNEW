@@ -117,6 +117,16 @@ export function sqlitePlugin(): Plugin {
           return sendJson(res, { success: true });
         }
 
+        // --- 5b. PARAMÈTRES PRODUCTION & DÉLAIS ---
+        if (url === '/api/settings/production' && method === 'GET') {
+          return sendJson(res, { success: true, data: atelierDb.getParametresProduction() });
+        }
+        if (url === '/api/settings/production' && method === 'POST') {
+          const body = await parseBody(req);
+          atelierDb.saveParametresProduction(body);
+          return sendJson(res, { success: true });
+        }
+
         // --- 6. DOSSIERS ---
         if (url === '/api/dossiers' && method === 'GET') {
           return sendJson(res, { success: true, data: atelierDb.getDossiers() });

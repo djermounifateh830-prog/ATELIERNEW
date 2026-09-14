@@ -709,6 +709,17 @@ export class StorageService {
     }
   }
 
+  static async getSuivisOF(): Promise<SuiviOF[]> {
+    try {
+      const response = await this.request('/api/of');
+      const json = await response.json();
+      return json?.data || [];
+    } catch (e: any) {
+      console.error('Erreur récupération suivis OF:', e);
+      return [];
+    }
+  }
+
   static async upsertSuiviOF(suivi: SuiviOF): Promise<void> {
     try {
       await this.request('/api/of', {

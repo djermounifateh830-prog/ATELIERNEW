@@ -20,6 +20,60 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
+// Majuscule active pendant la saisie sur les champs texte du logiciel
+window.addEventListener('beforeinput', (e: InputEvent) => {
+  const target = e.target as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+  const type = (target.getAttribute('type') || 'text').toLowerCase();
+  if (['password', 'email', 'url', 'number', 'date', 'time', 'datetime-local', 'file', 'checkbox', 'radio'].includes(type)) {
+    return;
+  }
+  if (target.dataset.noUppercase === 'true') return;
+
+  if (e.data && e.inputType === 'insertText') {
+    const upper = e.data.toUpperCase();
+    if (upper !== e.data) {
+      e.preventDefault();
+      if (document.execCommand) {
+        document.execCommand('insertText', false, upper);
+      } else {
+        const start = target.selectionStart ?? target.value.length;
+        const end = target.selectionEnd ?? target.value.length;
+        const val = target.value;
+        target.value = val.slice(0, start) + upper + val.slice(end);
+        target.setSelectionRange(start + upper.length, start + upper.length);
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+  }
+}, true);
+
+window.addEventListener('paste', (e: ClipboardEvent) => {
+  const target = e.target as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+  const type = (target.getAttribute('type') || 'text').toLowerCase();
+  if (['password', 'email', 'url', 'number', 'date', 'time', 'datetime-local', 'file', 'checkbox', 'radio'].includes(type)) {
+    return;
+  }
+  if (target.dataset.noUppercase === 'true') return;
+
+  const text = e.clipboardData?.getData('text');
+  if (text && text !== text.toUpperCase()) {
+    e.preventDefault();
+    const upper = text.toUpperCase();
+    if (document.execCommand) {
+      document.execCommand('insertText', false, upper);
+    } else {
+      const start = target.selectionStart ?? target.value.length;
+      const end = target.selectionEnd ?? target.value.length;
+      const val = target.value;
+      target.value = val.slice(0, start) + upper + val.slice(end);
+      target.setSelectionRange(start + upper.length, start + upper.length);
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+}, true);
+
 interface Props {
   children: ReactNode;
 }

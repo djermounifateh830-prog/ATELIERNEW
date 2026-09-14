@@ -11,6 +11,7 @@ import {
   FicheTransfert
 } from '../../types';
 import { StorageService } from '../../services/storage';
+import { DelaisProductionService } from '../../services/delaisProductionService';
 import { RetourOFModal } from '../common/RetourOFModal';
 import { FicheTransfertModal } from '../common/FicheTransfertModal';
 import {
@@ -153,9 +154,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   };
 
   // Tri de la table
-  type SortKey = 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille';
-  const [sortKey, setSortKey] = useState<SortKey>('dateEmission');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille';
+  const [sortKey, setSortKey] = useState<SortKey>('numeroEmission');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -178,17 +179,23 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         if (recherche.trim()) {
           const q = recherche.toLowerCase().trim();
           const matchNum = (of.numCommande || '').toLowerCase().includes(q);
+          const matchCode = (of.codeOF || '').toLowerCase().includes(q) || String(of.numeroEmission || '').includes(q);
           const matchClient = (of.nomClient || '').toLowerCase().includes(q);
           const matchTitre = (of.titreSection || '').toLowerCase().includes(q);
           const matchDonneur = (of.donneurOrdre || '').toLowerCase().includes(q);
           const matchFamille = (of.famille || '').toLowerCase().includes(q);
-          if (!matchNum && !matchClient && !matchTitre && !matchDonneur && !matchFamille) {
+          if (!matchNum && !matchCode && !matchClient && !matchTitre && !matchDonneur && !matchFamille) {
             return false;
           }
         }
         return true;
       })
       .sort((a, b) => {
+        if (sortKey === 'numeroEmission') {
+          const na = a.numeroEmission || 0;
+          const nb = b.numeroEmission || 0;
+          return sortDir === 'asc' ? na - nb : nb - na;
+        }
         const va = (a as any)[sortKey] || '';
         const vb = (b as any)[sortKey] || '';
         return sortDir === 'asc'
@@ -495,10 +502,12 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
               <tr>
+                <SortHeader col="numeroEmission" label="Ordre Séquence" className="w-28 text-center" />
                 <SortHeader col="numCommande" label="N° Commande" className="w-36" />
                 <SortHeader col="nomClient" label="Client / Donneur d'Ordre" />
                 <SortHeader col="famille" label="Famille & Section" />
                 <SortHeader col="dateEmission" label="Date Émission" className="w-32" />
+                <th className="py-3 px-3.5 text-center w-48">Délai Prévisionnel</th>
                 <th className="py-3 px-3.5 text-center w-36">Barres &amp; Chutes</th>
                 <SortHeader col="statut" label="Statut" className="w-36 text-center" />
                 <th className="py-3 px-3.5 text-center w-52">Actions Atelier</th>
@@ -507,7 +516,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <tbody className="divide-y divide-slate-800/70">
               {filteredAndSortedOFs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500 font-sans italic text-sm">
+                  <td colSpan={9} className="py-12 text-center text-slate-500 font-sans italic text-sm">
                     <ClipboardCheck className="w-12 h-12 mx-auto mb-3 opacity-25 text-blue-400" />
                     <p className="font-bold text-slate-400">Aucun Ordre de Fabrication correspondant</p>
                     <p className="text-xs text-slate-500 mt-1">
@@ -535,6 +544,18 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           : 'bg-slate-900/20'
                       }`}
                     >
+                      {/* N° Ordre / Séquence d'Émission Atelier */}
+                      <td className="py-3 px-3 text-center">
+                        <div className="inline-flex flex-col items-center">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 border border-amber-300 font-mono font-black text-xs shadow-xs tracking-wider">
+                            {of.codeOF || (of.numeroEmission ? `OF-${String(of.numeroEmission).padStart(3, '0')}` : 'OF-???')}
+                          </span>
+                          <span className="text-[10px] text-amber-400 font-bold mt-0.5 whitespace-nowrap">
+                            Ordre #{of.numeroEmission || '—'}
+                          </span>
+                        </div>
+                      </td>
+
                       {/* N° Commande */}
                       <td className="py-3 px-3.5 font-mono font-bold text-amber-300">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -600,6 +621,19 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             Retour : {of.dateRetour}
                           </div>
                         )}
+                      </td>
+
+                      {/* Délai Prévisionnel */}
+                      <td className="py-3 px-3 text-center font-mono">
+                        {(() => {
+                          const texteLivraison = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
+                          return (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-xs shadow-xs">
+                              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span className="tracking-tight">{texteLivraison}</span>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Barres & Chutes */}
@@ -888,7 +922,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                    <span>OF N° {selectedSuiviForDetails.numCommande}</span>
+                    <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 font-mono font-black text-xs">
+                      {selectedSuiviForDetails.codeOF || (selectedSuiviForDetails.numeroEmission ? `OF-${String(selectedSuiviForDetails.numeroEmission).padStart(3, '0')}` : 'OF')}
+                    </span>
+                    <span>Ordre #{selectedSuiviForDetails.numeroEmission || '—'} (Cmd {selectedSuiviForDetails.numCommande})</span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
                       Clôturé
                     </span>

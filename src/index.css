@@ -8,6 +8,27 @@
   code, kbd, samp, pre {
     font-family: 'JetBrains Mono', monospace;
   }
+
+  /* Majuscule active pendant la saisie pour l'application atelier */
+  input[type="text"],
+  input[type="search"],
+  input:not([type]),
+  textarea {
+    text-transform: uppercase;
+  }
+
+  input[type="email"],
+  input[type="password"],
+  input[type="url"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"] {
+    text-transform: none;
+  }
+
+  ::placeholder {
+    text-transform: none;
+  }
 }
 
 @media print {

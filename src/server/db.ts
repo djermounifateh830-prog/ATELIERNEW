@@ -141,6 +141,13 @@ class AtelierDatabase {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Table Paramètres de Production & Délais
+      CREATE TABLE IF NOT EXISTS parametres_production (
+        id TEXT PRIMARY KEY,
+        json_data TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
       -- Table Suivis Ordres de Fabrication
       CREATE TABLE IF NOT EXISTS suivis_of (
         id TEXT PRIMARY KEY,
@@ -271,6 +278,33 @@ class AtelierDatabase {
     try {
       this.db.exec('ALTER TABLE client_codifications ADD COLUMN avec_plaque_par_defaut INTEGER DEFAULT 0;');
     } catch {}
+    try {
+      this.db.exec('ALTER TABLE suivis_of ADD COLUMN numero_emission INTEGER;');
+    } catch {}
+    try {
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_of_numero_emission ON suivis_of(numero_emission);');
+    } catch {}
+
+    // Migration douce pour numéroter séquentiellement les OFs existants s'ils n'ont pas encore de numéro d'émission
+    try {
+      const ofRows = this.db.prepare("SELECT id, date_emission, updated_at, json_data, numero_emission FROM suivis_of ORDER BY date_emission ASC, updated_at ASC, id ASC").all() as any[];
+      let seqNum = 1;
+      const updateOFStmt = this.db.prepare("UPDATE suivis_of SET numero_emission = ?, json_data = ? WHERE id = ?");
+      for (const row of ofRows) {
+        let data: any = {};
+        try { data = JSON.parse(row.json_data); } catch {}
+        if (!row.numero_emission || !data.numeroEmission) {
+          const num = row.numero_emission || seqNum;
+          data.numeroEmission = num;
+          data.codeOF = data.codeOF || `OF-${String(num).padStart(3, '0')}`;
+          updateOFStmt.run(num, JSON.stringify(data), row.id);
+        }
+        const currentVal = row.numero_emission || data.numeroEmission || seqNum;
+        seqNum = Math.max(seqNum, currentVal + 1);
+      }
+    } catch (e) {
+      console.warn('[AtelierDB] Note migration numero_emission:', e);
+    }
   }
 
   private seedIfEmpty() {
@@ -738,6 +772,30 @@ class AtelierDatabase {
   }
 
   // ==========================================
+  // PARAMÈTRES DE PRODUCTION & DÉLAIS
+  // ==========================================
+  getParametresProduction(): any {
+    try {
+      const row = this.db.prepare('SELECT json_data FROM parametres_production WHERE id = ?').get('default') as any;
+      if (row?.json_data) {
+        return JSON.parse(row.json_data);
+      }
+    } catch (e) {
+      console.warn('Erreur lecture parametres_production:', e);
+    }
+    return null;
+  }
+
+  saveParametresProduction(params: any) {
+    const stmt = this.db.prepare(`
+      INSERT INTO parametres_production (id, json_data, updated_at)
+      VALUES ('default', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET json_data = excluded.json_data, updated_at = CURRENT_TIMESTAMP
+    `);
+    stmt.run(JSON.stringify(params));
+  }
+
+  // ==========================================
   // DOSSIERS
   // ==========================================
   getDossiers(): DossierCommandeGlobal[] {
@@ -1041,10 +1099,17 @@ class AtelierDatabase {
   }
 
   getSuivisOF(): SuiviOF[] {
-    const rows = this.db.prepare('SELECT json_data FROM suivis_of ORDER BY updated_at DESC').all() as any[];
+    const rows = this.db.prepare('SELECT json_data, numero_emission FROM suivis_of ORDER BY COALESCE(numero_emission, 999999) DESC, updated_at DESC').all() as any[];
     return rows.map(r => {
       try {
-        return JSON.parse(r.json_data);
+        const obj = JSON.parse(r.json_data);
+        if (r.numero_emission && !obj.numeroEmission) {
+          obj.numeroEmission = r.numero_emission;
+        }
+        if (obj.numeroEmission && !obj.codeOF) {
+          obj.codeOF = `OF-${String(obj.numeroEmission).padStart(3, '0')}`;
+        }
+        return obj;
       } catch {
         return null;
       }
@@ -1062,14 +1127,23 @@ class AtelierDatabase {
       const stmt = this.db.prepare(`
         INSERT INTO suivis_of (
           id, num_commande, nom_client, donneur_ordre,
-          famille, titre_section, statut, date_emission, date_retour, json_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          famille, titre_section, statut, date_emission, date_retour, numero_emission, json_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+      let seq = 1;
       for (const s of suivis) {
+        if (!s.numeroEmission || s.numeroEmission <= 0) {
+          s.numeroEmission = seq;
+        }
+        if (!s.codeOF) {
+          s.codeOF = `OF-${String(s.numeroEmission).padStart(3, '0')}`;
+        }
+        seq = Math.max(seq, s.numeroEmission + 1);
+
         stmt.run(
           s.id, s.numCommande, s.nomClient, s.donneurOrdre,
           s.famille, s.titreSection, s.statut, s.dateEmission,
-          s.dateRetour || null, JSON.stringify(s)
+          s.dateRetour || null, s.numeroEmission, JSON.stringify(s)
         );
         if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE' || s.statut === 'EN_COURS') {
           this.saveReservationsForOF(s);
@@ -1084,16 +1158,30 @@ class AtelierDatabase {
   }
 
   private internalUpsertSuiviOF(s: SuiviOF) {
+    if (!s.numeroEmission || s.numeroEmission <= 0) {
+      const existing = this.db.prepare('SELECT numero_emission, json_data FROM suivis_of WHERE id = ?').get(s.id) as any;
+      if (existing?.numero_emission) {
+        s.numeroEmission = existing.numero_emission;
+      } else {
+        const maxRow = this.db.prepare('SELECT MAX(numero_emission) as max_num FROM suivis_of').get() as any;
+        const nextNum = (Number(maxRow?.max_num) || 0) + 1;
+        s.numeroEmission = nextNum;
+      }
+    }
+    if (!s.codeOF) {
+      s.codeOF = `OF-${String(s.numeroEmission).padStart(3, '0')}`;
+    }
+
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO suivis_of (
         id, num_commande, nom_client, donneur_ordre,
-        famille, titre_section, statut, date_emission, date_retour, json_data, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        famille, titre_section, statut, date_emission, date_retour, numero_emission, json_data, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
     stmt.run(
       s.id, s.numCommande, s.nomClient, s.donneurOrdre,
       s.famille, s.titreSection, s.statut, s.dateEmission,
-      s.dateRetour || null, JSON.stringify(s)
+      s.dateRetour || null, s.numeroEmission, JSON.stringify(s)
     );
 
     // Gestion stricte des réservations de chutes et de barres dès émission

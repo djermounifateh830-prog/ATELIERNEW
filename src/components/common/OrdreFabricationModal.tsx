@@ -9,7 +9,8 @@ import {
 import { detecterAgence } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
 import { StorageService } from '../../services/storage';
-import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors } from 'lucide-react';
+import { DelaisProductionService } from '../../services/delaisProductionService';
+import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock } from 'lucide-react';
 
 export type FamilleOF = 'CAISSON' | 'TABLIER' | 'PRECADRE' | 'MOUSTIQUAIRE';
 
@@ -53,6 +54,8 @@ export interface OrdreFabricationModalProps {
   numCommandeMoustiquaire?: string;
   numCommandePrecadre?: string;
   paramsMaille?: ParametresOptimisationMaille;
+  numeroEmission?: number;
+  codeOF?: string;
   onOFEmis?: () => void;
 }
 
@@ -401,6 +404,42 @@ export function separerFamilleEtProfile(sec: { titre: string; famille?: string; 
   };
 }
 
+/**
+ * Détection robuste de la véritable famille d'un OF
+ */
+export function detecterFamilleOF(
+  famille?: FamilleProduit | string,
+  sections?: SectionDebitOF[],
+  lignesMoustiquaires?: any[],
+  titreProduit?: string,
+  refCommande?: string
+): FamilleProduit {
+  if (famille === 'TABLIER' || famille === 'MOUSTIQUAIRE' || famille === 'CAISSON' || famille === 'PRECADRE') {
+    return famille;
+  }
+  if (sections && sections.length > 0) {
+    const secFamilies = sections.map((s: any) => s.famille).filter(Boolean);
+    const uniqueFams = Array.from(new Set(secFamilies));
+    if (uniqueFams.includes('TABLIER') && !uniqueFams.includes('CAISSON')) return 'TABLIER';
+    if (uniqueFams.includes('MOUSTIQUAIRE') && !uniqueFams.includes('CAISSON')) return 'MOUSTIQUAIRE';
+    if (uniqueFams.includes('PRECADRE') && !uniqueFams.includes('CAISSON')) return 'PRECADRE';
+    if (uniqueFams.length === 1 && (uniqueFams[0] === 'TABLIER' || uniqueFams[0] === 'MOUSTIQUAIRE' || uniqueFams[0] === 'PRECADRE' || uniqueFams[0] === 'CAISSON')) {
+      return uniqueFams[0] as FamilleProduit;
+    }
+  }
+  if (lignesMoustiquaires && lignesMoustiquaires.length > 0) return 'MOUSTIQUAIRE';
+  const titreUpper = (titreProduit || '').toUpperCase();
+  if (titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) return 'TABLIER';
+  if (titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ')) return 'MOUSTIQUAIRE';
+  if (titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE')) return 'PRECADRE';
+  if (titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) return 'CAISSON';
+  const refUpper = (refCommande || '').toUpperCase();
+  if (refUpper.startsWith('SA-')) return 'TABLIER';
+  if (refUpper.startsWith('SC-') || refUpper.startsWith('D-')) return 'MOUSTIQUAIRE';
+  if (refUpper.startsWith('1R')) return 'PRECADRE';
+  return 'CAISSON';
+}
+
 export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   isOpen,
   onClose,
@@ -424,10 +463,60 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   numCommandeMoustiquaire = '',
   numCommandePrecadre = '',
   paramsMaille,
+  numeroEmission,
+  codeOF,
   onOFEmis
 }) => {
   const [ofEmis, setOfEmis] = useState<boolean>(false);
   const [isEmitting, setIsEmitting] = useState<boolean>(false);
+  const [emittedSequence, setEmittedSequence] = useState<number | null>(numeroEmission || null);
+  const [emittedCode, setEmittedCode] = useState<string | null>(codeOF || null);
+  const [nextSequencePreview, setNextSequencePreview] = useState<number | null>(null);
+  const [dateLivraisonPrevisionnelleAffichee, setDateLivraisonPrevisionnelleAffichee] = useState<string>('');
+
+  useEffect(() => {
+    if (numeroEmission) setEmittedSequence(numeroEmission);
+    if (codeOF) setEmittedCode(codeOF);
+  }, [numeroEmission, codeOF]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    StorageService.getSuivisOF().then(ofs => {
+      // Détection de la famille active
+      const familleRecherche = detecterFamilleOF(famille, sections, lignesMoustiquaires, titreProduit, refCommande);
+
+      const match = ofs.find(o =>
+        o.numCommande === (refCommande || 'CMD') &&
+        (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === familleRecherche || o.famille === famille)
+      );
+      if (match?.numeroEmission) {
+        setEmittedSequence(match.numeroEmission);
+        setEmittedCode(match.codeOF || `OF-${String(match.numeroEmission).padStart(3, '0')}`);
+        setOfEmis(true);
+      } else {
+        const maxNum = ofs.reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
+        setNextSequencePreview(maxNum + 1);
+      }
+
+      // Calcul prévisionnel de livraison
+      const ofRef: SuiviOF = match || {
+        id: 'preview',
+        numCommande: refCommande || 'CMD',
+        famille: familleRecherche,
+        statut: 'EMIS',
+        dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
+        titreSection: titreProduit,
+        totalBarresNeuvesPrevu: 0,
+        totalChutesUtiliseesPrevu: 0,
+        lignesRetour: []
+      };
+      const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
+      setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
+    }).catch(() => {});
+  }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande]);
+
+  const currentSequenceNum = emittedSequence || nextSequencePreview || 1;
+  const currentCodeOFAffiche = emittedCode || `OF-${String(currentSequenceNum).padStart(3, '0')}`;
 
   useEffect(() => {
     if (isOpen) {
@@ -863,67 +952,39 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13px;border:2.5px solid #000;margin-bottom:8px;table-layout:fixed;">
           <colgroup>
-            <col style="width:9%;">
-            <col style="width:16%;">
-            <col style="width:11%;">
-            <col style="width:15%;">
             <col style="width:10%;">
             <col style="width:20%;">
-            <col style="width:7%;">
+            <col style="width:14%;">
+            <col style="width:18%;">
             <col style="width:12%;">
+            <col style="width:18%;">
+            <col style="width:8%;">
           </colgroup>
           <thead>
             <tr style="background:#fff;font-weight:900;border-bottom:2px solid #000;">
-              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:9%;background:#fff;color:#000;font-size:13px;">Repère</th>
-              <th style="padding:6px 4px;border-right:1px solid #000;width:16%;background:#fff;color:#000;font-size:13px;">Dim. Finie (L×H)</th>
-              <th style="padding:6px 4px;border-right:1px solid #000;width:11%;background:#fff;color:#000;font-size:13px;">Ouverture</th>
-              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;background:#fff;color:#000;width:15%;font-size:13px;">Coupe Fixe Maille</th>
-              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:10%;background:#fff;color:#000;font-size:13px;">Nb Plis</th>
-              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:20%;background:#fff;color:#000;font-size:13px;">Longueur Fil / Corde</th>
-              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:7%;background:#fff;color:#000;font-size:13px;">Surface</th>
-              <th style="padding:6px 4px;width:12%;background:#fff;color:#000;font-size:13px;">Source Toile</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:10%;background:#fff;color:#000;font-size:13px;">Repère</th>
+              <th style="padding:6px 4px;border-right:1px solid #000;width:20%;background:#fff;color:#000;font-size:13px;">Dim. Finie (L×H)</th>
+              <th style="padding:6px 4px;border-right:1px solid #000;width:14%;background:#fff;color:#000;font-size:13px;">Ouverture</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;background:#fff;color:#000;width:18%;font-size:13px;">Coupe Fixe Maille</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:12%;background:#fff;color:#000;font-size:13px;">Nb Plis</th>
+              <th style="padding:6px 4px;text-align:center;border-right:1px solid #000;width:18%;background:#fff;color:#000;font-size:13px;">Longueur Fil / Corde</th>
+              <th style="padding:6px 4px;text-align:center;width:8%;background:#fff;color:#000;font-size:13px;">Surface</th>
             </tr>
           </thead>
           <tbody>
             ${mstqToileItems.map((m, idx) => {
               const c = calculerBesoinMaille(m);
-              const resMstq = resultatsMaille[idx];
-              const chute = resMstq?.chute_trouvee;
-              const dec = resMstq?.decision_maille;
-              
-              let sourceHtml = '';
-              if (chute) {
-                const plisInfo = dec?.plisEnTrop ? ` · <span style="color:#b45309;font-weight:900;">✂️ -${dec.plisEnTrop}p</span>` : '';
-                const actionInfo = dec?.actionReste === 'NOUVELLE_CHUTE_STOCK'
-                  ? `<div style="font-size:11px;color:#0369a1;font-weight:bold;margin-top:2px;">🏬 Garder ${dec.resteLongueurMm}mm</div>`
-                  : `<div style="font-size:11px;color:#444;margin-top:2px;">Perte: ${dec?.dechetLongueurMm ?? 0}mm</div>`;
-                sourceHtml = `
-                  <div style="background:#fff;color:#000;padding:3px 4px;border-radius:3px;border:1px solid #000;font-size:12px;line-height:1.2;">
-                    <strong>♻️ #${chute.id || 'chute'}</strong> (${chute.dimension_fixe}mm${plisInfo})
-                    ${actionInfo}
-                  </div>
-                `;
-              } else {
-                sourceHtml = `
-                  <div style="background:#fff;color:#000;padding:3px 4px;border-radius:3px;border:1px solid #000;font-size:12px;line-height:1.2;">
-                    <strong>📦 Paquet Neuf</strong>
-                    <div style="font-size:11px;color:#444;margin-top:2px;">Coupe ${c.dimension_fixe_requise}mm (${c.nb_plis_requis}p)</div>
-                  </div>
-                `;
-              }
-
               return `
                 <tr style="border-bottom:1px solid #000;background:#fff;">
                   <td style="padding:7px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${m.repere}</td>
                   <td style="padding:7px 4px;font-weight:900;border-right:1px solid #000;font-size:14px;color:#000;font-family:Consolas,monospace;">${m.largeur} × ${m.hauteur} mm (×${m.quantite})</td>
-                  <td style="padding:7px 4px;border-right:1px solid #000;font-size:13px;font-weight:bold;color:#000;">${m.typeOuverture}</td>
-                  <td style="padding:7px 4px;text-align:center;font-weight:900;background:#fff;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${c.dimension_fixe_requise} mm <span style="font-size:12px;font-weight:normal;">(${c.dimension_fixe_est})</span></td>
+                  <td style="padding:7px 4px;border-right:1px solid #000;font-size:13px;font-weight:bold;color:#000;">${m.typeOuverture === 'PORTE_FENETRE' ? 'Porte-Fenêtre' : m.typeOuverture === 'DOUBLE_VANTAUX' ? 'Baie 2 Vtx' : m.typeOuverture === 'CENTRALE' ? 'Centrale' : m.typeOuverture === 'FIXE' ? 'Fixe' : 'Fenêtre'}</td>
+                  <td style="padding:7px 4px;text-align:center;font-weight:900;background:#fff;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${c.dimension_fixe_requise} mm <span style="font-size:12px;font-weight:bold;color:#333;">(${c.dimension_fixe_est === 'H' ? 'Hauteur' : 'Largeur'})</span></td>
                   <td style="padding:7px 4px;text-align:center;font-weight:900;color:#000;border-right:1px solid #000;font-size:15px;font-family:Consolas,monospace;">${c.nb_plis_requis} plis</td>
                   <td style="padding:7px 4px;border-right:1px solid #000;background:#fff;color:#000;text-align:center;">
                     <span style="font-weight:900;color:#000;font-size:15px;font-family:Consolas,monospace;white-space:nowrap;">${c.longueur_corde_unitaire_m} m/fil - ${c.nb_fils_guidage} trous</span>
                   </td>
-                  <td style="padding:7px 4px;text-align:center;font-weight:bold;border-right:1px solid #000;font-size:13px;color:#000;">${c.superficie_m2} m²</td>
-                  <td style="padding:7px 4px;color:#000;">${sourceHtml}</td>
+                  <td style="padding:7px 4px;text-align:center;font-weight:bold;font-size:13px;color:#000;">${c.superficie_m2} m²</td>
                 </tr>
               `;
             }).join('')}
@@ -1003,15 +1064,25 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <!-- PARTIE 1 : PRÉPARATION DU STOCK & MATIÈRES PREMIÈRES (MAGASIN) -->
   <div class="header">
     <div class="header-left">
-      <h1>Ordre de Fabrication — Fiche de Préparation Magasin &amp; Débit</h1>
-      <div style="margin-top:4px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:11px;font-weight:900;text-transform:uppercase;color:#fff;background:#000;padding:2px 8px;border-radius:3px;letter-spacing:0.5px;">ORDRE DE FABRICATION</span>
+        <span style="font-size:11px;font-weight:bold;color:#444;text-transform:uppercase;">Fiche Magasin &amp; Débit</span>
+      </div>
+      <div style="margin-top:2px;">
         <span style="font-size:13px;font-weight:900;text-transform:uppercase;color:#000;margin-right:6px;">N° Commande :</span>
         <span class="cmd-highlight">${cmdAffichee}</span>
       </div>
     </div>
-    <div style="text-align:right;">
-      <div class="logo-m">TROIS M</div>
-      <div class="logo-text">ALUMINIUM</div>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="border:3px solid #000;padding:4px 14px;text-align:center;background:#fff;border-radius:6px;min-width:150px;">
+        <div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.8px;color:#000;">SÉQUENCE ATELIER</div>
+        <div style="font-size:26px;font-weight:900;font-family:Consolas,monospace;color:#000;letter-spacing:1px;line-height:1.1;">${currentCodeOFAffiche}</div>
+        <div style="font-size:10px;font-weight:900;background:#000;color:#fff;padding:1px 4px;border-radius:2px;margin-top:2px;">ORDRE MACHINE N° ${currentSequenceNum}</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="logo-m">TROIS M</div>
+        <div class="logo-text">ALUMINIUM</div>
+      </div>
     </div>
   </div>
 
@@ -1086,10 +1157,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <!-- PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS -->
   <div style="margin-top:16px;border-top:3px solid #000;padding-top:10px;">
     <div style="background:#fff;color:#000;border:2.5px solid #000;padding:8px 12px;margin-bottom:12px;border-radius:4px;text-align:center;">
-      <div style="font-size:18px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:1px;">
-        ✂️ OPTIMISATION DE DÉCOUPE
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+        <div style="font-size:18px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:1px;">
+          ✂️ OPTIMISATION DE DÉCOUPE
+        </div>
+        <span style="padding:2px 8px;background:#000;color:#fff;font-family:Consolas,monospace;font-weight:900;font-size:14px;border-radius:4px;">
+          ${currentCodeOFAffiche} (ORDRE N° ${currentSequenceNum})
+        </span>
       </div>
-      <div style="font-size:12px;color:#000;font-weight:bold;margin-top:2px;">
+      <div style="font-size:12px;color:#000;font-weight:bold;margin-top:4px;">
         Plans de coupe profilés et débits atelier — Commande N° : <span style="font-family:Consolas,monospace;font-size:15px;font-weight:900;border:1.5px solid #000;padding:1px 6px;border-radius:3px;">${cmdAffichee}</span>
       </div>
     </div>
@@ -1105,10 +1181,14 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <tfoot>
     <tr>
       <td>
-        <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE -->
+        <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, LIVRAISON, N° DE PAGE) SUR UNE SEULE LIGNE -->
         <div class="print-footer-fixed">
-          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%;flex-shrink:1;"><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
+          <div style="display:flex;gap:10px;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38%;flex-shrink:1;">
+            <span style="border:1.5px solid #000;padding:1px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:11px;font-weight:900;">${currentCodeOFAffiche} (#${currentSequenceNum})</span>
+            <span><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</span>
+          </div>
           <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
+          <div style="white-space:nowrap;flex-shrink:0;padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:#fef3c7;font-family:Consolas,monospace;font-size:11px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
           <div style="white-space:nowrap;flex-shrink:0;"><span class="print-footer-page-num"></span></div>
         </div>
       </td>
@@ -1299,8 +1379,24 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
     const validFamille: FamilleProduit = detecterFamille();
 
+    // Récupérer les OFs existants pour vérifier si déjà existant ou déterminer le numéro de séquence
+    const ofsExistants: SuiviOF[] = await StorageService.getSuivisOF().catch(() => []);
+    const match = ofsExistants.find(o => 
+      o.numCommande === (refCommande || 'CMD') && 
+      (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === validFamille)
+    );
+
+    let seqNum = match?.numeroEmission || emittedSequence;
+    if (!seqNum) {
+      const maxNum = ofsExistants.reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
+      seqNum = maxNum + 1;
+    }
+    const finalCodeOF = match?.codeOF || emittedCode || `OF-${String(seqNum).padStart(3, '0')}`;
+
     const suivi: SuiviOF = {
-      id: `of-${Date.now()}`,
+      id: match?.id || `of-${Date.now()}`,
+      numeroEmission: seqNum,
+      codeOF: finalCodeOF,
       numCommande: refCommande || 'CMD',
       nomClient: nomClient || 'CLIENT',
       donneurOrdre: donneurOrdre || '',
@@ -1313,11 +1409,14 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       totalChutesUtiliseesPrevu: totalChutesRecycleesToutesSections,
       chutesReservees,
       barresReservees,
-      chutesMailleReservees
+      chutesMailleReservees,
+      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee
     };
 
     try {
       await StorageService.upsertSuiviOF(suivi);
+      setEmittedSequence(seqNum);
+      setEmittedCode(finalCodeOF);
 
       // Mettre à jour automatiquement le statut des dossiers correspondants vers 'EN_COURS'
       try {
@@ -1806,10 +1905,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-black flex items-center justify-center text-white font-black text-xs">3M</div>
             <div>
-              <h2 className="text-sm font-black text-black flex items-center gap-2">
-                <span>Ordre de Fabrication Multi-Familles Classé</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full border-2 border-black font-mono font-bold bg-white text-black">{agenceInfo.nom}</span>
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-black text-black flex items-center gap-2">
+                  <span>Ordre de Fabrication Multi-Familles Classé</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full border-2 border-black font-mono font-bold bg-white text-black">{agenceInfo.nom}</span>
+                </h2>
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono font-black text-xs border border-amber-500 shadow-xs">
+                  {currentCodeOFAffiche} (Ordre #{currentSequenceNum})
+                </span>
+              </div>
               <p className="text-[11px] text-slate-700 font-semibold">
                 Cmds : <span className="text-black font-mono font-black">{cmdAffichee}</span> | Client : <strong className="text-black">{clientAffiche}</strong> | {listeSections.length} profilé(s)
               </p>
@@ -1825,15 +1929,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             <button
               onClick={handleEmettreOF}
               disabled={ofEmis || isEmitting}
-              className={`px-4 py-1.5 text-xs font-black rounded-lg flex items-center gap-1.5 transition shadow-sm cursor-pointer border-2 border-black ${
+              className={`px-4 py-1.5 text-xs font-black rounded-lg flex items-center gap-1.5 transition shadow-sm border-2 ${
                 ofEmis
-                  ? 'bg-slate-100 text-black cursor-not-allowed'
-                  : 'bg-white hover:bg-slate-100 text-black'
+                  ? 'bg-slate-200 text-slate-500 border-slate-400 opacity-60 cursor-not-allowed pointer-events-none'
+                  : isEmitting
+                  ? 'bg-slate-100 text-slate-400 border-slate-300 cursor-wait'
+                  : 'bg-white hover:bg-slate-100 text-black border-black cursor-pointer'
               }`}
-              title={ofEmis ? 'OF déjà émis' : 'Émettre l\'OF'}
+              title={ofEmis ? 'Cet Ordre de Fabrication est déjà émis en atelier' : 'Émettre l\'OF'}
             >
-              {ofEmis ? <CheckCircle2 className="w-4 h-4 text-black" /> : <Send className="w-4 h-4 text-black" />}
-              <span>{ofEmis ? 'OF Émis ✓' : 'Émettre l\'OF'}</span>
+              {ofEmis ? <CheckCircle2 className="w-4 h-4 text-emerald-700" /> : <Send className="w-4 h-4 text-black" />}
+              <span>{ofEmis ? 'OF Émis ✓' : isEmitting ? 'Émission en cours...' : 'Émettre l\'OF'}</span>
             </button>
             <button onClick={onClose} className="p-1.5 text-black hover:bg-slate-200 rounded-lg transition ml-1 cursor-pointer">
               <X className="w-5 h-5" />
@@ -1872,17 +1978,28 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     </span>
                   </div>
                 </div>
-                <div className="text-right flex items-center gap-2.5">
-                  <div className="w-11 h-11 bg-white border-2 border-black rounded-lg flex items-center justify-center text-black font-black text-xl shadow-xs">3M</div>
-                  <div className="text-left">
-                    <div className="font-black text-base tracking-wider text-black leading-tight">TROIS M</div>
-                    <div className="text-[10px] text-slate-700 font-black uppercase tracking-widest">ALUMINIUM</div>
+                <div className="flex items-center gap-3">
+                  <div className="border-2 border-black px-3 py-1 text-center bg-white rounded-lg min-w-[130px] shadow-xs">
+                    <div className="text-[9px] font-black uppercase tracking-wider text-slate-800">Séquence Atelier</div>
+                    <div className="text-xl sm:text-2xl font-black font-mono text-black leading-tight tracking-tight">
+                      {currentCodeOFAffiche}
+                    </div>
+                    <div className="text-[10px] font-black bg-black text-white px-1.5 py-0.5 rounded mt-0.5">
+                      ORDRE N° {currentSequenceNum}
+                    </div>
+                  </div>
+                  <div className="text-right flex items-center gap-2.5">
+                    <div className="w-11 h-11 bg-white border-2 border-black rounded-lg flex items-center justify-center text-black font-black text-xl shadow-xs">3M</div>
+                    <div className="text-left hidden sm:block">
+                      <div className="font-black text-base tracking-wider text-black leading-tight">TROIS M</div>
+                      <div className="text-[10px] text-slate-700 font-black uppercase tracking-widest">ALUMINIUM</div>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Barre Client & Date avec police augmentée */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-white border-2 border-black p-3 rounded-lg text-sm text-black">
+              {/* Barre Client & Date & Livraison avec police augmentée */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-white border-2 border-black p-3 rounded-lg text-sm text-black">
                 <div>
                   <div className="text-[11px] text-slate-600 uppercase font-black tracking-wider">Donneur d'Ordre</div>
                   <div className="font-black text-black text-base sm:text-lg">{agenceInfo.nom}</div>
@@ -1894,6 +2011,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 <div>
                   <div className="text-[11px] text-slate-600 uppercase font-black tracking-wider">Date Commande</div>
                   <div className="font-black text-black text-base sm:text-lg font-mono">{dateAffichee}</div>
+                </div>
+                <div className="bg-amber-100/90 border-2 border-black p-2 rounded text-center flex flex-col justify-center">
+                  <div className="text-[10px] text-amber-900 uppercase font-black tracking-wider">Date Livraison Estimée</div>
+                  <div className="font-black text-black text-xs sm:text-sm font-mono tracking-tight mt-0.5">{dateLivraisonPrevisionnelleAffichee || 'CALCUL EN COURS'}</div>
                 </div>
               </div>
 
@@ -2054,14 +2175,13 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   <div className="border-2 border-black overflow-hidden rounded">
                     <table className="w-full text-left text-sm border-collapse table-fixed">
                       <colgroup>
-                        <col className="w-[9%]" />
-                        <col className="w-[16%]" />
-                        <col className="w-[11%]" />
-                        <col className="w-[15%]" />
                         <col className="w-[10%]" />
                         <col className="w-[20%]" />
-                        <col className="w-[7%]" />
+                        <col className="w-[14%]" />
+                        <col className="w-[18%]" />
                         <col className="w-[12%]" />
+                        <col className="w-[18%]" />
+                        <col className="w-[8%]" />
                       </colgroup>
                       <thead className="bg-white text-black font-black border-b-2 border-black text-xs sm:text-sm">
                         <tr>
@@ -2071,15 +2191,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                           <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Coupe Fixe Maille</th>
                           <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Nb Plis</th>
                           <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Longueur Fil / Corde</th>
-                          <th className="py-2.5 px-2 text-center border-r-2 border-black text-xs sm:text-sm">Surface</th>
-                          <th className="py-2.5 px-2 text-xs sm:text-sm">Origine Toile</th>
+                          <th className="py-2.5 px-2 text-center text-xs sm:text-sm">Surface</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-black font-mono text-sm bg-white">
                         {lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').map((m, idx) => {
                           const c = calculerBesoinMaille(m);
-                          const resMstq = resultatsMaille[idx];
-                          const chute = resMstq?.chute_trouvee;
                           return (
                             <tr key={m.id || idx} className="hover:bg-slate-50">
                               <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono">{m.repere}</td>
@@ -2088,7 +2205,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                                 {m.typeOuverture === 'PORTE_FENETRE' ? 'Porte-Fenêtre' : m.typeOuverture === 'DOUBLE_VANTAUX' ? 'Baie 2 Vtx' : m.typeOuverture === 'CENTRALE' ? 'Centrale' : m.typeOuverture === 'FIXE' ? 'Fixe' : 'Fenêtre'}
                               </td>
                               <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono bg-white">
-                                {c.dimension_fixe_requise} mm <span className="text-xs font-normal text-slate-600">(${c.dimension_fixe_est === 'H' ? 'H' : 'L'})</span>
+                                {c.dimension_fixe_requise} mm <span className="text-xs font-bold text-slate-700">({c.dimension_fixe_est === 'H' ? 'Hauteur' : 'Largeur'})</span>
                               </td>
                               <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-sm sm:text-base font-mono">{c.nb_plis_requis} plis</td>
                               <td className="py-2.5 px-2 text-center border-r-2 border-black bg-white">
@@ -2096,43 +2213,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                                   {c.longueur_corde_unitaire_m} m/fil - {c.nb_fils_guidage} trous
                                 </span>
                               </td>
-                              <td className="py-2.5 px-2 text-center font-black text-black border-r-2 border-black text-xs sm:text-sm font-mono">{c.superficie_m2} m²</td>
-                              <td className="py-2.5 px-2 font-sans text-xs">
-                                {chute ? (
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="inline-flex items-center gap-1 font-black text-black bg-white px-2 py-0.5 rounded border border-black text-xs">
-                                      ♻️ Chute #{chute.id || 'stock'} ({chute.dimension_fixe}mm)
-                                    </span>
-                                    {resMstq?.decision_maille?.plisEnTrop ? (
-                                      <span className="text-xs text-amber-800 font-black">
-                                        ✂️ Recouper {resMstq.decision_maille.plisEnTrop} pli(s)
-                                      </span>
-                                    ) : (
-                                      <span className="text-xs text-emerald-800 font-bold">
-                                        ✓ Plis exacts ({c.nb_plis_requis}p)
-                                      </span>
-                                    )}
-                                    {resMstq?.decision_maille?.actionReste === 'NOUVELLE_CHUTE_STOCK' ? (
-                                      <span className="text-xs text-blue-800 font-bold">
-                                        🏬 Reste stock: {resMstq.decision_maille.resteLongueurMm} mm
-                                      </span>
-                                    ) : (
-                                      <span className="text-xs text-slate-700">
-                                        Perte: {resMstq?.decision_maille?.dechetLongueurMm ?? 0} mm
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div>
-                                    <span className="inline-flex items-center gap-1 font-black text-black bg-white px-2 py-0.5 rounded border border-black text-xs">
-                                      📦 Paquet Neuf
-                                    </span>
-                                    <span className="text-xs text-slate-700 font-bold block mt-0.5">
-                                      Coupe: {c.dimension_fixe_requise} mm ({c.nb_plis_requis}p)
-                                    </span>
-                                  </div>
-                                )}
-                              </td>
+                              <td className="py-2.5 px-2 text-center font-black text-black text-xs sm:text-sm font-mono">{c.superficie_m2} m²</td>
                             </tr>
                           );
                         })}
@@ -2149,8 +2230,13 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             {/* ========================================================================= */}
             <div className="space-y-4 pt-4 border-t-4 border-black">
               <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center shadow-none">
-                <div className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
-                  ✂️ OPTIMISATION DE DÉCOUPE
+                <div className="flex items-center justify-center gap-3 flex-wrap">
+                  <div className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
+                    ✂️ OPTIMISATION DE DÉCOUPE
+                  </div>
+                  <span className="px-3 py-0.5 bg-black text-white font-mono font-black text-sm rounded-md border border-black">
+                    {currentCodeOFAffiche} (ORDRE N° {currentSequenceNum})
+                  </span>
                 </div>
                 <div className="text-xs text-black font-bold mt-1">
                   Plans de coupe profilés et débits atelier — Commande N° : <span className="font-mono text-sm sm:text-base font-black px-2 py-0.5 rounded border border-black">{cmdAffichee}</span>
@@ -2181,6 +2267,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE */}
                     <div className="print-footer-bar flex flex-row flex-nowrap items-center justify-between whitespace-nowrap border-t-2 border-black pt-2 px-3 mt-4 text-xs sm:text-sm font-black text-black bg-white">
                       <div className="flex items-center gap-1.5 shrink min-w-0 truncate">
+                        <span className="font-mono font-black text-xs px-2 py-0.5 border border-black rounded bg-white text-black shrink-0">
+                          {currentCodeOFAffiche} (#{currentSequenceNum})
+                        </span>
                         <span className="font-bold text-slate-800 shrink-0">CLIENT :</span>
                         <span className="font-black text-black truncate">{clientAffiche}</span>
                         {donneurOrdre && <span className="font-semibold text-slate-700 shrink-0">({donneurOrdre})</span>}
@@ -2188,6 +2277,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                       <div className="flex items-center gap-1.5 shrink-0 px-3">
                         <span className="font-bold text-slate-800">COMMANDE N° :</span>
                         <span className="font-mono font-black text-black">{cmdAffichee}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded border-2 border-black bg-amber-100 font-mono font-black text-black text-xs">
+                        <Clock className="w-3.5 h-3.5 text-black print:hidden" />
+                        <span>{dateLivraisonPrevisionnelleAffichee}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="print-footer-page-num font-mono font-black text-black border-2 border-black px-2 py-0.5 rounded">

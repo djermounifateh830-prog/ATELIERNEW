@@ -18,8 +18,9 @@ import {
   FolderOpen,
   Filter
 } from 'lucide-react';
-import { DossierCommandeGlobal } from '../../types';
+import { DossierCommandeGlobal, SuiviOF } from '../../types';
 import { StorageService } from '../../services/storage';
+import { DelaisProductionService } from '../../services/delaisProductionService';
 
 interface HistoriqueTabProps {
   dossiers?: DossierCommandeGlobal[];
@@ -34,6 +35,11 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('TOUS');
+  const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
+
+  useEffect(() => {
+    StorageService.getSuivisOF().then(setSuivisOF).catch(() => {});
+  }, [dossiers]);
 
   // OF Modal State
   const [selectedOFDossier, setSelectedOFDossier] = useState<DossierCommandeGlobal | null>(null);
