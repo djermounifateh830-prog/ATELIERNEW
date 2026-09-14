@@ -60,7 +60,8 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
       const initReste = l.resteReelMesureMm ?? (l.restePrevuMm > 0 ? l.restePrevuMm : 0);
       const article = articles.find(a => a.code_art === l.articleCode);
       const refusMin = article?.refus_min ?? 300;
-      const initAction = l.actionReste ?? (initReste >= refusMin ? 'A_STOCKER' : 'DECHET');
+      const refusMax = article?.refus_max ?? 500;
+      const initAction = l.actionReste ?? (initReste >= refusMax ? 'A_STOCKER' : 'DECHET');
       const initSource = l.sourceReelle ?? (l.saisieOperateur?.toUpperCase().startsWith('BAR') ? 'BARRE_NEUVE' : 'CONFORME');
 
       return {
@@ -180,10 +181,11 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const newVal = Math.max(0, current + delta);
     const article = articles.find(a => a.code_art === lignes[idx].articleCode);
     const refusMin = article?.refus_min ?? 300;
+    const refusMax = article?.refus_max ?? 500;
 
     updateLigne(idx, {
       resteReelMesureMm: newVal,
-      actionReste: newVal >= refusMin ? 'A_STOCKER' : 'DECHET',
+      actionReste: newVal >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: newVal !== lignes[idx].restePrevuMm ? `${newVal}mm` : ''
     });
   };
@@ -193,12 +195,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const l = lignes[idx];
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
+    const refusMax = article?.refus_max ?? 500;
 
     updateLigne(idx, {
       sourceReelle: 'CONFORME',
       longueurSourceReelle: l.longueurPrevue,
       resteReelMesureMm: l.restePrevuMm,
-      actionReste: l.restePrevuMm >= refusMin ? 'A_STOCKER' : 'DECHET',
+      actionReste: l.restePrevuMm >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: ''
     });
   };
@@ -220,12 +223,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const estimatedReste = Math.max(0, longueurBarre - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
+    const refusMax = article?.refus_max ?? 500;
 
     updateLigne(idx, {
       sourceReelle: 'BARRE_NEUVE',
       longueurSourceReelle: longueurBarre,
       resteReelMesureMm: estimatedReste,
-      actionReste: estimatedReste >= refusMin ? 'A_STOCKER' : 'DECHET',
+      actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: `BARRE NEUVE ${longueurBarre}mm`
     });
   };
@@ -237,12 +241,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const estimatedReste = Math.max(0, longueurChute - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
+    const refusMax = article?.refus_max ?? 500;
 
     updateLigne(idx, {
       sourceReelle: 'AUTRE_CHUTE',
       longueurSourceReelle: longueurChute,
       resteReelMesureMm: estimatedReste,
-      actionReste: estimatedReste >= refusMin ? 'A_STOCKER' : 'DECHET',
+      actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: `CHUTE STOCK ${longueurChute}mm`
     });
   };
@@ -254,12 +259,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const estimatedReste = Math.max(0, longueurChute - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
+    const refusMax = article?.refus_max ?? 500;
 
     updateLigne(idx, {
       sourceReelle: 'CHUTE_NON_INVENTORIEE',
       longueurSourceReelle: longueurChute,
       resteReelMesureMm: estimatedReste,
-      actionReste: estimatedReste >= refusMin ? 'A_STOCKER' : 'DECHET',
+      actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: `CHUTE NON INVENTORIÉE ${longueurChute}mm`
     });
   };
@@ -430,12 +436,13 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         verifiedMap[idx] = true;
         const article = articles.find(a => a.code_art === l.articleCode);
         const refusMin = article?.refus_min ?? 300;
+        const refusMax = article?.refus_max ?? 500;
         return {
           ...l,
           sourceReelle: 'CONFORME',
           longueurSourceReelle: l.longueurPrevue,
           resteReelMesureMm: l.restePrevuMm,
-          actionReste: l.restePrevuMm >= refusMin ? 'A_STOCKER' : 'DECHET',
+          actionReste: l.restePrevuMm >= refusMax ? 'A_STOCKER' : 'DECHET',
           saisieOperateur: ''
         };
       })
@@ -920,6 +927,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
               const isModified = delta !== 0 || source !== 'CONFORME';
               const article = articles.find(a => a.code_art === ligne.articleCode);
               const refusMin = article?.refus_min ?? 300;
+              const refusMax = article?.refus_max ?? 500;
               const chutesDispos = getChutesDisponiblesPourArticle(ligne.articleCode);
               const geo = getGeometrieStatus(ligne, originalIdx);
               const isAddedManually = ligne.id?.startsWith('suppl-');
@@ -1498,9 +1506,10 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                             onChange={e => {
                               const val = Math.max(0, parseInt(e.target.value, 10) || 0);
                               const refusMin = article?.refus_min ?? 300;
+                              const refusMax = article?.refus_max ?? 500;
                               updateLigne(originalIdx, {
                                 resteReelMesureMm: val,
-                                actionReste: val >= refusMin && val > 0 ? 'A_STOCKER' : 'DECHET',
+                                actionReste: val >= refusMax && val > 0 ? 'A_STOCKER' : 'DECHET',
                                 saisieOperateur: val !== ligne.restePrevuMm ? `${val}mm` : ''
                               });
                             }}
@@ -1540,7 +1549,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                           <div className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-950/70 border border-emerald-500/80 text-emerald-200 text-xs font-bold flex items-center justify-between shadow-sm">
                             <div className="flex items-center gap-1.5">
                               <Archive className="w-3.5 h-3.5 text-emerald-400" />
-                              <span>📦 Reste Conforme ➔ Enregistré en Stock</span>
+                              <span>📦 Reste Conforme (≥ {refusMax}mm) ➔ Enregistré en Stock</span>
                             </div>
                             <button
                               type="button"
@@ -1555,14 +1564,20 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                           <div className="w-full py-1.5 px-2.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 text-xs font-medium flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
                               <Trash2 className="w-3.5 h-3.5 text-slate-400" />
-                              <span>🗑️ Inférieur au seuil ({refusMin}mm) ➔ Déchet</span>
+                              <span>
+                                {mesuredReste > refusMin && mesuredReste < refusMax ? (
+                                  <span className="text-amber-300 font-bold">⚠️ Plage de refus ({refusMin}–{refusMax}mm) ➔ Déchet (Non stockable)</span>
+                                ) : (
+                                  <span>🗑️ Déchet résiduel (&lt; {refusMax}mm) ➔ Déchet</span>
+                                )}
+                              </span>
                             </div>
                             {mesuredReste > 0 && (
                               <button
                                 type="button"
                                 onClick={() => updateLigne(originalIdx, { actionReste: 'A_STOCKER' })}
                                 className="text-[10px] text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
-                                title="Forcer en stock"
+                                title="Forcer en stock exceptionnellement"
                               >
                                 Forcer stocker
                               </button>
@@ -1571,7 +1586,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                         )}
 
                         <div className="text-[10px] text-slate-500 flex items-center justify-between px-1">
-                          <span>Seuil de réutilisation : <strong>≥ {refusMin} mm</strong></span>
+                          <span>Seuil de stockage : <strong>≥ {refusMax} mm</strong> <span className="text-slate-600">(Refus : {refusMin}–{refusMax}mm)</span></span>
                           <button
                             type="button"
                             onClick={() => setRebutLigne(originalIdx)}

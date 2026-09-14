@@ -98,6 +98,10 @@ export default function App() {
     handleSetActiveTab('ecosysteme');
   };
 
+  const handleClearSelectedDossier = useCallback(() => {
+    setSelectedDossierToLoad(null);
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
       {/* Header */}
@@ -125,6 +129,7 @@ export default function App() {
             onDossiersUpdated={loadData}
             onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
             selectedDossierToLoad={selectedDossierToLoad}
+            onClearSelectedDossier={handleClearSelectedDossier}
           />
         )}
 

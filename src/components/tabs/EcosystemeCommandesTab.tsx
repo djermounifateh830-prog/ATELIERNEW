@@ -113,6 +113,7 @@ interface EcosystemeCommandesTabProps {
   onDossiersUpdated?: () => void;
   onNavigateToTab: (tabId: string, initialData?: any) => void;
   selectedDossierToLoad?: DossierCommandeGlobal | null;
+  onClearSelectedDossier?: () => void;
 }
 
 export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
@@ -123,7 +124,8 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   dossiers = [],
   onDossiersUpdated,
   onNavigateToTab,
-  selectedDossierToLoad
+  selectedDossierToLoad,
+  onClearSelectedDossier
 }) => {
   const [localArticlesOverrides, setLocalArticlesOverrides] = useState<Article[] | null>(null);
   const safeArticles = useMemo(() => {
@@ -1351,6 +1353,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
         const pieces: { longueur: number; quantite: number; label: string; repere?: string; refCommande?: string }[] = [];
         for (const m of lignesGroup) {
+          if (m.typeOuverture === 'FIXE' || m.typeFabrication === 'SEMI_FINI_MAILLE') continue;
           const Q = Math.max(1, m.quantite);
           const dedCoulisse = m.avecBarreInferieure ? -33 : (mstqCoulisseTechParams.debordement ?? coulisseObj.debordement ?? -46);
           // Déterminer nombre de coulisses et dimension selon le type
@@ -1359,8 +1362,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           if (m.typeOuverture === 'DOUBLE_VANTAUX' || m.typeOuverture === 'CENTRALE') { qtyCoulisse = 2; dimCoulisse = m.hauteur + dedCoulisse; }
           else if (m.typeOuverture === 'FENETRE') { dimCoulisse = m.largeur + dedCoulisse; } // Fenêtre : tirage horizontal
 
-          pieces.push({ longueur: dimCoulisse, quantite: qtyCoulisse * Q, label: `MSTQ-CS-${m.repere} (MSTQ COULISSE ${dimCoulisse}mm)`, repere: `MSTQ-CS-${m.repere}`, refCommande: m.refCommande });
+          if (qtyCoulisse > 0) {
+            pieces.push({ longueur: dimCoulisse, quantite: qtyCoulisse * Q, label: `MSTQ-CS-${m.repere} (MSTQ COULISSE ${dimCoulisse}mm)`, repere: `MSTQ-CS-${m.repere}`, refCommande: m.refCommande });
+          }
         }
+        if (pieces.length === 0) return;
 
         const res = opt.optimiser(pieces, availableChutes);
         res.articleCode = coulisseObj.code_art;
@@ -2317,10 +2323,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       }
     }
 
-    const lignesAvecCoulisse = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE');
+    const lignesAvecCoulisse = mstqFiltres.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE' && m.typeOuverture !== 'FIXE');
     const groupsCoulisse = new Map<string, BesoinMoustiquaire[]>();
     if (lignesAvecCoulisse.length > 0) {
       for (const ligne of lignesAvecCoulisse) {
+        if (ligne.typeOuverture === 'FIXE') continue;
         const code = ligne.articleCodeCoulisse || mstqConfig.coulisseArticleCode || 'ART0053';
         if (!groupsCoulisse.has(code)) groupsCoulisse.set(code, []);
         groupsCoulisse.get(code)!.push(ligne);
@@ -2705,6 +2712,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
           const pieces: any[] = [];
           for (const m of lignesGroup) {
+            if (m.typeOuverture === 'FIXE' || m.typeFabrication === 'SEMI_FINI_MAILLE') continue;
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
             const dedCoulisse = m.avecBarreInferieure ? -33 : dedCoulisseDefault;
@@ -2712,8 +2720,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             let dimCoulisse = m.hauteur + dedCoulisse;
             if (m.typeOuverture === 'DOUBLE_VANTAUX' || m.typeOuverture === 'CENTRALE') { qtyCoulisse = 2; dimCoulisse = m.hauteur + dedCoulisse; }
             else if (m.typeOuverture === 'FENETRE') { dimCoulisse = m.largeur + dedCoulisse; }
-            pieces.push({ longueur: dimCoulisse, quantite: qtyCoulisse * Q, label: `MSTQ-CS-${m.repere} (MSTQ COULISSE ${dimCoulisse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `MSTQ-CS-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
+            if (qtyCoulisse > 0) {
+              pieces.push({ longueur: dimCoulisse, quantite: qtyCoulisse * Q, label: `MSTQ-CS-${m.repere} (MSTQ COULISSE ${dimCoulisse}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `MSTQ-CS-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
+            }
           }
+          if (pieces.length === 0) continue;
           const res = opt.optimiser(pieces, availableChutes);
           res.articleCode = coulisseObj.code_art;
           res.articleDesignation = coulisseObj.designation;
@@ -2999,56 +3010,167 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setNumCommandePrecadre(prev => updatePrefix(prev));
   };
 
-  // 1. Démarrer un NOUVEAU DOSSIER complet (Réinitialise tout, prépare un nouveau client et de nouvelles commandes)
-  const handleNouveauDossier = () => {
+  // 1. Démarrer un NOUVEAU DOSSIER complet (Réinitialise TOUT le masque de saisie vraiment à 0)
+  const handleNouveauDossier = (demanderConfirmation: boolean = false) => {
+    if (demanderConfirmation && (lignesCaissons.length > 0 || lignesTabliers.length > 0 || lignesMoustiquaires.length > 0 || lignesPrecadres.length > 0)) {
+      if (!confirm('Voulez-vous vraiment remettre tout le masque de saisie à 0 pour démarrer un nouveau dossier ? Les données non enregistrées seront effacées.')) {
+        return;
+      }
+    }
+
+    // 1. Désactiver le mode édition d'un ancien dossier
     setEditingDossierId(null);
+
+    // 2. Réinitialiser les identités client & chantier
     setMonClient('');
+    setClientDeMonClient('');
+    setDateCommande(getTodayDateString());
+    setShowClientSuggestions(false);
+
+    // 3. Vider tous les numéros de commande de chaque famille
     setNumCommandeCaisson('');
     setNumCommandeSousFace('');
     setNumCommandeTablier('');
     setNumCommandeMoustiquaire('');
     setNumCommandePrecadre('');
-    setClientDeMonClient('');
-    setDateCommande(getTodayDateString());
+    setFilterCmdActive('TOUTES');
+
+    // 4. Vider totalement toutes les listes de lignes d'articles
     setLignesCaissons([]);
     setLignesTabliers([]);
     setLignesMoustiquaires([]);
     setLignesPrecadres([]);
+
+    // 5. Réinitialiser les champs de saisie active
     setInputL('');
     setInputH('');
     setInputQte('1');
     setInputRepere('');
-    setModeSaisieActif(true);  // Activer le mode saisie
+    setModeSaisieActif(true);
+
+    // 6. Fermer et vider toute édition de ligne unitaire
+    setEditingCaissonId(null);
+    setEditCaissonForm(null);
+    setEditingTablierId(null);
+    setEditTablierForm(null);
+    setEditingMstqId(null);
+    setEditMstqForm(null);
+    setEditingPrecadreId(null);
+    setEditPrecadreForm(null);
+
+    // 7. Vider toutes les sélections et états de multi-optimisation
+    setSelectedCmdRefs(new Set());
+    setSelectedDossierIds(new Set());
+    setMultiOptActiveRefs([]);
+    setResultatDebitCT(null);
+    setSectionsMultiCaisson([]);
+    setSectionsMultiMSTQ([]);
+    setModalDebitCaissonOpen(false);
+    setModalOFDebitCaissonOpen(false);
+    setModalDebitMSTQOpen(false);
+    setModalOFDebitMSTQOpen(false);
+    setOptProgress(null);
+
+    // 8. Réinitialiser la famille active sur CAISSON
+    setFamilleArticle('CAISSON');
+
+    // 9. Réinitialiser les configurations de fabrication aux valeurs d'usine par défaut
+    const premierCT = articlesCT[0]?.code_art || '';
+    const premierSF = articlesSF[0]?.code_art || '';
     setCaissonConfig(prev => ({
       ...prev,
-      ctArticleCode: '',
-      sfArticleCode: '',
+      typeCommande: 'CAISSON_ET_SOUS_FACE',
+      ctArticleCode: premierCT,
+      sfArticleCode: premierSF,
+      typeCaisson: 'TUNNEL_SIMPLE',
+      avecSousFace: true,
+      montageSousFace: 'MONTEE_ATELIER',
+      avecPlaque: false,
       avecPeinture: false
     }));
-    setTablierConfig(prev => ({
-      ...prev,
-      articleCode: '',
-      lfArticleCode: '',
-      glArticleCode: ''
-    }));
-    setPrecadreConfig(prev => ({
-      ...prev,
-      articleCode: '',
-      bouchonArticleCode: ''
-    }));
-    setMstqConfig(prev => ({
-      ...prev,
-      mailleArticleCode: '',
-      mailleArticleDesignation: '',
-      cadreArticleCode: '',
-      cadreArticleDesignation: '',
-      coulisseArticleCode: '',
-      coulisseArticleDesignation: '',
-      barreInfArticleCode: '',
-      barreInfArticleDesignation: ''
-    }));
-    showFlashNotification('📁 Nouveau Dossier initialisé. Veuillez sélectionner Mon Client puis le Client Final.', 'info');
+
+    const premierTBL = articlesTablier[0]?.code_art || '';
+    const premierLF = articlesLameFinale[0]?.code_art || '';
+    const premierGL = articlesCoulisses[0]?.code_art || '';
+    setTablierConfig({
+      typeFabrication: 'TABLIER_SEUL',
+      avecLameFinale: false,
+      hauteurLame: 43,
+      articleCode: premierTBL,
+      lfArticleCode: premierLF,
+      glArticleCode: premierGL
+    });
+
+    const premierPRC = articlesPrecadre[0]?.code_art || '';
+    const premierBouchon = articlesBouchonPrecadre[0]?.code_art || '';
+    setPrecadreConfig({
+      figure: 'VIDE',
+      modeDebordement: 'SUPERIEUR_INFERIEUR',
+      debordementSuperieur: 100,
+      debordementInferieur: 300,
+      typeCoupe: '90',
+      articleCode: premierPRC,
+      bouchonArticleCode: premierBouchon
+    });
+
+    const premierCadre = articlesCadreMSTQ[0]?.code_art || '';
+    const premierMaille = articlesMailleMSTQ[0]?.code_art || '';
+    const premierCoulisse = articlesCoulisseMSTQ[0]?.code_art || '';
+    const premierBarreInf = articlesBarreInfMSTQ[0]?.code_art || '';
+    setMstqConfig({
+      typeOuverture: 'PORTE_FENETRE',
+      typeFabrication: 'COMPLET',
+      avecBarreInferieure: false,
+      mailleArticleCode: premierMaille,
+      mailleArticleDesignation: articlesMailleMSTQ[0]?.designation || '',
+      cadreArticleCode: premierCadre,
+      cadreArticleDesignation: articlesCadreMSTQ[0]?.designation || '',
+      coulisseArticleCode: premierCoulisse,
+      coulisseArticleDesignation: articlesCoulisseMSTQ[0]?.designation || '',
+      barreInfArticleCode: premierBarreInf,
+      barreInfArticleDesignation: articlesBarreInfMSTQ[0]?.designation || '',
+      modele: 'MOUSTIQUAIRE PLISSÉE'
+    });
+
+    // 10. Nettoyer l'état parent pour éviter toute réinjection intempestive
+    if (onClearSelectedDossier) {
+      onClearSelectedDossier();
+    }
+
+    showFlashNotification('✨ Masque de saisie remis à zéro. Nouveau dossier vierge prêt pour la saisie.', 'info');
     editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Retirer une commande spécifique du dossier en cours (avec mise à jour SQLite)
+  const handleRetirerCommandeDuDossier = async (cmdRef: string) => {
+    if (!confirm(`Voulez-vous vraiment retirer la commande N° ${cmdRef} de ce dossier ?`)) {
+      return;
+    }
+
+    setLignesCaissons(prev => prev.filter(c => (c.refCommande || numCommandeCaisson) !== cmdRef));
+    setLignesTabliers(prev => prev.filter(t => (t.refCommande || numCommandeTablier) !== cmdRef));
+    setLignesMoustiquaires(prev => prev.filter(m => (m.refCommande || numCommandeMoustiquaire) !== cmdRef));
+    setLignesPrecadres(prev => prev.filter(p => (p.refCommande || numCommandePrecadre) !== cmdRef));
+
+    // Si le dossier est déjà sauvegardé dans SQLite, retirer la commande du dossier en base
+    if (editingDossierId) {
+      const updatedDossiers = dossiers.map(d => {
+        if (d.id === editingDossierId) {
+          return {
+            ...d,
+            articlesCaissons: (d.articlesCaissons || []).filter(c => (c.refCommande || d.numCommandeCaisson || d.refCommande) !== cmdRef),
+            articlesTabliers: (d.articlesTabliers || []).filter(t => (t.refCommande || d.numCommandeTablier || d.refCommande) !== cmdRef),
+            articlesMoustiquaires: (d.articlesMoustiquaires || []).filter(m => (m.refCommande || d.numCommandeMoustiquaire || d.refCommande) !== cmdRef),
+            articlesPrecadres: (d.articlesPrecadres || []).filter(p => (p.refCommande || d.numCommandePrecadre || d.refCommande) !== cmdRef),
+          };
+        }
+        return d;
+      });
+      await StorageService.saveDossiers(updatedDossiers);
+      if (onDossiersUpdated) onDossiersUpdated();
+    }
+
+    showFlashNotification(`Commande N° ${cmdRef} retirée du dossier.`, 'warn');
   };
 
   // 2. Démarrer une NOUVELLE COMMANDE dans le MÊME DOSSIER
@@ -3179,8 +3301,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   useEffect(() => {
     if (selectedDossierToLoad) {
       handleReprendreCommande(selectedDossierToLoad);
+      onClearSelectedDossier?.();
     }
-  }, [selectedDossierToLoad]);
+  }, [selectedDossierToLoad, onClearSelectedDossier]);
 
   // Dupliquer un dossier
   const handleDupliquerDossier = async (dossier: DossierCommandeGlobal) => {
@@ -3818,12 +3941,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 {editingDossierId ? (
                   <span className="text-[11px] font-black tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
                     <Edit2 className="w-3 h-3" />
-                    <span>MODIFICATION EN COURS</span>
+                    <span>MODIFICATION DOSSIER : {dossiers.find(d => d.id === editingDossierId)?.refCommande || 'ENREGISTRÉ'}</span>
                   </span>
                 ) : (
-                  <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                    DOSSIER ACTIF
+                  <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3 text-emerald-400" />
+                    <span>NOUVEAU DOSSIER VIERGE</span>
                   </span>
                 )}
               </div>
@@ -3876,15 +3999,36 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             {/* BOUTON 1 : NOUVEAU DOSSIER */}
             <button
               type="button"
-              onClick={handleNouveauDossier}
+              onClick={() => handleNouveauDossier(true)}
               className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 shadow-md transition active:scale-95 cursor-pointer"
-              title="Démarrer un nouveau dossier complet (Nouveau Client)"
+              title="Démarrer un nouveau dossier complet à zéro (Nouveau Client)"
             >
               <FolderPlus className="w-4 h-4 text-sky-400" />
               <span>📁 Nouveau Dossier</span>
             </button>
           </div>
         </div>
+
+        {/* Alerte contextuelle si on est en train de modifier un dossier existant */}
+        {editingDossierId && (
+          <div className="mb-4 bg-amber-950/40 border border-amber-500/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-amber-200">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                Vous modifiez actuellement le dossier existant <strong className="text-amber-300 font-mono font-bold">{dossiers.find(d => d.id === editingDossierId)?.refCommande}</strong> de <strong className="text-slate-100">{clientDeMonClient || 'ce client'}</strong>.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleNouveauDossier(true)}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+              title="Quitter ce dossier et remettre tout le masque à zéro"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>📁 Remettre le Masque à 0 (Nouveau Dossier)</span>
+            </button>
+          </div>
+        )}
 
         {/* Formulaire En-tête : Mon Client / Client de Mon Client / Date */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3.5 items-center bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/80">
@@ -7773,6 +7917,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
+              onClick={() => handleNouveauDossier(true)}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-sky-500/30 shadow transition active:scale-95 cursor-pointer"
+              title="Démarrer un nouveau dossier vierge à 0 pour un autre client"
+            >
+              <FolderPlus className="w-4 h-4 text-sky-400" />
+              <span>📁 Nouveau Dossier Vierge</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
                 if (commandesDossierEnCours.length === 0) {
                   showFlashNotification('⚠️ Aucune commande à optimiser dans ce dossier. Renseignez et enregistrez au moins une commande.', 'warn');
@@ -7819,7 +7973,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
         {/* Liste des Commandes du Dossier en cours */}
         <div className="space-y-3">
-          {commandesDossierEnCours.length === 0 ? (
+          {!editingDossierId ? (
+            <div className="text-center py-8 bg-slate-950/60 rounded-xl border border-dashed border-emerald-500/30 p-6 space-y-2">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <h4 className="text-sm font-bold text-emerald-300">Nouveau Dossier Vierge — Masque de Saisie à 0</h4>
+              <p className="text-xs text-slate-400 max-w-lg mx-auto">
+                Le masque de saisie est prêt pour un nouveau client. Aucune commande précédente n'est rattachée à ce dossier. Saisissez vos dimensions ci-dessus puis cliquez sur « 💾 Enregistrer la Commande » pour enregistrer ce dossier dans l'Historique.
+              </p>
+            </div>
+          ) : commandesDossierEnCours.length === 0 ? (
             <div className="text-center py-8 bg-slate-950 rounded-xl border border-slate-800 text-slate-500 text-xs">
               Aucune commande enregistrée dans l'historique pour ce dossier pour le moment. Renseignez vos articles ci-dessus puis cliquez sur « 💾 Enregistrer la Commande » pour l'enregistrer.
             </div>
@@ -7891,15 +8055,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirm(`Voulez-vous retirer la commande N° ${cmd.ref} de ce dossier ?`)) {
-                            setLignesCaissons(prev => prev.filter(c => (c.refCommande || numCommandeCaisson) !== cmd.ref));
-                            setLignesTabliers(prev => prev.filter(t => (t.refCommande || numCommandeTablier) !== cmd.ref));
-                            setLignesMoustiquaires(prev => prev.filter(m => (m.refCommande || numCommandeMoustiquaire) !== cmd.ref));
-                            setLignesPrecadres(prev => prev.filter(p => (p.refCommande || numCommandePrecadre) !== cmd.ref));
-                            showFlashNotification(`Commande N° ${cmd.ref} retirée du dossier.`, 'warn');
-                          }
-                        }}
+                        onClick={() => handleRetirerCommandeDuDossier(cmd.ref)}
                         className="p-1.5 bg-slate-900 hover:bg-red-500/20 text-slate-500 hover:text-red-400 rounded-lg text-xs transition border border-slate-800 cursor-pointer"
                         title="Retirer cette commande du dossier"
                       >

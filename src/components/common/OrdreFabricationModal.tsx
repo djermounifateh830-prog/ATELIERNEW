@@ -938,28 +938,29 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     const precadresHTML = sectionsParFamille.precadres.map(sec => buildSectionHTML(sec)).join('');
     const mstqHTML = sectionsParFamille.moustiquaires.map(sec => buildSectionHTML(sec)).join('');
 
-    const htmlContent = `
-<!DOCTYPE html>
+    const htmlContent = `<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <title>Ordre de Fabrication — ${cmdAffichee} — ${clientAffiche}</title>
   <style>
-    @page { size: A4 portrait; margin: 8mm 8mm 14mm 8mm; }
+    @page { size: A4 portrait; margin: 8mm 8mm 12mm 8mm; }
     *, *::before, *::after { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; background: #fff; font-size: 13px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .print-doc-table { width: 100% !important; border-collapse: collapse !important; border: none !important; margin: 0 !important; padding: 0 !important; }
+    .print-doc-table > tbody > tr > td { border: none !important; padding: 0 !important; margin: 0 !important; background: #fff !important; }
+    .print-doc-table > tfoot { display: table-footer-group !important; }
+    .print-doc-table > tfoot > tr > td { border: none !important; padding: 0 !important; margin: 0 !important; background: #fff !important; }
     .print-footer-fixed {
       display: flex !important;
       flex-direction: row !important;
       flex-wrap: nowrap !important;
       white-space: nowrap !important;
-      position: fixed !important;
-      bottom: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
+      width: 100% !important;
       height: 8mm !important;
       border-top: 2px solid #000 !important;
-      padding: 1.5mm 6mm 0 6mm !important;
+      padding: 1.5mm 4mm 0 4mm !important;
+      margin-top: 2mm !important;
       font-size: 10pt !important;
       font-weight: 800 !important;
       color: #000 !important;
@@ -967,7 +968,6 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       justify-content: space-between !important;
       align-items: center !important;
       font-family: Arial, sans-serif !important;
-      z-index: 99999 !important;
       box-sizing: border-box !important;
     }
     .print-footer-page-num {
@@ -987,7 +987,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     .logo-text { font-size:10px; font-weight:900; letter-spacing:1px; color:#000; }
     .client-info-bar { display:flex; justify-content:space-between; background:#fff; padding:6px 10px; border:2px solid #000; font-size:13px; margin-bottom:10px; font-weight:bold; border-radius:4px; color:#000; }
     .famille-header { background: #fff; color: #000; border: 2px solid #000; padding: 5px 10px; font-size: 14px; font-weight: 900; text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; border-radius: 4px; }
-    table { width:100% !important; border-collapse:collapse !important; margin-bottom:10px !important; table-layout:fixed !important; border: 2.5px solid #000 !important; }
+    table:not(.print-doc-table) { width:100% !important; border-collapse:collapse !important; margin-bottom:10px !important; table-layout:fixed !important; border: 2.5px solid #000 !important; }
     th { border: 2px solid #000 !important; padding:6px 8px !important; text-align:left; vertical-align:middle; font-size: 13px; background:#fff !important; font-weight:900 !important; text-transform:uppercase; color:#000 !important; }
     td { padding:6px 8px !important; text-align:left; vertical-align:middle; font-size: 13px; box-sizing:border-box !important; word-break:break-word !important; overflow-wrap:break-word !important; color:#000 !important; background:#fff !important; }
     .border-cut-dashed { border-bottom: 2.5px dashed #000 !important; border-right: 2px solid #000 !important; }
@@ -996,6 +996,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   </style>
 </head>
 <body>
+<table class="print-doc-table">
+  <tbody>
+    <tr>
+      <td>
   <!-- PARTIE 1 : PRÉPARATION DU STOCK & MATIÈRES PREMIÈRES (MAGASIN) -->
   <div class="header">
     <div class="header-left">
@@ -1095,13 +1099,22 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     ${precadresHTML}
     ${mstqHTML}
   </div>
-
-  <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE -->
-  <div class="print-footer-fixed">
-    <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%;flex-shrink:1;"><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
-    <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
-    <div style="white-space:nowrap;flex-shrink:0;"><span class="print-footer-page-num"></span></div>
-  </div>
+      </td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td>
+        <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE -->
+        <div class="print-footer-fixed">
+          <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%;flex-shrink:1;"><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</div>
+          <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
+          <div style="white-space:nowrap;flex-shrink:0;"><span class="print-footer-page-num"></span></div>
+        </div>
+      </td>
+    </tr>
+  </tfoot>
+</table>
 </body>
 </html>`;
 
@@ -1129,8 +1142,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       sec.groupesBarresNeuves.forEach(g => {
         const piecesStr = g.piecesInfo.map(p => `${p.repere} (${p.longueur}mm)`).join(' + ');
         const resteCalc = Math.round(g.chute);
-        const rMin = sec.article?.refus_min ?? 300;
-        const initialAction = resteCalc >= rMin ? 'A_STOCKER' : 'DECHET';
+        const rMin = sec.resultat?.refus_min ?? sec.article?.refus_min ?? 300;
+        const rMax = sec.resultat?.refus_max ?? sec.article?.refus_max ?? 500;
+        const initialAction = (resteCalc >= rMax && g.statut !== 'SACRIFICE') ? 'A_STOCKER' : 'DECHET';
 
         for (let i = 0; i < g.quantite; i++) {
           lignesRetour.push({
@@ -1152,8 +1166,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       sec.groupesChutesRecup.forEach(g => {
         const piecesStr = g.piecesInfo.map(p => `${p.repere} (${p.longueur}mm)`).join(' + ');
         const resteCalc = Math.round(g.reste);
-        const rMin = sec.article?.refus_min ?? 300;
-        const initialAction = resteCalc >= rMin ? 'A_STOCKER' : 'DECHET';
+        const rMin = sec.resultat?.refus_min ?? sec.article?.refus_min ?? 300;
+        const rMax = sec.resultat?.refus_max ?? sec.article?.refus_max ?? 500;
+        const initialAction = resteCalc >= rMax ? 'A_STOCKER' : 'DECHET';
 
         for (let i = 0; i < g.quantite; i++) {
           lignesRetour.push({
@@ -1592,29 +1607,47 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm 8mm 14mm 8mm;
+            margin: 8mm 8mm 12mm 8mm;
           }
-          .print-footer-fixed {
+          .print-doc-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            border: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print-doc-table > tbody > tr > td {
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #ffffff !important;
+          }
+          .print-doc-table > tfoot {
+            display: table-footer-group !important;
+          }
+          .print-doc-table > tfoot > tr > td {
+            border: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: #ffffff !important;
+          }
+          .print-footer-bar {
             display: flex !important;
             flex-direction: row !important;
             flex-wrap: nowrap !important;
             white-space: nowrap !important;
-            position: fixed !important;
-            bottom: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
-            height: 8mm !important;
+            width: 100% !important;
             border-top: 2px solid #000000 !important;
-            padding: 1.5mm 6mm 0 6mm !important;
+            padding: 2mm 2mm 0 2mm !important;
+            margin-top: 2mm !important;
             font-size: 10pt !important;
             font-weight: 800 !important;
             color: #000000 !important;
             background: #ffffff !important;
             justify-content: space-between !important;
             align-items: center !important;
-            z-index: 99999 !important;
-            font-family: Arial, Helvetica, sans-serif !important;
             box-sizing: border-box !important;
+            font-family: Arial, Helvetica, sans-serif !important;
           }
           .print-footer-page-num {
             font-family: Consolas, monospace !important;
@@ -1810,7 +1843,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
         {/* Paper Sheet Content */}
         <div className="p-3 sm:p-6 overflow-y-auto bg-slate-100 font-sans print:p-0 print:bg-white print:overflow-visible">
-          <div className="bg-white text-black p-5 sm:p-8 rounded-xl shadow-md border-2 border-black max-w-4xl mx-auto space-y-6 print:p-0 print:border-none print:shadow-none print:max-w-none">
+          <table className="print-doc-table w-full border-none p-0 m-0 border-collapse">
+            <tbody>
+              <tr>
+                <td className="border-none p-0 m-0 bg-transparent">
+                  <div className="bg-white text-black p-5 sm:p-8 rounded-xl shadow-md border-2 border-black max-w-4xl mx-auto space-y-6 print:p-0 print:border-none print:shadow-none print:max-w-none">
 
             {/* ========================================================================= */}
             {/* PAGE 1 : PRÉPARATION ATELIER & MATIÈRES PREMIÈRES À DÉSTOCKER            */}
@@ -2133,25 +2170,36 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               {sectionsParFamille.moustiquaires.map((sec, idx) => renderSectionCuttingTables(sec, idx))}
             </div>
 
-            {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE */}
-            <div className="print-footer-fixed flex flex-row flex-nowrap items-center justify-between whitespace-nowrap border-t-2 border-black pt-2 px-3 mt-4 text-xs sm:text-sm font-black text-black bg-white">
-              <div className="flex items-center gap-1.5 shrink min-w-0 truncate">
-                <span className="font-bold text-slate-800 shrink-0">CLIENT :</span>
-                <span className="font-black text-black truncate">{clientAffiche}</span>
-                {donneurOrdre && <span className="font-semibold text-slate-700 shrink-0">({donneurOrdre})</span>}
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0 px-3">
-                <span className="font-bold text-slate-800">COMMANDE N° :</span>
-                <span className="font-mono font-black text-black">{cmdAffichee}</span>
-              </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="print-footer-page-num font-mono font-black text-black border-2 border-black px-2 py-0.5 rounded">
-                  <span className="print:hidden">Page 1</span>
-                </span>
-              </div>
-            </div>
-
-          </div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+            <tfoot className="print-page-tfoot">
+              <tr>
+                <td className="border-none p-0 m-0 bg-transparent">
+                  <div className="max-w-4xl mx-auto">
+                    {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE */}
+                    <div className="print-footer-bar flex flex-row flex-nowrap items-center justify-between whitespace-nowrap border-t-2 border-black pt-2 px-3 mt-4 text-xs sm:text-sm font-black text-black bg-white">
+                      <div className="flex items-center gap-1.5 shrink min-w-0 truncate">
+                        <span className="font-bold text-slate-800 shrink-0">CLIENT :</span>
+                        <span className="font-black text-black truncate">{clientAffiche}</span>
+                        {donneurOrdre && <span className="font-semibold text-slate-700 shrink-0">({donneurOrdre})</span>}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 px-3">
+                        <span className="font-bold text-slate-800">COMMANDE N° :</span>
+                        <span className="font-mono font-black text-black">{cmdAffichee}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="print-footer-page-num font-mono font-black text-black border-2 border-black px-2 py-0.5 rounded">
+                          <span className="print:hidden">Page 1</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
     </div>,
