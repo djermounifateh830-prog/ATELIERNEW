@@ -81,6 +81,17 @@ export default function App() {
     loadData();
   }, [loadData]);
 
+  const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal) => {
+    setSelectedDossierToLoad(dossier);
+    handleSetActiveTab('ecosysteme');
+  }, [handleSetActiveTab]);
+
+  const handleClearSelectedDossier = useCallback(() => {
+    setSelectedDossierToLoad(null);
+  }, []);
+
+  const chutesSheetsCount = Object.keys(chutesBarres).length + (chutesMaille.length > 0 ? 1 : 0);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100">
@@ -90,17 +101,6 @@ export default function App() {
       </div>
     );
   }
-
-  const chutesSheetsCount = Object.keys(chutesBarres).length + (chutesMaille.length > 0 ? 1 : 0);
-
-  const handleLoadDossierFromHistorique = (dossier: DossierCommandeGlobal) => {
-    setSelectedDossierToLoad(dossier);
-    handleSetActiveTab('ecosysteme');
-  };
-
-  const handleClearSelectedDossier = useCallback(() => {
-    setSelectedDossierToLoad(null);
-  }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
