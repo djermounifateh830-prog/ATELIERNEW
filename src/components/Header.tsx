@@ -16,7 +16,8 @@ import {
   History,
   Terminal,
   ClipboardCheck,
-  Activity
+  Activity,
+  Scale
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
 import { SystemLogsModal } from './common/SystemLogsModal';
@@ -115,6 +116,13 @@ export const Header: React.FC<HeaderProps> = ({
       badge: activeOfCount > 0 ? activeOfCount : undefined,
       badgeBg: 'bg-blue-600 text-white'
     },
+    {
+      id: 'cockpit-cloture',
+      label: '⚖️ Cockpit Clôture & Bilan',
+      icon: Scale,
+      badge: activeOfCount > 0 ? 'Nouveau' : undefined,
+      badgeBg: 'bg-emerald-600 text-white'
+    },
     { id: 'historique', label: '📜 Historique Commandes', icon: History },
     { id: 'stock', label: '📦 Gestion Stock & Chutes', icon: FileSpreadsheet },
     { id: 'devis', label: '💰 Devis & Coûts', icon: Calculator },
@@ -124,7 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="bg-slate-900 text-white shadow-xl border-b border-slate-800">
       {/* Top Banner (Full Screen Width) */}
-      <div className="w-full px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <div className="w-full px-2 sm:px-3 lg:px-4 py-3 sm:py-3.5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-400 flex items-center justify-center shadow-md font-black text-slate-950 text-xl tracking-wider">
             3M
@@ -193,7 +201,7 @@ export const Header: React.FC<HeaderProps> = ({
       />
 
       {/* Navigation Tabs (Full Screen Width) */}
-      <div className="w-full px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-2 sm:px-3 lg:px-4">
         <nav className="flex space-x-1 sm:space-x-2 overflow-x-auto py-2 scrollbar-none">
           {tabs.map(tab => {
             const Icon = tab.icon;

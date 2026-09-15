@@ -14,6 +14,7 @@ import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
 import { RetourOFModal } from '../common/RetourOFModal';
 import { FicheTransfertModal } from '../common/FicheTransfertModal';
+import { ModifierDelaiLivraisonModal } from '../common/ModifierDelaiLivraisonModal';
 import {
   ClipboardCheck,
   Search,
@@ -44,7 +45,9 @@ import {
   FileCheck,
   RotateCcw,
   Ban,
-  Activity
+  Activity,
+  Zap,
+  Scale
 } from 'lucide-react';
 
 interface OrdresEnCoursTabProps {
@@ -73,6 +76,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   const [recherche, setRecherche] = useState<string>('');
   const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE'>('TOUS');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
+  const [filtrePrioritaireSeulement, setFiltrePrioritaireSeulement] = useState<boolean>(false);
+
+  // Modal Date de Livraison & Priorité OF
+  const [ofToEditDelai, setOfToEditDelai] = useState<SuiviOF | null>(null);
+  const [isEditDelaiModalOpen, setIsEditDelaiModalOpen] = useState<boolean>(false);
 
   // Modal Fiche de Transfert
   const [isFicheTransfertModalOpen, setIsFicheTransfertModalOpen] = useState<boolean>(false);
@@ -178,6 +186,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         if (filtreStatut !== 'TOUS' && of.statut !== filtreStatut) return false;
         // Filtre Famille
         if (filtreFamille !== 'TOUTES' && of.famille !== filtreFamille) return false;
+        // Filtre Commande Prioritaire
+        if (filtrePrioritaireSeulement && !of.estPrioritaire) return false;
         // Filtre Recherche texte
         if (recherche.trim()) {
           const q = recherche.toLowerCase().trim();
@@ -205,7 +215,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           ? String(va).localeCompare(String(vb))
           : String(vb).localeCompare(String(va));
       });
-  }, [suivisOF, filtreStatut, filtreFamille, recherche, sortKey, sortDir]);
+  }, [suivisOF, filtreStatut, filtreFamille, filtrePrioritaireSeulement, recherche, sortKey, sortDir]);
 
   // Statistiques globales
   const stats = useMemo(() => {
@@ -279,16 +289,16 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-5">
       {/* ── Entête & Titre ── */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
-            <ClipboardCheck className="w-6 h-6" />
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+            <ClipboardCheck className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2.5">
-              <h2 className="text-xl font-bold text-slate-100">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-100">
                 Ordres de Fabrication en Cours (Suivi OF)
               </h2>
               <span className="px-2.5 py-0.5 rounded-full bg-blue-950 border border-blue-800 text-blue-300 text-xs font-mono font-bold">
@@ -305,10 +315,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           {onNavigateToTab && (
             <button
               onClick={() => onNavigateToTab('monitoring')}
-              className="px-3.5 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-emerald-500/40 shadow-sm transition cursor-pointer"
+              className="px-3 py-1.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-emerald-500/40 shadow-sm transition cursor-pointer"
               title="Ouvrir le tableau de bord de monitoring (Stats Caissons 25/30/40, Tabliers 43/55 et délais)"
             >
-              <Activity className="w-4 h-4 text-emerald-400" />
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
               <span>📊 Monitoring Atelier</span>
             </button>
           )}
@@ -319,15 +329,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
               setSelectedFicheToView(null);
               setIsFicheTransfertModalOpen(true);
             }}
-            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-xl flex items-center gap-2 shadow-md shadow-amber-500/20 transition cursor-pointer"
+            className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-xl flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition cursor-pointer"
           >
-            <Truck className="w-4 h-4" />
+            <Truck className="w-3.5 h-3.5" />
             <span>Créer Fiche de Transfert</span>
           </button>
 
           <button
             onClick={onRefreshData}
-            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center gap-2 border border-slate-700 transition cursor-pointer shadow-sm"
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center gap-1.5 border border-slate-700 transition cursor-pointer shadow-sm"
           >
             <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
             <span>Actualiser</span>
@@ -336,10 +346,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       </div>
 
       {/* ── KPIs & Compteurs ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
         <div
           onClick={() => setFiltreStatut('TOUS')}
-          className={`p-4 rounded-xl border transition cursor-pointer ${
+          className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
             filtreStatut === 'TOUS'
               ? 'bg-slate-800/90 border-slate-600 shadow-md ring-1 ring-slate-500'
               : 'bg-slate-900 border-slate-800 hover:border-slate-700'
@@ -349,13 +359,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <span>Total Ordres (OF)</span>
             <ClipboardCheck className="w-4 h-4 text-slate-400" />
           </div>
-          <div className="text-2xl font-black text-slate-100 font-mono mt-1">{stats.total}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Toutes fiches confondues</div>
+          <div className="text-xl sm:text-2xl font-black text-slate-100 font-mono mt-1">{stats.total}</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Toutes fiches</div>
         </div>
 
         <div
           onClick={() => setFiltreStatut('EMIS')}
-          className={`p-4 rounded-xl border transition cursor-pointer ${
+          className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
             filtreStatut === 'EMIS'
               ? 'bg-blue-950/70 border-blue-500 shadow-md ring-1 ring-blue-500'
               : 'bg-slate-900 border-slate-800 hover:border-blue-900/60'
@@ -365,13 +375,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <span>📤 Émis (Atelier)</span>
             <Clock className="w-4 h-4 text-blue-400" />
           </div>
-          <div className="text-2xl font-black text-blue-400 font-mono mt-1">{stats.emis}</div>
+          <div className="text-xl sm:text-2xl font-black text-blue-400 font-mono mt-1">{stats.emis}</div>
           <div className="text-[11px] text-slate-500 mt-0.5">En cours de découpe</div>
         </div>
 
         <div
           onClick={() => setFiltreStatut('RETOUR_EN_ATTENTE')}
-          className={`p-4 rounded-xl border transition cursor-pointer ${
+          className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
             filtreStatut === 'RETOUR_EN_ATTENTE'
               ? 'bg-amber-950/70 border-amber-500 shadow-md ring-1 ring-amber-500'
               : 'bg-slate-900 border-slate-800 hover:border-amber-900/60'
@@ -381,13 +391,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <span>📋 Retour Reçu</span>
             <AlertCircle className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-amber-400 font-mono mt-1">{stats.retourEnAttente}</div>
+          <div className="text-xl sm:text-2xl font-black text-amber-400 font-mono mt-1">{stats.retourEnAttente}</div>
           <div className="text-[11px] text-slate-500 mt-0.5">À corriger &amp; clôturer</div>
         </div>
 
         <div
           onClick={() => setFiltreStatut('CLOTURE')}
-          className={`p-4 rounded-xl border transition cursor-pointer ${
+          className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
             filtreStatut === 'CLOTURE'
               ? 'bg-emerald-950/70 border-emerald-500 shadow-md ring-1 ring-emerald-500'
               : 'bg-slate-900 border-slate-800 hover:border-emerald-900/60'
@@ -397,7 +407,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <span>✅ Clôturés</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-2xl font-black text-emerald-400 font-mono mt-1">{stats.clotures}</div>
+          <div className="text-xl sm:text-2xl font-black text-emerald-400 font-mono mt-1">{stats.clotures}</div>
           <div className="text-[11px] text-slate-500 mt-0.5">Prêts pour transfert</div>
         </div>
 
@@ -406,34 +416,34 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             setSelectedFicheToView(null);
             setIsFicheTransfertModalOpen(true);
           }}
-          className="p-4 rounded-xl border bg-amber-950/40 border-amber-500/40 hover:border-amber-400 transition cursor-pointer"
+          className="p-3 sm:p-3.5 rounded-xl border bg-amber-950/40 border-amber-500/40 hover:border-amber-400 transition cursor-pointer"
         >
           <div className="flex items-center justify-between text-xs text-amber-400 font-bold">
             <span>🚚 Fiches Transfert</span>
             <Truck className="w-4 h-4 text-amber-400" />
           </div>
-          <div className="text-2xl font-black text-amber-300 font-mono mt-1">{fichesTransfert.length}</div>
+          <div className="text-xl sm:text-2xl font-black text-amber-300 font-mono mt-1">{fichesTransfert.length}</div>
           <div className="text-[11px] text-amber-400/80 mt-0.5">Bons de livraison client</div>
         </div>
       </div>
 
       {/* ── Filtres & Barre de Recherche ── */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-3.5 flex flex-wrap items-center justify-between gap-2.5 shadow-sm">
         <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
           {/* Recherche */}
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
             <input
               type="text"
               placeholder="Rechercher par N° Commande, Client, Titre, Donneur d'ordre..."
               value={recherche}
               onChange={e => setRecherche(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500 font-medium"
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500 font-medium"
             />
             {recherche && (
               <button
                 onClick={() => setRecherche('')}
-                className="absolute right-2.5 top-2 text-slate-400 hover:text-white"
+                className="absolute right-2.5 top-1.5 text-slate-400 hover:text-white"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -444,7 +454,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           <select
             value={filtreFamille}
             onChange={e => setFiltreFamille(e.target.value)}
-            className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500"
+            className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500"
           >
             <option value="TOUTES">Toutes les Familles</option>
             <option value="TABLIER">Tablier (Lames)</option>
@@ -458,7 +468,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             onClick={handleReparerFamilles}
             disabled={isReparing}
             title="Analyser les articles et rétablir automatiquement la vraie famille (Tablier, Moustiquaire, Précadre) pour chaque OF"
-            className="px-3 py-2 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            className="px-2.5 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <Sparkles className={`w-3.5 h-3.5 text-indigo-400 ${isReparing ? 'animate-spin' : ''}`} />
             <span>{isReparing ? 'Analyse...' : 'Corriger Familles'}</span>
@@ -466,12 +476,12 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         </div>
 
         {/* Boutons rapides Statut */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
           {(['TOUS', 'EMIS', 'RETOUR_EN_ATTENTE', 'CLOTURE', 'LIVRE'] as const).map(st => (
             <button
               key={st}
               onClick={() => setFiltreStatut(st)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition border cursor-pointer ${
+              className={`px-2.5 py-1 text-xs font-bold rounded-lg transition border cursor-pointer ${
                 filtreStatut === st
                   ? st === 'EMIS'
                     ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
@@ -485,12 +495,33 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white hover:border-slate-700'
               }`}
             >
-              {st === 'TOUS' ? 'Tous' : st === 'EMIS' ? '📤 Émis (En cours)' : st === 'RETOUR_EN_ATTENTE' ? '📋 Retour reçu' : st === 'CLOTURE' ? '✅ Clôturés' : '🚚 Livrés'}
+              {st === 'TOUS' ? 'Tous' : st === 'EMIS' ? '📤 Émis' : st === 'RETOUR_EN_ATTENTE' ? '📋 Retour reçu' : st === 'CLOTURE' ? '✅ Clôturés' : '🚚 Livrés'}
               <span className="ml-1 text-[10px] font-mono">
                 ({suivisOF.filter(o => st === 'TOUS' || o.statut === st).length})
               </span>
             </button>
           ))}
+
+          {/* Bouton Filtre Commandes Prioritaires */}
+          <button
+            onClick={() => setFiltrePrioritaireSeulement(!filtrePrioritaireSeulement)}
+            className={`px-2.5 py-1 text-xs font-bold rounded-lg transition border cursor-pointer flex items-center gap-1 ${
+              filtrePrioritaireSeulement
+                ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
+                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-rose-300 hover:border-rose-500/40'
+            }`}
+            title="Filtrer uniquement les commandes prioritaires / urgentes"
+          >
+            <Zap className={`w-3 h-3 ${filtrePrioritaireSeulement ? 'fill-white text-white' : 'text-rose-400'}`} />
+            <span>Prioritaires</span>
+            {suivisOF.filter(o => o.estPrioritaire).length > 0 && (
+              <span className={`ml-1 text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full ${
+                filtrePrioritaireSeulement ? 'bg-white text-rose-600' : 'bg-rose-500/20 text-rose-300'
+              }`}>
+                {suivisOF.filter(o => o.estPrioritaire).length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -516,15 +547,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
               <tr>
-                <SortHeader col="numeroEmission" label="Ordre Séquence" className="w-28 text-center" />
-                <SortHeader col="numCommande" label="N° Commande" className="w-36" />
-                <SortHeader col="nomClient" label="Client / Donneur d'Ordre" />
-                <SortHeader col="famille" label="Famille & Section" />
-                <SortHeader col="dateEmission" label="Date Émission" className="w-32" />
-                <th className="py-3 px-3.5 text-center w-48">Délai Prévisionnel</th>
-                <th className="py-3 px-3.5 text-center w-36">Barres &amp; Chutes</th>
-                <SortHeader col="statut" label="Statut" className="w-36 text-center" />
-                <th className="py-3 px-3.5 text-center w-52">Actions Atelier</th>
+                <SortHeader col="numeroEmission" label="Ordre" className="w-24 text-center px-2" />
+                <SortHeader col="numCommande" label="N° Commande" className="w-32 px-2.5" />
+                <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
+                <SortHeader col="famille" label="Famille & Section" className="px-3 min-w-[170px]" />
+                <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
+                <th className="py-2.5 px-2 text-center w-36">Délai Prévisionnel</th>
+                <th className="py-2.5 px-2 text-center w-28">Barres &amp; Chutes</th>
+                <SortHeader col="statut" label="Statut" className="w-28 px-2 text-center" />
+                <th className="py-2.5 px-2 text-center w-48">Actions Atelier</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
@@ -559,7 +590,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       }`}
                     >
                       {/* N° Ordre / Séquence d'Émission Atelier */}
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-2.5 px-2 text-center">
                         <div className="inline-flex flex-col items-center">
                           <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 border border-amber-300 font-mono font-black text-xs shadow-xs tracking-wider">
                             {of.codeOF || (of.numeroEmission ? `OF-${String(of.numeroEmission).padStart(3, '0')}` : 'OF-???')}
@@ -571,8 +602,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       </td>
 
                       {/* N° Commande */}
-                      <td className="py-3 px-3.5 font-mono font-bold text-amber-300">
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                      <td className="py-2.5 px-2.5 font-mono font-bold text-amber-300">
+                        <div className="flex items-center gap-1 flex-wrap">
                           {of.numCommande
                             .split(/[\s,+/]+/)
                             .map(c => c.trim())
@@ -597,7 +628,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       </td>
 
                       {/* Client / Donneur d'ordre */}
-                      <td className="py-3 px-3.5">
+                      <td className="py-2.5 px-3">
                         <div className="font-bold text-slate-200">{of.nomClient || '—'}</div>
                         {of.donneurOrdre && (
                           <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
@@ -608,9 +639,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       </td>
 
                       {/* Famille & Section */}
-                      <td className="py-3 px-3.5">
+                      <td className="py-2.5 px-3">
                         <div className="flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
                             of.famille === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
                             of.famille === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800' :
                             of.famille === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
@@ -618,15 +649,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           }`}>
                             {of.famille}
                           </span>
-                          <span className="font-semibold text-slate-300 text-xs truncate max-w-[200px]" title={of.titreSection}>
+                          <span className="font-semibold text-slate-300 text-xs truncate max-w-[220px]" title={of.titreSection}>
                             {of.titreSection}
                           </span>
                         </div>
                       </td>
 
                       {/* Date Émission & Retour */}
-                      <td className="py-3 px-3.5 font-mono text-slate-400 text-xs">
-                        <div className="flex items-center gap-1">
+                      <td className="py-2.5 px-2 font-mono text-slate-400 text-xs text-center">
+                        <div className="flex items-center justify-center gap-1">
                           <Calendar className="w-3 h-3 text-slate-500" />
                           <span>{of.dateEmission}</span>
                         </div>
@@ -637,34 +668,56 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                         )}
                       </td>
 
-                      {/* Délai Prévisionnel */}
-                      <td className="py-3 px-3 text-center font-mono">
+                      {/* Délai Prévisionnel & Date de Livraison */}
+                      <td className="py-2.5 px-2 text-center font-mono">
                         {(() => {
                           const texteLivraison = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
+                          const isPrioritaire = !!of.estPrioritaire;
                           return (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/35 text-amber-300 font-mono font-bold text-xs shadow-xs">
-                              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              <span className="tracking-tight">{texteLivraison}</span>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOfToEditDelai(of);
+                                setIsEditDelaiModalOpen(true);
+                              }}
+                              className="group inline-flex flex-col items-center gap-1 cursor-pointer transition p-1 rounded-lg hover:bg-slate-800/80 max-w-full"
+                              title="Cliquer pour modifier la date de livraison ou définir la priorité atelier"
+                            >
+                              {isPrioritaire && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black uppercase tracking-wide animate-pulse">
+                                  <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
+                                  <span>Prioritaire</span>
+                                </span>
+                              )}
+                              <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border font-mono font-bold text-[11px] shadow-xs whitespace-nowrap transition ${
+                                isPrioritaire
+                                  ? 'bg-rose-950/40 border-rose-500/50 text-rose-200 group-hover:border-rose-400 group-hover:bg-rose-900/50'
+                                  : 'bg-amber-500/15 border-amber-500/35 text-amber-300 group-hover:border-amber-400 group-hover:bg-amber-500/25'
+                              }`}>
+                                <Clock className={`w-3 h-3 ${isPrioritaire ? 'text-rose-400' : 'text-amber-400'} shrink-0`} />
+                                <span>{texteLivraison}</span>
+                                <Edit2 className="w-2.5 h-2.5 ml-0.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-300" />
+                              </div>
+                            </button>
                           );
                         })()}
                       </td>
 
                       {/* Barres & Chutes */}
-                      <td className="py-3 px-3.5 text-center font-mono">
+                      <td className="py-2.5 px-2 text-center font-mono whitespace-nowrap">
                         <div className="text-xs font-bold text-slate-200">
-                          <span className="text-sky-400">{of.totalBarresNeuvesPrevu}</span> barres
+                          <span className="text-sky-400">{of.totalBarresNeuvesPrevu}</span> b.
                           <span className="text-slate-500 mx-1">•</span>
-                          <span className="text-emerald-400">{of.totalChutesUtiliseesPrevu}</span> chutes
+                          <span className="text-emerald-400">{of.totalChutesUtiliseesPrevu}</span> ch.
                         </div>
                         <div className="text-[10px] text-slate-500">
-                          {of.lignesRetour.length} ligne(s) débit
+                          {of.lignesRetour.length} ligne(s)
                         </div>
                       </td>
 
                       {/* Statut */}
-                      <td className="py-3 px-3.5 text-center">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                      <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
                           isEmis
                             ? 'bg-blue-950 text-blue-300 border-blue-700/60'
                             : isAttente
@@ -678,48 +731,62 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           {isCloture && <CheckCircle2 className="w-3 h-3" />}
                           {isLivre && <Truck className="w-3 h-3 text-teal-400" />}
                           <span>
-                            {isEmis ? 'Émis (En cours)' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
+                            {isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
                           </span>
                         </span>
                       </td>
 
                       {/* Actions */}
-                      <td className="py-3 px-3.5 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
+                      <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1">
                           {/* Bouton Marquer Retour Reçu si EMIS */}
                           {isEmis && (
                             <button
                               onClick={() => handleMarquerRetourRecu(of)}
                               title="Marquer comme retour reçu de l'atelier"
-                              className="px-2.5 py-1.5 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-700/50 rounded-lg text-xs font-bold transition cursor-pointer"
+                              className="px-2 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-700/50 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1"
                             >
-                              <Clock className="w-3.5 h-3.5 inline mr-1" />
+                              <Clock className="w-3 h-3" />
                               <span>Reçu</span>
                             </button>
                           )}
 
                           {/* Bouton Saisir Corrections & Clôturer si non clôturé */}
                           {!isCloture && !isLivre ? (
-                            <button
-                              onClick={() => {
-                                setSelectedSuiviForRetour(of);
-                                setIsRetourModalOpen(true);
-                              }}
-                              title="Saisir les annotations réelles de l'opérateur et ajuster le stock"
-                              className="px-3 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white rounded-lg text-xs font-black flex items-center gap-1 shadow-sm transition cursor-pointer"
-                            >
-                              <Send className="w-3.5 h-3.5" />
-                              <span>Clôturer</span>
-                            </button>
+                            <>
+                              <button
+                                onClick={() => {
+                                  if (onNavigateToTab) {
+                                    onNavigateToTab('cockpit-cloture');
+                                  }
+                                }}
+                                title="Clôturer rapidement via le nouveau Cockpit Bilan Matière 100% Fiable"
+                                className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
+                              >
+                                <Scale className="w-3 h-3" />
+                                <span>Cockpit V2</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedSuiviForRetour(of);
+                                  setIsRetourModalOpen(true);
+                                }}
+                                title="Saisir les annotations réelles de l'opérateur et ajuster le stock (Modal classique)"
+                                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer border border-slate-700"
+                              >
+                                <Send className="w-3 h-3" />
+                                <span>Classique</span>
+                              </button>
+                            </>
                           ) : (
                             <button
                               onClick={() => {
                                 setSelectedSuiviForDetails(of);
                               }}
-                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer border border-slate-700"
                               title="Voir les détails de l'OF"
                             >
-                              <Eye className="w-3.5 h-3.5" />
+                              <Eye className="w-3 h-3" />
                               <span>Détails</span>
                             </button>
                           )}
@@ -728,11 +795,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           {(isCloture || isLivre) && (
                             <button
                               onClick={() => handleRollbackCloture(of)}
-                              className="px-2 py-1.5 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                              className="px-2 py-1 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
                               title="Annuler la clôture : restituer le stock et rouvrir l'OF pour correction"
                             >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                              <span className="hidden xl:inline">Rouvrir</span>
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Rouvrir</span>
                             </button>
                           )}
 
@@ -740,7 +807,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           {(isEmis || isAttente) && of.statut !== 'ANNULE' && (
                             <button
                               onClick={() => handleAnnulerOF(of)}
-                              className="p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                              className="p-1 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer"
                               title="Annuler cet OF et libérer ses réservations"
                             >
                               <Ban className="w-3.5 h-3.5" />
@@ -759,10 +826,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                                   setSelectedSuiviForDetails(of);
                                 }
                               }}
-                              className="px-2.5 py-1.5 bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-lg text-xs font-bold flex items-center gap-1 transition cursor-pointer"
+                              className="px-2 py-1 bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
                               title="Voir la Fiche de Transfert associée"
                             >
-                              <Truck className="w-3.5 h-3.5" />
+                              <Truck className="w-3 h-3" />
                               <span>Fiche</span>
                             </button>
                           )}
@@ -770,7 +837,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           {/* Bouton Supprimer */}
                           <button
                             onClick={() => handleSupprimerOF(of)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
                             title={isCloture || isLivre ? "Supprimer cet OF (restaure automatiquement le stock)" : "Supprimer cet OF"}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1186,6 +1253,20 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         clientCodifications={clientCodifications}
         onSaved={onRefreshData}
         ficheToView={selectedFicheToView}
+      />
+
+      {/* ── Modal Modification Date de Livraison & Priorité ── */}
+      <ModifierDelaiLivraisonModal
+        isOpen={isEditDelaiModalOpen}
+        onClose={() => {
+          setIsEditDelaiModalOpen(false);
+          setOfToEditDelai(null);
+        }}
+        of={ofToEditDelai}
+        suivisOF={suivisOF}
+        onSaved={() => {
+          onRefreshData();
+        }}
       />
     </div>
   );

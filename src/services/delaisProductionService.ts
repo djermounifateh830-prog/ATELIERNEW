@@ -405,6 +405,37 @@ export class DelaisProductionService {
       };
     }
 
+    // Si une date personnalisée ou prioritaire a été définie pour cet OF
+    if (targetOF.dateLivraisonPrevisionnelle) {
+      let dateLiv: Date | null = null;
+      if (targetOF.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(targetOF.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime())) dateLiv = d;
+      }
+      if (!dateLiv) {
+        const matchDate = targetOF.dateLivraisonPrevisionnelle.match(/(\d{1,2})\/(\d{1,2})/);
+        if (matchDate) {
+          const now = new Date();
+          dateLiv = new Date(now.getFullYear(), parseInt(matchDate[2], 10) - 1, parseInt(matchDate[1], 10));
+        } else {
+          dateLiv = new Date();
+        }
+      }
+      const prefix = targetOF.estPrioritaire ? '⚡ ' : '';
+      const texteAffiche = targetOF.dateLivraisonPrevisionnelle.startsWith('⚡') || targetOF.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
+        ? targetOF.dateLivraisonPrevisionnelle
+        : targetOF.estPrioritaire
+        ? `⚡ PRIORITAIRE : ${targetOF.dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')}`
+        : targetOF.dateLivraisonPrevisionnelle;
+
+      return {
+        dateLivraison: dateLiv,
+        texteFormatte: texteAffiche,
+        dateLivraisonISO: targetOF.dateLivraisonPrevisionnelleISO || this.toISODateString(dateLiv),
+        joursOuvresRequis: targetOF.delaiPrevisionnelJours || (targetOF.estPrioritaire ? 1 : 2)
+      };
+    }
+
     const params = paramsCustom || this.getParametres();
     const fam = targetOF.famille || 'CAISSON';
     const famKey: FamilleProduit = ((fam as string) === 'SOUS_FACE' ? 'CAISSON' : fam) as FamilleProduit;
@@ -415,32 +446,38 @@ export class DelaisProductionService {
     const targetSeq = targetOF.numeroEmission || 999999;
 
     let piecesEnFileAttente = 0;
-    allSuivisOF.forEach(of => {
-      // Ne considérer que les OFs encore en cours de fabrication
-      if (of.id === targetOF.id) return;
-      if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
+    // Si l'OF est prioritaire, il ne subit pas la file d'attente des commandes ordinaires
+    if (!targetOF.estPrioritaire) {
+      allSuivisOF.forEach(of => {
+        // Ne considérer que les OFs encore en cours de fabrication
+        if (of.id === targetOF.id) return;
+        if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
 
-      const ofFam = (of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille;
-      if (ofFam === famKey) {
-        const otherSeq = of.numeroEmission || 0;
-        // Si l'autre OF est antérieur dans la file FIFO
-        if (otherSeq < targetSeq) {
-          piecesEnFileAttente += this.compterPiecesOF(of);
+        const ofFam = (of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille;
+        if (ofFam === famKey) {
+          const otherSeq = of.numeroEmission || 0;
+          // Si l'autre OF est prioritaire ou antérieur dans la file FIFO
+          if (of.estPrioritaire || otherSeq < targetSeq) {
+            piecesEnFileAttente += this.compterPiecesOF(of);
+          }
         }
-      }
-    });
+      });
+    }
 
     const piecesTarget = this.compterPiecesOF(targetOF);
     const totalPieces = piecesEnFileAttente + piecesTarget;
     const capaciteJour = configFam.capaciteJournalierePieces || 120;
     const joursRequis = totalPieces / capaciteJour + (configFam.delaiFixeJours || 0);
 
-    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursRequis, params.joursOuvres);
+    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, targetOF.estPrioritaire ? Math.min(1, joursRequis) : joursRequis, params.joursOuvres);
+    const texteDate = this.formaterDateLivraison(dateLivraison);
+    const texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
+
     return {
       dateLivraison,
-      texteFormatte: this.formaterDateLivraison(dateLivraison),
+      texteFormatte: texteFinal,
       dateLivraisonISO: this.toISODateString(dateLivraison),
-      joursOuvresRequis: Math.max(1, Math.ceil(joursRequis))
+      joursOuvresRequis: targetOF.estPrioritaire ? 1 : Math.max(1, Math.ceil(joursRequis))
     };
   }
 
@@ -463,6 +500,37 @@ export class DelaisProductionService {
         dateLivraisonFormattee: `LIVRÉ LE : ${dossier.dateLivraison}`,
         dateLivraisonISO: this.toISODateString(dLivre),
         joursOuvresMax: 0,
+        detailsParFamille: {}
+      };
+    }
+
+    // Si une date personnalisée ou prioritaire a été définie pour ce dossier
+    if (dossier.dateLivraisonPrevisionnelle) {
+      let dateLiv: Date | null = null;
+      if (dossier.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(dossier.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime())) dateLiv = d;
+      }
+      if (!dateLiv) {
+        const matchDate = dossier.dateLivraisonPrevisionnelle.match(/(\d{1,2})\/(\d{1,2})/);
+        if (matchDate) {
+          const now = new Date();
+          dateLiv = new Date(now.getFullYear(), parseInt(matchDate[2], 10) - 1, parseInt(matchDate[1], 10));
+        } else {
+          dateLiv = new Date();
+        }
+      }
+      const texteAffiche = dossier.dateLivraisonPrevisionnelle.startsWith('⚡') || dossier.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
+        ? dossier.dateLivraisonPrevisionnelle
+        : dossier.estPrioritaire
+        ? `⚡ PRIORITAIRE : ${dossier.dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')}`
+        : dossier.dateLivraisonPrevisionnelle;
+
+      return {
+        dateMaximale: dateLiv,
+        dateLivraisonFormattee: texteAffiche,
+        dateLivraisonISO: dossier.dateLivraisonPrevisionnelleISO || this.toISODateString(dateLiv),
+        joursOuvresMax: dossier.delaiPrevisionnelJours || (dossier.estPrioritaire ? 1 : 2),
         detailsParFamille: {}
       };
     }

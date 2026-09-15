@@ -10,6 +10,7 @@ import { DevisTab } from './components/tabs/DevisTab';
 import { DocumentationTab } from './components/tabs/DocumentationTab';
 import { HistoriqueTab } from './components/tabs/HistoriqueTab';
 import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
+import { ClotureCockpitTab } from './components/tabs/ClotureCockpitTab';
 import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
 import { StorageService } from './services/storage';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
@@ -120,7 +121,7 @@ export default function App() {
       />
 
       {/* Main Content Body (Full screen width exploited) */}
-      <main className="flex-1 w-full px-3 sm:px-5 lg:px-8 py-5">
+      <main className="flex-1 w-full px-2 sm:px-3 lg:px-4 py-3 sm:py-4">
         {activeTab === 'monitoring' && (
           <MonitoringAtelierTab
             dossiers={dossiers}
@@ -156,6 +157,18 @@ export default function App() {
             articles={articles}
             chutesBarres={chutesBarres}
             mapping={mapping}
+          />
+        )}
+
+        {activeTab === 'cockpit-cloture' && (
+          <ClotureCockpitTab
+            suivisOF={suivisOF}
+            dossiers={dossiers}
+            articles={articles}
+            chutesBarres={chutesBarres}
+            mapping={mapping}
+            onRefreshData={loadData}
+            onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
           />
         )}
 

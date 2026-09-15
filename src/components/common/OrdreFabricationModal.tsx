@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ResultatOptimisation, Article, PieceCoupee, BesoinMoustiquaire, 
-  ChuteMaille, SuiviOF, LigneRetourOF, FamilleProduit,
+  ChuteMaille, SuiviOF, LigneRetourOF, FamilleProduit, StatutOF,
   MappingChutes, ChuteReserveeOF, BarreReserveeOF, ChuteMailleReserveeOF,
   ParametresOptimisationMaille
 } from '../../types';
@@ -10,7 +10,8 @@ import { detecterAgence } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
 import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
-import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock } from 'lucide-react';
+import { ModifierDelaiLivraisonModal } from './ModifierDelaiLivraisonModal';
+import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock, Edit2, Zap } from 'lucide-react';
 
 export type FamilleOF = 'CAISSON' | 'TABLIER' | 'PRECADRE' | 'MOUSTIQUAIRE';
 
@@ -473,6 +474,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   const [emittedCode, setEmittedCode] = useState<string | null>(codeOF || null);
   const [nextSequencePreview, setNextSequencePreview] = useState<number | null>(null);
   const [dateLivraisonPrevisionnelleAffichee, setDateLivraisonPrevisionnelleAffichee] = useState<string>('');
+  const [estPrioritaire, setEstPrioritaire] = useState<boolean>(false);
+  const [motifPriorite, setMotifPriorite] = useState<string>('');
+  const [dateLivraisonISO, setDateLivraisonISO] = useState<string>('');
+  const [isEditingDelai, setIsEditingDelai] = useState<boolean>(false);
+  const [allOfsState, setAllOfsState] = useState<SuiviOF[]>([]);
+  const [matchedOf, setMatchedOf] = useState<SuiviOF | null>(null);
 
   useEffect(() => {
     if (numeroEmission) setEmittedSequence(numeroEmission);
@@ -482,6 +489,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     StorageService.getSuivisOF().then(ofs => {
+      setAllOfsState(ofs);
       // Détection de la famille active
       const familleRecherche = detecterFamilleOF(famille, sections, lignesMoustiquaires, titreProduit, refCommande);
 
@@ -493,27 +501,41 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         setEmittedSequence(match.numeroEmission);
         setEmittedCode(match.codeOF || `OF-${String(match.numeroEmission).padStart(3, '0')}`);
         setOfEmis(true);
+        setMatchedOf(match);
+        if (match.estPrioritaire) setEstPrioritaire(true);
+        if (match.motifPriorite) setMotifPriorite(match.motifPriorite);
+        if (match.dateLivraisonPrevisionnelleISO) setDateLivraisonISO(match.dateLivraisonPrevisionnelleISO);
+        if (match.dateLivraisonPrevisionnelle) {
+          setDateLivraisonPrevisionnelleAffichee(match.dateLivraisonPrevisionnelle);
+        } else {
+          const estim = DelaisProductionService.estimerDelaiOF(match, ofs);
+          setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
+          setDateLivraisonISO(estim.dateLivraisonISO);
+        }
       } else {
         const maxNum = ofs.reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
         setNextSequencePreview(maxNum + 1);
-      }
+        setMatchedOf(null);
 
-      // Calcul prévisionnel de livraison
-      const ofRef: SuiviOF = match || {
-        id: 'preview',
-        numCommande: refCommande || 'CMD',
-        nomClient: nomClient || agenceInfo.nom || '',
-        donneurOrdre: donneurOrdre || agenceInfo.nom || '',
-        famille: familleRecherche,
-        statut: 'EMIS',
-        dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
-        titreSection: titreProduit || '',
-        totalBarresNeuvesPrevu: 0,
-        totalChutesUtiliseesPrevu: 0,
-        lignesRetour: []
-      };
-      const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
-      setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
+        // Calcul prévisionnel initial de livraison
+        const ofRef: SuiviOF = {
+          id: 'preview',
+          numCommande: refCommande || 'CMD',
+          nomClient: nomClient || agenceInfo.nom || '',
+          donneurOrdre: donneurOrdre || agenceInfo.nom || '',
+          famille: familleRecherche,
+          statut: 'EMIS',
+          dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
+          titreSection: titreProduit || '',
+          totalBarresNeuvesPrevu: 0,
+          totalChutesUtiliseesPrevu: 0,
+          lignesRetour: [],
+          estPrioritaire
+        };
+        const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
+        setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
+        setDateLivraisonISO(estim.dateLivraisonISO);
+      }
     }).catch(() => {});
   }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande]);
 
@@ -1033,16 +1055,6 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       font-family: Arial, sans-serif !important;
       box-sizing: border-box !important;
     }
-    .print-footer-page-num {
-      font-family: Consolas, monospace !important;
-      font-weight: 900 !important;
-      border: 1.5px solid #000 !important;
-      padding: 1px 8px !important;
-      border-radius: 4px !important;
-    }
-    .print-footer-page-num::after {
-      content: "Page " counter(page);
-    }
     .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; border-bottom:3px solid #000; padding-bottom:6px; }
     .header-left h1 { font-size:15px; font-weight:900; margin:0 0 4px 0; text-transform:uppercase; color:#000; letter-spacing:0.5px; }
     .header-left .cmd-highlight { font-size:22px; font-weight:900; font-family:Consolas,monospace; color:#000; background:#fff; padding:2px 8px; border:2px solid #000; border-radius:4px; display:inline-block; }
@@ -1088,10 +1100,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     </div>
   </div>
 
+  ${estPrioritaire ? `
+  <div style="background:#fee2e2;border:2.5px solid #dc2626;color:#991b1b;padding:6px 12px;font-weight:900;font-size:14px;text-align:center;border-radius:4px;margin-bottom:8px;letter-spacing:1px;text-transform:uppercase;">
+    ⚡ COMMANDE PRIORITAIRE ATELIER ⚡ ${motifPriorite ? `— ${motifPriorite}` : ''}
+  </div>` : ''}
+
   <div class="client-info-bar">
     <div>DONNEUR D'ORDRE : <span style="color:#000;font-weight:900;font-size:15px;">${agenceInfo.nom}</span></div>
     <div>CLIENT FINAL : <span style="font-weight:900;font-size:16px;color:#000;">${clientAffiche}</span></div>
     <div>DATE : <span style="font-weight:900;font-size:15px;color:#000;font-family:Consolas,monospace;">${dateAffichee}</span></div>
+    <div style="background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};border:1.5px solid #000;padding:2px 8px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
   </div>
 
   ${(matieresNeuvesFiltrees.length > 0 || chutesADestoquer.length > 0 || accessoiresFiltres.length > 0 || toilePlisseeHTML) ? `
@@ -1190,8 +1208,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             <span><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</span>
           </div>
           <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
-          <div style="white-space:nowrap;flex-shrink:0;padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:#fef3c7;font-family:Consolas,monospace;font-size:11px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
-          <div style="white-space:nowrap;flex-shrink:0;"><span class="print-footer-page-num"></span></div>
+          <div style="white-space:nowrap;flex-shrink:0;padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};font-family:Consolas,monospace;font-size:11px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
+          <div style="white-space:nowrap;flex-shrink:0;">
+            <span style="font-family:Consolas,monospace;font-weight:900;border:1.5px solid #000;padding:1px 8px;border-radius:3px;background:#fff;font-size:11px;">
+              ${currentCodeOFAffiche} • Page Atelier
+            </span>
+          </div>
         </div>
       </td>
     </tr>
@@ -1412,13 +1434,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       chutesReservees,
       barresReservees,
       chutesMailleReservees,
-      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee
+      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee,
+      dateLivraisonPrevisionnelleISO: dateLivraisonISO || undefined,
+      estPrioritaire: estPrioritaire,
+      motifPriorite: estPrioritaire ? motifPriorite : undefined
     };
 
     try {
       await StorageService.upsertSuiviOF(suivi);
       setEmittedSequence(seqNum);
       setEmittedCode(finalCodeOF);
+      setMatchedOf(suivi);
 
       // Mettre à jour automatiquement le statut des dossiers correspondants vers 'EN_COURS'
       try {
@@ -1438,9 +1464,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           const matches = cmdRefs.some(ref => ref && (dRef.includes(ref) || ref.includes(dRef))) ||
             (nomClient && d.nomClientFinal && d.nomClientFinal.trim().toLowerCase() === nomClient.trim().toLowerCase());
 
-          if (matches && (d.statut === 'EN_ATTENTE' || d.statut === 'BROUILLON' || !d.statut)) {
+          if (matches) {
             hasUpdates = true;
-            return { ...d, statut: 'EN_COURS' as const };
+            return {
+              ...d,
+              statut: (d.statut === 'EN_ATTENTE' || d.statut === 'BROUILLON' || !d.statut) ? ('EN_COURS' as const) : d.statut,
+              estPrioritaire: estPrioritaire || d.estPrioritaire,
+              motifPriorite: estPrioritaire ? (motifPriorite || d.motifPriorite) : d.motifPriorite,
+              dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee || d.dateLivraisonPrevisionnelle,
+              dateLivraisonPrevisionnelleISO: dateLivraisonISO || d.dateLivraisonPrevisionnelleISO
+            };
           }
           return d;
         });
@@ -1699,6 +1732,37 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     );
   };
 
+  const ofCourantPourDelai: SuiviOF = useMemo(() => {
+    return matchedOf || {
+      id: `of-temp-${refCommande || 'CMD'}`,
+      numeroEmission: currentSequenceNum,
+      codeOF: currentCodeOFAffiche,
+      numCommande: refCommande || 'CMD',
+      nomClient: nomClient || 'CLIENT',
+      donneurOrdre: donneurOrdre || agenceInfo.nom || '',
+      famille: detecterFamilleOF(famille, sections, lignesMoustiquaires, titreProduit, refCommande),
+      titreSection: titreProduit || 'Fiche de Coupe',
+      statut: (matchedOf?.statut || 'EMIS') as StatutOF,
+      dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
+      lignesRetour: [],
+      totalBarresNeuvesPrevu: totalBarresNeuvesToutesSections,
+      totalChutesUtiliseesPrevu: totalChutesRecycleesToutesSections,
+      estPrioritaire,
+      motifPriorite,
+      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee,
+      dateLivraisonPrevisionnelleISO: dateLivraisonISO
+    };
+  }, [matchedOf, refCommande, currentSequenceNum, currentCodeOFAffiche, nomClient, donneurOrdre, agenceInfo.nom, famille, sections, lignesMoustiquaires, titreProduit, ofEmis, dateCommande, totalBarresNeuvesToutesSections, totalChutesRecycleesToutesSections, estPrioritaire, motifPriorite, dateLivraisonPrevisionnelleAffichee, dateLivraisonISO]);
+
+  const handleDelaiSaved = (updatedOF: SuiviOF) => {
+    setEstPrioritaire(!!updatedOF.estPrioritaire);
+    setMotifPriorite(updatedOF.motifPriorite || '');
+    setDateLivraisonPrevisionnelleAffichee(updatedOF.dateLivraisonPrevisionnelle || '');
+    setDateLivraisonISO(updatedOF.dateLivraisonPrevisionnelleISO || '');
+    setMatchedOf(updatedOF);
+    setIsEditingDelai(false);
+  };
+
   if (!isOpen) return null;
 
   return createPortal(
@@ -1749,16 +1813,6 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             align-items: center !important;
             box-sizing: border-box !important;
             font-family: Arial, Helvetica, sans-serif !important;
-          }
-          .print-footer-page-num {
-            font-family: Consolas, monospace !important;
-            font-weight: 900 !important;
-            border: 1.5px solid #000000 !important;
-            padding: 1px 8px !important;
-            border-radius: 4px !important;
-          }
-          .print-footer-page-num::after {
-            content: "Page " counter(page);
           }
           html, body {
             height: auto !important;
@@ -2000,6 +2054,19 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 </div>
               </div>
 
+              {/* Bannière de Priorité Atelier */}
+              {estPrioritaire && (
+                <div className="bg-rose-600 text-white font-black text-xs sm:text-sm uppercase tracking-widest text-center py-2 px-4 rounded-lg border-2 border-black flex items-center justify-center gap-2 shadow-xs">
+                  <Zap className="w-4 h-4 fill-white shrink-0" />
+                  <span>⚡ COMMANDE PRIORITAIRE ATELIER ⚡</span>
+                  {motifPriorite && (
+                    <span className="font-mono text-xs text-rose-100 font-normal lowercase bg-rose-700/60 px-2 py-0.5 rounded">
+                      ({motifPriorite})
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Barre Client & Date & Livraison avec police augmentée */}
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-white border-2 border-black p-3 rounded-lg text-sm text-black">
                 <div>
@@ -2014,9 +2081,33 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   <div className="text-[11px] text-slate-600 uppercase font-black tracking-wider">Date Commande</div>
                   <div className="font-black text-black text-base sm:text-lg font-mono">{dateAffichee}</div>
                 </div>
-                <div className="bg-amber-100/90 border-2 border-black p-2 rounded text-center flex flex-col justify-center">
-                  <div className="text-[10px] text-amber-900 uppercase font-black tracking-wider">Date Livraison Estimée</div>
-                  <div className="font-black text-black text-xs sm:text-sm font-mono tracking-tight mt-0.5">{dateLivraisonPrevisionnelleAffichee || 'CALCUL EN COURS'}</div>
+                <div className={`border-2 p-2 rounded text-center flex flex-col justify-center relative transition ${
+                  estPrioritaire ? 'bg-rose-100 border-rose-600' : 'bg-amber-100/90 border-black'
+                }`}>
+                  <div className="flex items-center justify-between gap-1 mb-0.5">
+                    <span className={`text-[10px] uppercase font-black tracking-wider ${
+                      estPrioritaire ? 'text-rose-900' : 'text-amber-900'
+                    }`}>
+                      {estPrioritaire ? '⚡ Livraison Prioritaire' : 'Date Livraison Estimée'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingDelai(true)}
+                      className="print:hidden text-[10px] px-1.5 py-0.5 rounded bg-black text-white hover:bg-slate-800 font-bold transition flex items-center gap-1 cursor-pointer shadow-xs"
+                      title="Modifier la date ou définir comme commande prioritaire"
+                    >
+                      <Edit2 className="w-2.5 h-2.5" />
+                      <span>Modifier</span>
+                    </button>
+                  </div>
+                  <div className="font-black text-black text-xs sm:text-sm font-mono tracking-tight mt-0.5">
+                    {dateLivraisonPrevisionnelleAffichee || 'CALCUL EN COURS'}
+                  </div>
+                  {motifPriorite && estPrioritaire && (
+                    <div className="text-[10px] text-rose-800 font-semibold italic truncate mt-0.5" title={motifPriorite}>
+                      "{motifPriorite}"
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2280,13 +2371,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                         <span className="font-bold text-slate-800">COMMANDE N° :</span>
                         <span className="font-mono font-black text-black">{cmdAffichee}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded border-2 border-black bg-amber-100 font-mono font-black text-black text-xs">
+                      <div className={`flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded border-2 border-black font-mono font-black text-black text-xs ${
+                        estPrioritaire ? 'bg-rose-200' : 'bg-amber-100'
+                      }`}>
                         <Clock className="w-3.5 h-3.5 text-black print:hidden" />
                         <span>{dateLivraisonPrevisionnelleAffichee}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="print-footer-page-num font-mono font-black text-black border-2 border-black px-2 py-0.5 rounded">
-                          <span className="print:hidden">Page 1</span>
+                        <span className="font-mono font-black text-black border-2 border-black px-2.5 py-0.5 rounded bg-white text-xs">
+                          {currentCodeOFAffiche} • Page Atelier
                         </span>
                       </div>
                     </div>
@@ -2297,6 +2390,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Modal interactif pour modifier la date de livraison et définir la commande comme prioritaire */}
+      {isEditingDelai && (
+        <ModifierDelaiLivraisonModal
+          isOpen={isEditingDelai}
+          onClose={() => setIsEditingDelai(false)}
+          of={ofCourantPourDelai}
+          suivisOF={allOfsState}
+          onSaved={handleDelaiSaved}
+        />
+      )}
     </div>,
     document.body
   );

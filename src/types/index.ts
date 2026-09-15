@@ -22,6 +22,15 @@ export interface ChuteItem {
   reserve?: number; // Quantité actuellement réservée / engagée sur des OFs émis
 }
 
+export interface ChuteBarre {
+  id?: string;
+  sheet_name?: string;
+  longueur: number;
+  quantite: number;
+  quantitePhysique?: number;
+  reserve?: number;
+}
+
 export interface ChuteMaille {
   id?: string;
   dimension_fixe: number; // en mm (ou cm converti en mm)
@@ -260,6 +269,8 @@ export interface DossierCommandeGlobal {
   dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
   dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
+  estPrioritaire?: boolean;  // Commande prioritaire / urgente
+  motifPriorite?: string;    // Motif de la priorité (ex: "Chantier urgent", "VIP", etc.)
   nomChauffeur?: string;     // Nom du chauffeur transporteur
 }
 
@@ -454,6 +465,8 @@ export interface SuiviOF {
   dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
   dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
+  estPrioritaire?: boolean; // Commande prioritaire / urgente
+  motifPriorite?: string;   // Motif de la priorité
   nomChauffeur?: string;
 }
 

@@ -3,7 +3,7 @@ import { BookOpen, CheckCircle, AlertTriangle, XCircle, FileText, Cpu, Layers, H
 
 export const DocumentationTab: React.FC = () => {
   return (
-    <div className="space-y-6 text-slate-100 max-w-5xl mx-auto">
+    <div className="space-y-6 text-slate-100 w-full">
       {/* Introduction Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-md space-y-3">
         <div className="flex items-center gap-3">
