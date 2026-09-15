@@ -1,4 +1,11 @@
-import { Article, ChuteBarre, DossierCommandeGlobal, SuiviOF } from '../types';
+import {
+  Article,
+  ChuteBarre,
+  DossierCommandeGlobal,
+  SuiviOF,
+  MouvementStock,
+  LigneRetourOF
+} from '../types';
 
 /**
  * Pièce requise issue de la commande en temps réel
@@ -71,6 +78,90 @@ export interface ChuteGenereeDeclaration {
   longueur: number;
   statut: 'A_STOCKER' | 'DECHET_INTERVALLE_REFUS' | 'DECHET_PUR';
   remarque?: string;
+}
+
+/**
+ * Structure d'un profilé dans le Cockpit Éclair (Approche par Exception)
+ */
+export interface ProfilBilanCockpit {
+  articleCode: string;
+  articleDesignation: string;
+  sheetName: string;
+  longueurStandard: number;
+  refusMin: number;
+  refusMax: number;
+
+  // Ce qui était prévu à l'optimisation
+  barresNeuvesPrevues: number;
+  chutesUtiliseesPrevues: Array<{
+    id: string;
+    chuteId?: string;
+    longueur: number;
+    resteTheorique: number;
+    repere: string;
+    piecesInfoStr?: string;
+  }>;
+  chutesGenereesPrevues: Array<{
+    id: string;
+    longueur: number;
+    statut: 'A_STOCKER' | 'DECHET';
+    sourceRepere: string;
+  }>;
+
+  // Ce qui est réellement constaté et modifiable en 1 clic
+  barresNeuvesReelles: number;
+  barresRebut: number;
+  chutesUtiliseesReelles: Array<{
+    id: string;
+    chuteId?: string;
+    longueur: number;
+    utilisee: boolean;
+    motifNonUtilisation?: 'INTROUVABLE_SUPPRIMER' | 'REMPLACEE_GARDER_AU_STOCK';
+    source: 'PREVUE' | 'STOCK_INVENTORIE' | 'HORS_STOCK';
+    repere: string;
+    remarque?: string;
+  }>;
+  chutesGenereesReelles: Array<{
+    id: string;
+    longueur: number;
+    quantite?: number; // Nombre de pièces réelles à ranger au rack
+    statut?: 'A_STOCKER' | 'DECHET';
+    sourceRepere?: string;
+    remarque?: string;
+    modifieeManuellement?: boolean;
+  }>;
+}
+
+/**
+ * Accessoire magasin associé à l'OF (quincaillerie, embouts, tulipes)
+ */
+export interface AccessoireBilanCockpit {
+  id: string;
+  codeArt: string;
+  designation: string;
+  quantitePrevue: number;
+  quantiteReelle: number;
+  unite: string;
+  cochee: boolean;
+  piecesInfoStr?: string;
+}
+
+/**
+ * Bilan global Multi-Profilés & Accessoires du Cockpit Éclair
+ */
+export interface BilanCockpitOF {
+  ofId: string;
+  codeOF: string;
+  numCommande: string;
+  nomClient: string;
+  donneurOrdre: string;
+  famille: string;
+  titreSection: string;
+  dateEmission: string;
+  profils: ProfilBilanCockpit[];
+  accessoires: AccessoireBilanCockpit[];
+  estConformeAuPlan: boolean;
+  nbAjustements: number;
 }
 
 /**
@@ -470,6 +561,345 @@ export class ConcordanceOFService {
       chuteLongueurMm: meilleureChute?.longueur,
       resteMm: resteFinal,
       scoreQualite: Math.max(0, Math.round(meilleurScore))
+    };
+  }
+
+  /**
+   * Prépare le bilan multi-profilés pour le Cockpit Éclair
+   */
+  static preparerBilanCockpitMultiProfils(
+    suivi: SuiviOF,
+    articles: Article[],
+    mapping: Record<string, string> = {}
+  ): BilanCockpitOF {
+    const lignes = suivi.lignesRetour || [];
+
+    // 1. Détection des lignes d'accessoires magasin
+    const isAccessoire = (l: LigneRetourOF) => {
+      return (
+        l.id?.startsWith('lr-acc-') ||
+        l.repere?.startsWith('ACCESSOIRE') ||
+        l.longueurPrevue === 0 ||
+        (Boolean(l.articleCode) && l.articleCode!.startsWith('ACC-'))
+      );
+    };
+
+    const accessoiresMap = new Map<string, AccessoireBilanCockpit>();
+    const profilLignesMap = new Map<string, LigneRetourOF[]>();
+
+    lignes.forEach((l, idx) => {
+      if (isAccessoire(l)) {
+        const code = l.articleCode || `ACC-${idx}`;
+        let qte = 1;
+        const m = l.piecesInfoStr?.match(/^(\d+)/) || l.saisieOperateur?.match(/^(\d+)/);
+        if (m) {
+          qte = parseInt(m[1], 10) || 1;
+        }
+        if (accessoiresMap.has(code)) {
+          const acc = accessoiresMap.get(code)!;
+          acc.quantitePrevue += qte;
+          acc.quantiteReelle += qte;
+        } else {
+          accessoiresMap.set(code, {
+            id: l.id || `acc-${idx}`,
+            codeArt: code,
+            designation: l.articleDesignation || l.repere.replace(/^ACCESSOIRE\s*/i, '') || 'Accessoire',
+            quantitePrevue: qte,
+            quantiteReelle: qte,
+            unite: 'pcs',
+            cochee: true,
+            piecesInfoStr: l.piecesInfoStr
+          });
+        }
+      } else {
+        const artKey = l.articleCode || l.articleDesignation || suivi.titreSection || 'PROFIL_PRINCIPAL';
+        if (!profilLignesMap.has(artKey)) {
+          profilLignesMap.set(artKey, []);
+        }
+        profilLignesMap.get(artKey)!.push(l);
+      }
+    });
+
+    // Si aucune ligne n'est présente dans lignesRetour (ex: OF créé manuellement)
+    if (profilLignesMap.size === 0) {
+      const artCode = suivi.barresReservees?.[0]?.codeArt || suivi.titreSection || 'PROFIL_PRINCIPAL';
+      profilLignesMap.set(artCode, []);
+    }
+
+    // 2. Construire chaque profilé
+    const profils: ProfilBilanCockpit[] = [];
+
+    profilLignesMap.forEach((pLignes, artKey) => {
+      const firstLine = pLignes[0];
+      const article =
+        articles.find(a => a.code_art === artKey || a.code_art === firstLine?.articleCode) ||
+        articles.find(a => a.designation === artKey || (firstLine?.articleDesignation && a.designation === firstLine.articleDesignation));
+
+      const articleCode = article?.code_art || firstLine?.articleCode || (artKey.startsWith('PROFIL') ? '' : artKey);
+      const articleDesignation = article?.designation || firstLine?.articleDesignation || suivi.titreSection || 'Profilé Aluminium';
+      const sheetName = (articleCode && mapping[articleCode]) || article?.designation || articleDesignation;
+      const longueurStandard = article?.longeur || 6000;
+      const refusMin = article?.refus_min ?? 300;
+      const refusMax = article?.refus_max ?? 500;
+
+      // Barres neuves prévues
+      const barresLignes = pLignes.filter(l => l.typeSupport === 'BARRE_NEUVE');
+      let barresNeuvesPrevues = barresLignes.length;
+      if (barresNeuvesPrevues === 0 && suivi.barresReservees && suivi.barresReservees.length > 0) {
+        const br = suivi.barresReservees.find(b => b.codeArt === articleCode);
+        if (br) barresNeuvesPrevues = br.quantite;
+        else if (profilLignesMap.size === 1) barresNeuvesPrevues = suivi.barresReservees.reduce((s, b) => s + b.quantite, 0);
+      }
+      if (barresNeuvesPrevues === 0 && profilLignesMap.size === 1 && suivi.totalBarresNeuvesPrevu) {
+        barresNeuvesPrevues = suivi.totalBarresNeuvesPrevu;
+      }
+
+      // Chutes prévues
+      const chutesLignes = pLignes.filter(l => l.typeSupport === 'CHUTE_BARRE');
+      const chutesUtiliseesPrevues = chutesLignes.map((l, cIdx) => ({
+        id: l.id || `prev-chute-${cIdx}`,
+        chuteId: l.chuteId,
+        longueur: l.longueurPrevue || 0,
+        resteTheorique: l.restePrevuMm || 0,
+        repere: l.repere || `Chute #${cIdx + 1}`,
+        piecesInfoStr: l.piecesInfoStr
+      }));
+
+      // Chutes générées prévues : uniquement les chutes réelles valorisables à ranger (>= refusMax). Fini les déchets !
+      // On regroupe les chutes identiques par longueur avec notion de quantité
+      const chutesGenGroupMap = new Map<number, number>();
+      pLignes.forEach(l => {
+        const reste = l.restePrevuMm || 0;
+        if (reste >= refusMax) {
+          const lg = Math.round(reste);
+          chutesGenGroupMap.set(lg, (chutesGenGroupMap.get(lg) || 0) + 1);
+        }
+      });
+
+      const chutesGenereesPrevues: ProfilBilanCockpit['chutesGenereesPrevues'] = [];
+      const chutesGenereesReelles: ProfilBilanCockpit['chutesGenereesReelles'] = [];
+      let genCounter = 0;
+      chutesGenGroupMap.forEach((qte, lg) => {
+        const id = `gen-prev-${genCounter++}`;
+        chutesGenereesPrevues.push({
+          id,
+          longueur: lg,
+          statut: 'A_STOCKER',
+          sourceRepere: `Chute ${lg} mm`
+        });
+        chutesGenereesReelles.push({
+          id,
+          longueur: lg,
+          quantite: qte,
+          statut: 'A_STOCKER',
+          sourceRepere: '',
+          modifieeManuellement: false
+        });
+      });
+
+      // Réel modifiable initialisé au prévu
+      const chutesUtiliseesReelles = chutesUtiliseesPrevues.map(c => ({
+        ...c,
+        utilisee: true,
+        source: 'PREVUE' as const,
+        motifNonUtilisation: 'REMPLACEE_GARDER_AU_STOCK' as const
+      }));
+
+      profils.push({
+        articleCode,
+        articleDesignation,
+        sheetName,
+        longueurStandard,
+        refusMin,
+        refusMax,
+        barresNeuvesPrevues,
+        chutesUtiliseesPrevues,
+        chutesGenereesPrevues,
+        barresNeuvesReelles: barresNeuvesPrevues,
+        barresRebut: 0,
+        chutesUtiliseesReelles,
+        chutesGenereesReelles
+      });
+    });
+
+    const accessoires = Array.from(accessoiresMap.values());
+
+    return {
+      ofId: suivi.id,
+      codeOF: suivi.codeOF || (suivi.numeroEmission ? `OF-${String(suivi.numeroEmission).padStart(3, '0')}` : 'OF'),
+      numCommande: suivi.numCommande,
+      nomClient: suivi.nomClient,
+      donneurOrdre: suivi.donneurOrdre,
+      famille: suivi.famille,
+      titreSection: suivi.titreSection,
+      dateEmission: suivi.dateEmission,
+      profils,
+      accessoires,
+      estConformeAuPlan: true,
+      nbAjustements: 0
+    };
+  }
+
+  /**
+   * Construit les mouvements de stock exacts et met à jour les lignes de retour de l'OF
+   */
+  static calculerMouvementsEtLignesCloture(
+    bilan: BilanCockpitOF,
+    suivi: SuiviOF,
+    dateStr: string,
+    remarqueGlobale?: string
+  ): {
+    mouvements: MouvementStock[];
+    lignesRetourActualisees: LigneRetourOF[];
+  } {
+    const dateTimeStr = `${dateStr} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+    const mouvements: MouvementStock[] = [];
+    let mvtIdCounter = 0;
+    const makeId = (prefix: string) => `mvt-${prefix}-${Date.now()}-${mvtIdCounter++}`;
+
+    const updatedLignes: LigneRetourOF[] = [...(suivi.lignesRetour || [])];
+
+    // 1. Mouvements pour chaque profilé
+    bilan.profils.forEach(p => {
+      const artCode = p.articleCode || suivi.barresReservees?.[0]?.codeArt || '';
+
+      // A. Barres Neuves
+      const totalBarresReelles = p.barresNeuvesReelles;
+      const nbRebuts = Math.min(totalBarresReelles, p.barresRebut);
+      const nbBarresStandard = Math.max(0, totalBarresReelles - nbRebuts);
+
+      if (nbBarresStandard > 0 && artCode) {
+        mouvements.push({
+          id: makeId('barre-std'),
+          date: dateTimeStr,
+          type: 'SORTIE_BARRE_NEUVE',
+          articleCode: artCode,
+          designation: p.articleDesignation,
+          ofId: suivi.id,
+          numCommande: suivi.numCommande,
+          nomClient: suivi.nomClient,
+          longueurMm: p.longueurStandard || 6000,
+          quantite: nbBarresStandard,
+          remarque: `Clôture Cockpit : ${nbBarresStandard} barre(s) 6m consommée(s) pour OF ${bilan.codeOF || suivi.numCommande}`
+        });
+      }
+
+      if (nbRebuts > 0 && artCode) {
+        mouvements.push({
+          id: makeId('barre-rebut'),
+          date: dateTimeStr,
+          type: 'SORTIE_BARRE_NEUVE',
+          articleCode: artCode,
+          designation: p.articleDesignation,
+          ofId: suivi.id,
+          numCommande: suivi.numCommande,
+          nomClient: suivi.nomClient,
+          longueurMm: p.longueurStandard || 6000,
+          quantite: nbRebuts,
+          remarque: `[REBUT ATELIER / CASSE] ${nbRebuts} barre(s) 6m de remplacement consommée(s) pour OF ${bilan.codeOF || suivi.numCommande}`
+        });
+      }
+
+      // B. Chutes du rack utilisées
+      p.chutesUtiliseesReelles.forEach(c => {
+        if (!c.utilisee) {
+          // Si la chute prévue n'a pas été utilisée car INTROUVABLE / PERDUE / ABÎMÉE,
+          // on génère une SORTIE_CHUTE pour la déstocker et la supprimer définitivement du stock physique de chutes !
+          if (c.motifNonUtilisation === 'INTROUVABLE_SUPPRIMER' && (c.chuteId || c.longueur > 0) && artCode) {
+            mouvements.push({
+              id: makeId('chute-introuvable'),
+              date: dateTimeStr,
+              type: 'SORTIE_CHUTE',
+              articleCode: artCode,
+              designation: p.articleDesignation,
+              ofId: suivi.id,
+              numCommande: suivi.numCommande,
+              nomClient: suivi.nomClient,
+              longueurMm: c.longueur,
+              quantite: 1,
+              remarque: `[ÉCART INVENTAIRE] Chute introuvable au rack (${c.longueur} mm) déstockée définitivement — OF ${bilan.codeOF || suivi.numCommande}`,
+              chuteId: c.chuteId
+            });
+          }
+          // Si motifNonUtilisation === 'REMPLACEE_GARDER_AU_STOCK', aucun mouvement : la chute reste physiquement au rack
+          return;
+        }
+
+        if (c.source === 'HORS_STOCK') {
+          mouvements.push({
+            id: makeId('adj-chute'),
+            date: dateTimeStr,
+            type: 'AJUSTEMENT_INVENTAIRE',
+            articleCode: artCode,
+            designation: p.articleDesignation,
+            ofId: suivi.id,
+            numCommande: suivi.numCommande,
+            nomClient: suivi.nomClient,
+            longueurMm: c.longueur,
+            quantite: 1,
+            remarque: `Régularisation chute atelier non inventoriée (${c.longueur} mm) utilisée pour ${suivi.numCommande}`
+          });
+        } else {
+          mouvements.push({
+            id: makeId('chute-out'),
+            date: dateTimeStr,
+            type: 'SORTIE_CHUTE',
+            articleCode: artCode,
+            designation: p.articleDesignation,
+            ofId: suivi.id,
+            numCommande: suivi.numCommande,
+            nomClient: suivi.nomClient,
+            longueurMm: c.longueur,
+            quantite: 1,
+            remarque: `Chute stock débitée (${c.longueur} mm) — OF ${bilan.codeOF || suivi.numCommande}`,
+            chuteId: c.chuteId
+          });
+        }
+      });
+
+      // C. Chutes générées à ranger au rack (quantité en pièces pcs)
+      p.chutesGenereesReelles.forEach(cg => {
+        const qte = cg.quantite ?? 1;
+        if (cg.longueur >= p.refusMin && artCode && qte > 0) {
+          mouvements.push({
+            id: makeId('chute-in'),
+            date: dateTimeStr,
+            type: 'ENTREE_CHUTE',
+            articleCode: artCode,
+            designation: p.articleDesignation,
+            ofId: suivi.id,
+            numCommande: suivi.numCommande,
+            nomClient: suivi.nomClient,
+            longueurMm: Math.round(cg.longueur),
+            quantite: qte,
+            remarque: `Nouvelle chute rack (${Math.round(cg.longueur)} mm × ${qte} pcs) issue de OF ${bilan.codeOF || suivi.numCommande}`
+          });
+        }
+      });
+    });
+
+    // 2. Mouvements pour les accessoires magasin
+    bilan.accessoires.forEach(acc => {
+      if (acc.cochee && acc.quantiteReelle > 0 && acc.codeArt) {
+        mouvements.push({
+          id: makeId('acc-out'),
+          date: dateTimeStr,
+          type: 'SORTIE_ACCESSOIRE',
+          articleCode: acc.codeArt,
+          designation: acc.designation,
+          ofId: suivi.id,
+          numCommande: suivi.numCommande,
+          nomClient: suivi.nomClient,
+          longueurMm: 0,
+          quantite: acc.quantiteReelle,
+          remarque: `Sortie accessoire (${acc.quantiteReelle} ${acc.unite}) pour OF ${bilan.codeOF || suivi.numCommande}`
+        });
+      }
+    });
+
+    return {
+      mouvements,
+      lignesRetourActualisees: updatedLignes
     };
   }
 }

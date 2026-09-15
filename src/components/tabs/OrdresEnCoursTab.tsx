@@ -756,22 +756,27 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             <>
                               <button
                                 onClick={() => {
+                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                  localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
                                   if (onNavigateToTab) {
                                     onNavigateToTab('cockpit-cloture');
                                   }
                                 }}
-                                title="Clôturer rapidement via le nouveau Cockpit Bilan Matière 100% Fiable"
+                                title="Clôturer rapidement via le nouveau Cockpit Éclair (Votre Méthode par Exception)"
                                 className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
                               >
                                 <Scale className="w-3 h-3" />
-                                <span>Cockpit V2</span>
+                                <span>Cockpit</span>
                               </button>
                               <button
                                 onClick={() => {
-                                  setSelectedSuiviForRetour(of);
-                                  setIsRetourModalOpen(true);
+                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                  localStorage.setItem('3m_cockpit_mode', 'CLASSIQUE');
+                                  if (onNavigateToTab) {
+                                    onNavigateToTab('cockpit-cloture');
+                                  }
                                 }}
-                                title="Saisir les annotations réelles de l'opérateur et ajuster le stock (Modal classique)"
+                                title="Clôturer via la méthode classique détaillée ligne par ligne"
                                 className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer border border-slate-700"
                               >
                                 <Send className="w-3 h-3" />

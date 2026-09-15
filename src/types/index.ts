@@ -494,6 +494,8 @@ export interface ChuteMailleReserveeOF {
  * Log d'un mouvement de stock confirmé (sortie, entrée, ajustement).
  */
 export type TypeMouvement =
+  | 'RECEPTION_MARCHANDISE'    // Réception marchandise / Entrée matière de barres neuves
+  | 'SORTIE_MANUELLE'          // Sortie manuelle exceptionnelle (casse, rebut, chantier direct)
   | 'SORTIE_BARRE_NEUVE'        // Barre neuve consommée
   | 'SORTIE_ACCESSOIRE'         // Accessoire / Joue consommé(e)
   | 'SORTIE_ARTICLE'            // Article unitaire consommé

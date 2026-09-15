@@ -30,6 +30,16 @@ import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { logger } from '../../services/logger';
 import { calculerBesoinMaille, PARAMETRES_MAILLE_DEFAUT } from '../../services/moteurMoustiquaire';
 import { getDimensionsPrecadrePiece } from '../../utils/precadreCalculs';
+import {
+  trouverSousFacePourCaisson,
+  optimiserListeSousFaces,
+  trouverCoulissePourCadreMSTQ,
+  trouverBarreInfPourCadreMSTQ,
+  optimiserListeCoulissesMSTQ,
+  trouverLameFinalePourTablier,
+  trouverCoulissePourTablier,
+  optimiserListeLamesFinales
+} from '../../utils/articlePairingService';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { SelecteurMode } from '../common/SelecteurMode';
@@ -251,20 +261,16 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
     return Array.from(map.values()).sort((a, b) => b.nb - a.nb || a.nom.localeCompare(b.nom));
   }, [dossiers]);
 
-  // Filtrer les suggestions selon la saisie en cours
+  // Filtrer les suggestions selon la saisie en cours (ne pas afficher tant que l'utilisateur n'a pas commencé à saisir)
   const suggestionsClientsFiltrees = useMemo(() => {
     const q = clientDeMonClient.trim().toLowerCase();
     if (!q) {
-      if (monClient) {
-        const clientsAgence = clientsHistoriqueComplet.filter(c => c.donneurOrdre.toLowerCase() === monClient.toLowerCase());
-        return clientsAgence.length > 0 ? clientsAgence.slice(0, 10) : clientsHistoriqueComplet.slice(0, 10);
-      }
-      return clientsHistoriqueComplet.slice(0, 10);
+      return []; // N'affiche rien avant le début de la saisie
     }
     return clientsHistoriqueComplet
       .filter(c => c.nom.toLowerCase().includes(q))
       .slice(0, 12);
-  }, [clientsHistoriqueComplet, clientDeMonClient, monClient]);
+  }, [clientsHistoriqueComplet, clientDeMonClient]);
 
   // Enregistrer le client dans la mémoire incrémentale persistante
   const enregistrerClientDansHistoriqueIncremental = useCallback((nomClient: string, donneur: string) => {
@@ -831,6 +837,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }
   }, [articlesPrecadre, articlesBouchonPrecadre, precadreConfig.articleCode, precadreConfig.bouchonArticleCode]);
 
+  // Listes intelligemment optimisées et groupées selon les règles d'appariement
+  // Caisson 30 BL -> Sous-Face 30 BL (même dimension en tête, couleur triée)
+  const sousFacesOptimisees = useMemo(() => {
+    return optimiserListeSousFaces(currentCTArticle, articlesSF);
+  }, [currentCTArticle, articlesSF]);
+
+  // Tablier 43 BL -> Lame Finale BL
+  const lamesFinalesOptimisees = useMemo(() => {
+    return optimiserListeLamesFinales(currentTBLArticle, articlesLameFinale);
+  }, [currentTBLArticle, articlesLameFinale]);
+
   // --- PARAMÈTRES TECHNIQUES INTERACTIFS DE DÉCOUPE (CT, SF, TBL, LF, GL, PRC) ---
   const [showTechParams, setShowTechParams] = useState<boolean>(false);
   const [ctTechParams, setCtTechParams] = useState({ longeur: 0, lame: 0, debordement: 0, refus_min: 0, refus_max: 0, isDirty: false });
@@ -1008,22 +1025,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     const found = articlesCT.find(a => a.code_art === codeArt);
     if (!found) return;
 
-    let targetSFCode = caissonConfig.sfArticleCode;
+    // Règle d'or : Caisson 30 BL -> Sous-Face devient automatiquement 30 BL (même dimension & couleur)
+    const matchSF = trouverSousFacePourCaisson(found, articlesSF);
+    const targetSFCode = matchSF ? matchSF.code_art : caissonConfig.sfArticleCode;
 
-    // Si on choisit un 25 -> présélectionner SF 250 ou SF 200
-    if (found.designation.includes('25') || found.hauteur === 25) {
-      const matchSF = articlesSF.find(s => s.designation.includes('250') || s.designation.includes('25')) || articlesSF[0];
-      if (matchSF) targetSFCode = matchSF.code_art;
-    } else if (found.designation.includes('30') || found.hauteur === 30) {
-      const matchSF = articlesSF.find(s => s.designation.includes('300') || s.designation.includes('30')) || articlesSF[0];
-      if (matchSF) targetSFCode = matchSF.code_art;
-    }
-
-    setCaissonConfig({
-      ...caissonConfig,
+    setCaissonConfig(prev => ({
+      ...prev,
       ctArticleCode: found.code_art,
       sfArticleCode: targetSFCode
-    });
+    }));
   };
 
   const handleSelectSousFaceSF = (codeArt: string) => {
@@ -1471,6 +1481,28 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       setMstqBarreInfTechParams({ longeur: barreInfObj.longeur || 6000, lame: barreInfObj.lame || 4.0, debordement: barreInfObj.debordement ?? -62, refus_min: barreInfObj.refus_min || 300, refus_max: barreInfObj.refus_max || 1200, isDirty: false });
     }
   }, [mstqConfig.cadreArticleCode, mstqConfig.coulisseArticleCode, mstqConfig.barreInfArticleCode, articlesCadreMSTQ, articlesCoulisseMSTQ, articlesBarreInfMSTQ]);
+
+  // Objets d'articles MSTQ réels
+  const currentCadreMSTQArticle = useMemo(() => {
+    return articlesCadreMSTQ.find(a => a.code_art === mstqConfig.cadreArticleCode) || null;
+  }, [articlesCadreMSTQ, mstqConfig.cadreArticleCode]);
+
+  const currentCoulisseMSTQArticle = useMemo(() => {
+    return articlesCoulisseMSTQ.find(a => a.code_art === mstqConfig.coulisseArticleCode) || null;
+  }, [articlesCoulisseMSTQ, mstqConfig.coulisseArticleCode]);
+
+  const currentBarreInfMSTQArticle = useMemo(() => {
+    return articlesBarreInfMSTQ.find(a => a.code_art === mstqConfig.barreInfArticleCode) || null;
+  }, [articlesBarreInfMSTQ, mstqConfig.barreInfArticleCode]);
+
+  const currentMailleMSTQArticle = useMemo(() => {
+    return articlesMailleMSTQ.find(a => a.code_art === mstqConfig.mailleArticleCode) || null;
+  }, [articlesMailleMSTQ, mstqConfig.mailleArticleCode]);
+
+  // Cadre MSTQ BL -> Coulisses BL
+  const coulissesMSTQOptimisees = useMemo(() => {
+    return optimiserListeCoulissesMSTQ(currentCadreMSTQArticle, articlesCoulisseMSTQ);
+  }, [currentCadreMSTQArticle, articlesCoulisseMSTQ]);
 
   // =========================================================================
   // 5. LIGNES DE COMMANDE EN COURS (PANIER MULTI-PRODUITS)
@@ -3479,6 +3511,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   const canAjouterLigne = champsManquants.length === 0;
 
+  // Vérification proactive des stocks physiques lors de la saisie d'une ligne
+  const verifierStocksLigne = (articlesToCheck: (Article | null | undefined)[], quantiteLigne: number) => {
+    const alertes = articlesToCheck.filter((a): a is Article => !!a && (a.stock_physique <= 0 || a.stock_physique < quantiteLigne));
+    if (alertes.length > 0) {
+      const details = alertes.map(a => `${a.designation} (${a.stock_physique <= 0 ? 'RUPTURE : 0 barre' : `${a.stock_physique} barre(s) disponible(s)`})`).join(' • ');
+      showFlashNotification(`⚠️ Attention Stock Insuffisant : ${details}. La commande est ajoutée mais nécessite un approvisionnement.`, 'warn');
+    }
+  };
+
   // AJOUT D'UNE LIGNE AVEC HÉRITAGE AUTOMATIQUE DES RÉGLAGES EN HAUT
   const handleAjouterLigne = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -3515,6 +3556,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const ctDesig = isSFSeule ? undefined : (currentCTArticle?.designation || '');
       const sfCode = avecSF ? (caissonConfig.sfArticleCode || currentSFArticle?.code_art) : undefined;
       const sfDesig = avecSF ? (currentSFArticle?.designation || '') : undefined;
+
+      // Vérification du stock pour Caisson et Sous-Face
+      verifierStocksLigne([!isSFSeule ? currentCTArticle : null, avecSF ? currentSFArticle : null], qte);
 
       const autoRepere = inputRepere.trim() || genererRepereCaissonSousFace({
         donneurOrdreNom: monClient,
@@ -3561,6 +3605,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         showFlashNotification('Veuillez saisir une largeur et une hauteur valides.', 'warn');
         return;
       }
+
+      // Vérification du stock pour Lame Tablier, Lame Finale, Coulisses
+      verifierStocksLigne([
+        currentTBLArticle,
+        tablierConfig.avecLameFinale ? currentLFArticle : null,
+        tablierConfig.typeFabrication === 'VOLET_COMPLET' ? currentGLArticle : null
+      ], qte);
+
       const formattedRefTablier = formaterRefCommandeAvecPrefixe(numCommandeTablier, monClient, clientCodifications) || 'CMD-TABLIER';
       const nouvelleLigne: CommandeTablier = {
         id: String(Date.now()),
@@ -3596,6 +3648,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         showFlashNotification('Veuillez saisir une largeur et une hauteur valides.', 'warn');
         return;
       }
+
+      // Vérification du stock pour Composants Moustiquaire
+      verifierStocksLigne([
+        mstqConfig.typeFabrication !== 'SEMI_FINI_MAILLE' ? currentCadreMSTQArticle : null,
+        (mstqConfig.typeFabrication !== 'SEMI_FINI_MAILLE' && mstqConfig.typeOuverture !== 'FIXE') ? currentCoulisseMSTQArticle : null,
+        (mstqConfig.avecBarreInferieure && mstqConfig.typeFabrication !== 'SEMI_FINI_MAILLE') ? currentBarreInfMSTQArticle : null,
+        currentMailleMSTQArticle
+      ], qte);
+
       const formattedRefMstq = formaterRefCommandeAvecPrefixe(numCommandeMoustiquaire, monClient, clientCodifications) || 'CMD-MSTQ';
       const nouvelleLigne: BesoinMoustiquaire = {
         id: String(Date.now()),
@@ -3633,6 +3694,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       }
       const prcObj = articlesPrecadre.find(a => a.code_art === precadreConfig.articleCode) || currentPRCArticle || articlesPrecadre[0];
       const bchObj = articlesBouchonPrecadre.find(a => a.code_art === precadreConfig.bouchonArticleCode) || currentBouchonArticle || articlesBouchonPrecadre[0];
+
+      // Vérification du stock pour Précadre et Bouchons
+      verifierStocksLigne([prcObj, bchObj], qte);
+
       const hasDebordement = (precadreConfig.modeDebordement && precadreConfig.modeDebordement !== 'SANS_DEBORDEMENT' && (precadreConfig.modeDebordement as string) !== 'AUCUN');
 
       const prcCode = prcObj?.code_art || precadreConfig.articleCode || 'ART0060';
@@ -4092,12 +4157,19 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <input
                 ref={inputClientRef}
                 type="text"
-                list="clients-finaux-datalist"
                 value={clientDeMonClient}
-                onFocus={() => setShowClientSuggestions(true)}
+                onFocus={() => {
+                  if (clientDeMonClient.trim().length > 0) {
+                    setShowClientSuggestions(true);
+                  }
+                }}
                 onChange={e => {
                   setClientDeMonClient(e.target.value);
-                  setShowClientSuggestions(true);
+                  if (e.target.value.trim().length > 0) {
+                    setShowClientSuggestions(true);
+                  } else {
+                    setShowClientSuggestions(false);
+                  }
                 }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
@@ -4117,15 +4189,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 }`}
               />
 
-              {/* Datalist standard pour complétion navigateur */}
-              <datalist id="clients-finaux-datalist">
-                {clientsHistoriqueComplet.map((c, i) => (
-                  <option key={i} value={c.nom}>
-                    {c.donneurOrdre ? `${c.nom} (${c.donneurOrdre})` : c.nom}
-                  </option>
-                ))}
-              </datalist>
-
               {/* Dropdown interactif d'auto-complétion incrémentale */}
               {showClientSuggestions && suggestionsClientsFiltrees.length > 0 && (
                 <div
@@ -4135,7 +4198,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800">
                     <span className="flex items-center gap-1">
                       <Sparkles className="w-3 h-3 text-amber-400" />
-                      Clients saisis récemment ({suggestionsClientsFiltrees.length})
+                      Clients correspondants ({suggestionsClientsFiltrees.length})
                     </span>
                     <button
                       type="button"
@@ -4517,10 +4580,26 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <option value="">-- Choisir le Type de Caisson (Obligatoire) * --</option>
                     {articlesCT.map(a => (
                       <option key={a.code_art} value={a.code_art}>
-                        {a.designation}
+                        {a.designation} ({a.stock_physique} barres)
                       </option>
                     ))}
                   </select>
+                  {currentCTArticle && (
+                    <div className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                      currentCTArticle.stock_physique <= 0
+                        ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                        : currentCTArticle.stock_physique <= (currentCTArticle.stock_min || 5)
+                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        : 'bg-slate-900/60 text-slate-400'
+                    }`}>
+                      <span>Stock CT : {currentCTArticle.stock_physique} barres</span>
+                      {currentCTArticle.stock_physique <= (currentCTArticle.stock_min || 5) && (
+                        <span className={currentCTArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                          {currentCTArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Profilé Sous-Face (SF) */}
@@ -4542,12 +4621,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     }`}
                   >
                     <option value="">-- Choisir la Sous-Face (Obligatoire) * --</option>
-                    {articlesSF.map(s => (
-                      <option key={s.code_art} value={s.code_art}>
-                        {s.designation}
-                      </option>
-                    ))}
+                    {sousFacesOptimisees.recommandees.length > 0 && (
+                      <optgroup label={`⭐ Sous-Faces compatibles (${sousFacesOptimisees.dimLabel ? `Dim ${sousFacesOptimisees.dimLabel}` : 'Recommandées'})`}>
+                        {sousFacesOptimisees.recommandees.map(s => (
+                          <option key={s.code_art} value={s.code_art}>
+                            {s.designation} ({s.stock_physique} barres)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {sousFacesOptimisees.autres.length > 0 && (
+                      <optgroup label="Autres dimensions / finitions">
+                        {sousFacesOptimisees.autres.map(s => (
+                          <option key={s.code_art} value={s.code_art}>
+                            {s.designation} ({s.stock_physique} barres)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
+                  {currentSFArticle && (
+                    <div className={`mt-1 text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                      currentSFArticle.stock_physique <= 0
+                        ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                        : currentSFArticle.stock_physique <= (currentSFArticle.stock_min || 5)
+                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        : 'bg-slate-900/60 text-slate-400'
+                    }`}>
+                      <span>Stock SF : {currentSFArticle.stock_physique} barres</span>
+                      {currentSFArticle.stock_physique <= (currentSFArticle.stock_min || 5) && (
+                        <span className={currentSFArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                          {currentSFArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Montage & Finition Peinture & Plaque */}
@@ -4830,7 +4938,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     onChange={e => {
                       const code = e.target.value;
                       const found = articlesTablier.find(a => a.code_art === code);
-                      setTablierConfig(prev => ({ ...prev, articleCode: code, hauteurLame: found?.hauteur || 43 }));
+                      // Règle d'or : si LA43 BL -> Lame Finale automatiquement BL (même couleur & adéquation)
+                      const bestLF = trouverLameFinalePourTablier(found || null, articlesLameFinale);
+                      const bestGL = trouverCoulissePourTablier(found || null, articlesCoulisses);
+
+                      setTablierConfig(prev => ({
+                        ...prev,
+                        articleCode: code,
+                        hauteurLame: found?.hauteur || 43,
+                        lfArticleCode: bestLF ? bestLF.code_art : prev.lfArticleCode,
+                        glArticleCode: bestGL ? bestGL.code_art : prev.glArticleCode
+                      }));
                       if (found) {
                         setTblTechParams({
                           longeur: found.longeur || 6000,
@@ -4838,6 +4956,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           debordement: found.debordement || 0,
                           refus_min: found.refus_min || 250,
                           refus_max: found.refus_max || 1000,
+                          isDirty: false
+                        });
+                      }
+                      if (bestLF) {
+                        setLfTechParams({
+                          longeur: bestLF.longeur || 6000,
+                          lame: (bestLF.lame && bestLF.lame <= 6) ? bestLF.lame : 4.0,
+                          debordement: bestLF.debordement || 0,
+                          refus_min: bestLF.refus_min || 250,
+                          refus_max: bestLF.refus_max || 1000,
                           isDirty: false
                         });
                       }
@@ -4851,10 +4979,26 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <option value="">-- Choisir la Lame Tablier (Obligatoire) * --</option>
                     {articlesTablier.map(a => (
                       <option key={a.code_art} value={a.code_art}>
-                        {a.designation}
+                        {a.designation} ({a.stock_physique} barres)
                       </option>
                     ))}
                   </select>
+                  {currentTBLArticle && (
+                    <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                      currentTBLArticle.stock_physique <= 0
+                        ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                        : currentTBLArticle.stock_physique <= (currentTBLArticle.stock_min || 5)
+                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        : 'bg-slate-900/60 text-slate-400'
+                    }`}>
+                      <span>Stock TBL : {currentTBLArticle.stock_physique} barres</span>
+                      {currentTBLArticle.stock_physique <= (currentTBLArticle.stock_min || 5) && (
+                        <span className={currentTBLArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                          {currentTBLArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 2. Option & Profilé Lame Finale */}
@@ -4910,12 +5054,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     }`}
                   >
                     <option value="">-- Choisir la Lame Finale (Obligatoire si active) * --</option>
-                    {articlesLameFinale.map(a => (
-                      <option key={a.code_art} value={a.code_art}>
-                        {a.designation}
-                      </option>
-                    ))}
+                    {lamesFinalesOptimisees.recommandees.length > 0 && (
+                      <optgroup label="⭐ Lames Finales assorties (Recommandées)">
+                        {lamesFinalesOptimisees.recommandees.map(a => (
+                          <option key={a.code_art} value={a.code_art}>
+                            {a.designation} ({a.stock_physique} barres)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {lamesFinalesOptimisees.autres.length > 0 && (
+                      <optgroup label="Autres finitions de Lame Finale">
+                        {lamesFinalesOptimisees.autres.map(a => (
+                          <option key={a.code_art} value={a.code_art}>
+                            {a.designation} ({a.stock_physique} barres)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
+                  {tablierConfig.avecLameFinale && currentLFArticle && (
+                    <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                      currentLFArticle.stock_physique <= 0
+                        ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                        : currentLFArticle.stock_physique <= (currentLFArticle.stock_min || 5)
+                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        : 'bg-slate-900/60 text-slate-400'
+                    }`}>
+                      <span>Stock LF : {currentLFArticle.stock_physique} barres</span>
+                      {currentLFArticle.stock_physique <= (currentLFArticle.stock_min || 5) && (
+                        <span className={currentLFArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                          {currentLFArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Option & Profilé Coulisses */}
@@ -4973,10 +5146,26 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <option value="">-- Choisir les Coulisses (Obligatoire pour volet complet) * --</option>
                     {articlesCoulisses.map(a => (
                       <option key={a.code_art} value={a.code_art}>
-                        {a.designation}
+                        {a.designation} ({a.stock_physique} barres)
                       </option>
                     ))}
                   </select>
+                  {tablierConfig.typeFabrication === 'VOLET_COMPLET' && currentGLArticle && (
+                    <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                      currentGLArticle.stock_physique <= 0
+                        ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                        : currentGLArticle.stock_physique <= (currentGLArticle.stock_min || 5)
+                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        : 'bg-slate-900/60 text-slate-400'
+                    }`}>
+                      <span>Stock Coulisses : {currentGLArticle.stock_physique} barres</span>
+                      {currentGLArticle.stock_physique <= (currentGLArticle.stock_min || 5) && (
+                        <span className={currentGLArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                          {currentGLArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -5360,10 +5549,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       <option value="">-- Choisir la Maille (Obligatoire) * --</option>
                       {articlesMailleMSTQ.map(art => (
                         <option key={art.code_art} value={art.code_art}>
-                          {art.designation}
+                          {art.designation} ({art.stock_physique} rouleaux)
                         </option>
                       ))}
                     </select>
+                    {currentMailleMSTQArticle && (
+                      <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                        currentMailleMSTQArticle.stock_physique <= 0
+                          ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                          : currentMailleMSTQArticle.stock_physique <= (currentMailleMSTQArticle.stock_min || 3)
+                          ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                          : 'bg-slate-900/60 text-slate-400'
+                      }`}>
+                        <span>Stock Maille : {currentMailleMSTQArticle.stock_physique}</span>
+                        {currentMailleMSTQArticle.stock_physique <= 0 && <span className="text-red-400 font-black">⛔ Rupture</span>}
+                      </div>
+                    )}
                   </div>
 
                   {/* 2. CADRE MSTQ */}
@@ -5377,10 +5578,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       onChange={e => {
                         const code = e.target.value;
                         const found = articlesCadreMSTQ.find(a => a.code_art === code);
+                        // Règle d'or : si Cadre Blanc -> Coulisse Blanc et Barre Inférieure Blanc automatiquement
+                        const bestCoulisse = trouverCoulissePourCadreMSTQ(found || null, articlesCoulisseMSTQ);
+                        const bestBarreInf = trouverBarreInfPourCadreMSTQ(found || null, articlesBarreInfMSTQ);
+
                         setMstqConfig(prev => ({
                           ...prev,
                           cadreArticleCode: code,
-                          cadreArticleDesignation: found?.designation || code
+                          cadreArticleDesignation: found?.designation || code,
+                          coulisseArticleCode: bestCoulisse ? bestCoulisse.code_art : prev.coulisseArticleCode,
+                          coulisseArticleDesignation: bestCoulisse ? bestCoulisse.designation : prev.coulisseArticleDesignation,
+                          barreInfArticleCode: bestBarreInf ? bestBarreInf.code_art : prev.barreInfArticleCode,
+                          barreInfArticleDesignation: bestBarreInf ? bestBarreInf.designation : prev.barreInfArticleDesignation
                         }));
                       }}
                       className={`w-full bg-slate-900 border disabled:opacity-40 rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-1 transition ${
@@ -5392,10 +5601,26 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       <option value="">-- Choisir le Cadre (Obligatoire) * --</option>
                       {articlesCadreMSTQ.map(art => (
                         <option key={art.code_art} value={art.code_art}>
-                          {art.designation}
+                          {art.designation} ({art.stock_physique} barres)
                         </option>
                       ))}
                     </select>
+                    {currentCadreMSTQArticle && mstqConfig.typeFabrication !== 'SEMI_FINI_MAILLE' && (
+                      <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                        currentCadreMSTQArticle.stock_physique <= 0
+                          ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                          : currentCadreMSTQArticle.stock_physique <= (currentCadreMSTQArticle.stock_min || 5)
+                          ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                          : 'bg-slate-900/60 text-slate-400'
+                      }`}>
+                        <span>Stock Cadre : {currentCadreMSTQArticle.stock_physique} barres</span>
+                        {currentCadreMSTQArticle.stock_physique <= (currentCadreMSTQArticle.stock_min || 5) && (
+                          <span className={currentCadreMSTQArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                            {currentCadreMSTQArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* 3. BARRE COULISSE MSTQ */}
@@ -5422,12 +5647,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       }`}
                     >
                       <option value="">-- Choisir la Coulisse (Obligatoire) * --</option>
-                      {articlesCoulisseMSTQ.map(art => (
-                        <option key={art.code_art} value={art.code_art}>
-                          {art.designation}
-                        </option>
-                      ))}
+                      {coulissesMSTQOptimisees.recommandees.length > 0 && (
+                        <optgroup label="⭐ Coulisses assorties (Recommandées)">
+                          {coulissesMSTQOptimisees.recommandees.map(art => (
+                            <option key={art.code_art} value={art.code_art}>
+                              {art.designation} ({art.stock_physique} barres)
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      {coulissesMSTQOptimisees.autres.length > 0 && (
+                        <optgroup label="Autres teintes de coulisses">
+                          {coulissesMSTQOptimisees.autres.map(art => (
+                            <option key={art.code_art} value={art.code_art}>
+                              {art.designation} ({art.stock_physique} barres)
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
+                    {currentCoulisseMSTQArticle && mstqConfig.typeFabrication !== 'SEMI_FINI_MAILLE' && mstqConfig.typeOuverture !== 'FIXE' && (
+                      <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                        currentCoulisseMSTQArticle.stock_physique <= 0
+                          ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                          : currentCoulisseMSTQArticle.stock_physique <= (currentCoulisseMSTQArticle.stock_min || 5)
+                          ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                          : 'bg-slate-900/60 text-slate-400'
+                      }`}>
+                        <span>Stock Coulisse : {currentCoulisseMSTQArticle.stock_physique} barres</span>
+                        {currentCoulisseMSTQArticle.stock_physique <= (currentCoulisseMSTQArticle.stock_min || 5) && (
+                          <span className={currentCoulisseMSTQArticle.stock_physique <= 0 ? 'text-red-400 font-black' : 'text-amber-400'}>
+                            {currentCoulisseMSTQArticle.stock_physique <= 0 ? '⛔ Rupture' : '⚠️ Stock bas'}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* 4. BARRE INFÉRIEURE MSTQ */}
@@ -5453,10 +5707,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         <option value="">(Aucune barre inf MSTQ dans la base)</option>
                       ) : articlesBarreInfMSTQ.map(art => (
                         <option key={art.code_art} value={art.code_art}>
-                          {art.designation}
+                          {art.designation} ({art.stock_physique} barres)
                         </option>
                       ))}
                     </select>
+                    {currentBarreInfMSTQArticle && mstqConfig.avecBarreInferieure && (
+                      <div className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center justify-between ${
+                        currentBarreInfMSTQArticle.stock_physique <= 0
+                          ? 'bg-red-950/80 text-red-300 border border-red-800/60'
+                          : currentBarreInfMSTQArticle.stock_physique <= (currentBarreInfMSTQArticle.stock_min || 5)
+                          ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                          : 'bg-slate-900/60 text-slate-400'
+                      }`}>
+                        <span>Stock Barre Inf : {currentBarreInfMSTQArticle.stock_physique} barres</span>
+                        {currentBarreInfMSTQArticle.stock_physique <= 0 && <span className="text-red-400 font-black">⛔ Rupture</span>}
+                      </div>
+                    )}
                   </div>
 
                 </div>

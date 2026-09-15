@@ -11,6 +11,8 @@ import { INITIAL_MAPPING } from '../../data/initialData';
 import { StorageService } from '../../services/storage';
 import { ImportArticlesModal } from '../stock/ImportArticlesModal';
 import { ImportChutesModal } from '../stock/ImportChutesModal';
+import { OperationsStockModal, OperationStockType } from '../stock/OperationsStockModal';
+import { InventaireStockView } from '../stock/InventaireStockView';
 import {
   FileSpreadsheet,
   Plus,
@@ -37,7 +39,9 @@ import {
   FolderPlus,
   Settings,
   ArrowRight,
-  ChevronRight
+  ChevronRight,
+  PackagePlus,
+  PackageMinus
 } from 'lucide-react';
 
 interface GestionStockTabProps {
@@ -110,11 +114,22 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     }));
   }, [chutesMaille]);
 
-  const [subTab, setSubTab] = useState<'articles' | 'chutes' | 'mapping' | 'historique'>('articles');
+  const [subTab, setSubTab] = useState<'articles' | 'chutes' | 'inventaire' | 'mapping' | 'historique'>('articles');
 
   // --- MODALS IMPORT INTEL ---
   const [isImportArticlesModalOpen, setIsImportArticlesModalOpen] = useState<boolean>(false);
   const [isImportChutesModalOpen, setIsImportChutesModalOpen] = useState<boolean>(false);
+
+  // --- MODAL OPÉRATIONS DE STOCK (RÉCEPTION, SORTIE, INVENTAIRE) ---
+  const [isOperationsModalOpen, setIsOperationsModalOpen] = useState<boolean>(false);
+  const [operationModalType, setOperationModalType] = useState<OperationStockType>('RECEPTION');
+  const [operationModalArticle, setOperationModalArticle] = useState<Article | null>(null);
+
+  const ouvrirOperationStock = (type: OperationStockType, art?: Article | null) => {
+    setOperationModalType(type);
+    setOperationModalArticle(art || null);
+    setIsOperationsModalOpen(true);
+  };
 
   // --- SUBTAB HISTORIQUE ---
   const [filtreTypeMvt, setFiltreTypeMvt] = useState<string>('TOUS');
@@ -798,6 +813,59 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Barre d'opérations directes matière (Réception, Sortie manuelle, Inventaire) */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400">
+            <PackagePlus className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs font-black text-slate-100 uppercase tracking-wide flex items-center gap-2">
+              <span>Opérations de Stock &amp; Flux Matière</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40">
+                Profilés &amp; Barres
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Enregistrer une réception fournisseur (BL), une sortie directe ou contrôler les comptages physiques d'inventaire
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => ouvrirOperationStock('RECEPTION')}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 shadow-sm transition cursor-pointer"
+          >
+            <PackagePlus className="w-4 h-4" />
+            <span>📥 Réception Marchandise</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => ouvrirOperationStock('SORTIE')}
+            className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 shadow-sm transition cursor-pointer"
+          >
+            <PackageMinus className="w-4 h-4" />
+            <span>📤 Sortie Manuelle</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('inventaire')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-lg flex items-center gap-2 shadow-sm transition cursor-pointer ${
+              subTab === 'inventaire'
+                ? 'bg-sky-500 text-slate-950 font-black'
+                : 'bg-sky-600 hover:bg-sky-500 text-white'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>📋 Inventaire Physique</span>
+          </button>
+        </div>
+      </div>
+
       {/* Top Subtabs Switcher */}
       <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -823,6 +891,18 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           >
             <Layers className="w-4 h-4" />
             <span>Stock Chutes ({allSheets.length} Familles)</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('inventaire')}
+            className={`px-3.5 py-2 text-xs font-bold rounded-lg transition flex items-center gap-2 ${
+              subTab === 'inventaire'
+                ? 'bg-sky-500 text-slate-950 shadow-md font-black'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>Inventaire &amp; Écarts</span>
           </button>
 
           <button
@@ -897,7 +977,31 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => ouvrirOperationStock('RECEPTION')}
+                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              >
+                <PackagePlus className="w-4 h-4" />
+                <span>📥 Réception Marchandise</span>
+              </button>
+
+              <button
+                onClick={() => ouvrirOperationStock('SORTIE')}
+                className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              >
+                <PackageMinus className="w-4 h-4" />
+                <span>📤 Sortie Manuelle</span>
+              </button>
+
+              <button
+                onClick={() => ouvrirOperationStock('INVENTAIRE')}
+                className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                <span>📋 Ajuster Inventaire</span>
+              </button>
+
               <button
                 onClick={() => setIsImportArticlesModalOpen(true)}
                 className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-2 shadow-sm transition cursor-pointer"
@@ -1161,7 +1265,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                     >
                       Prix (DZD) <SortIcon col="prix_unitaire" currentKey={artSortKey} currentDir={artSortDir} />
                     </th>
-                    <th className="py-2.5 px-3 text-center w-20">Actions</th>
+                    <th className="py-2.5 px-3 text-center w-36">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1189,15 +1293,36 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                       <td className="py-2 px-3 text-center">
                         <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
                           <button
+                            onClick={() => ouvrirOperationStock('RECEPTION', art)}
+                            className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 rounded"
+                            title="Réception Marchandise (+)"
+                          >
+                            <PackagePlus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => ouvrirOperationStock('SORTIE', art)}
+                            className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded"
+                            title="Sortie Manuelle (-)"
+                          >
+                            <PackageMinus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => ouvrirOperationStock('INVENTAIRE', art)}
+                            className="p-1 text-sky-400 hover:text-sky-300 hover:bg-sky-950/60 rounded"
+                            title="Inventaire & Ajustement Réel"
+                          >
+                            <ClipboardCheck className="w-3.5 h-3.5" />
+                          </button>
+                          <button
                             onClick={() => handleSelectArticleRow(art)}
-                            className="p-1 text-slate-400 hover:text-amber-300"
-                            title="Modifier"
+                            className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded"
+                            title="Modifier la fiche"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleSupprimerArticle(art.code_art)}
-                            className="p-1 text-slate-400 hover:text-rose-400"
+                            className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
                             title="Supprimer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1839,12 +1964,21 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
         </div>
       )}
 
+      {/* SUBTAB INVENTAIRE & AJUSTEMENTS */}
+      {subTab === 'inventaire' && (
+        <InventaireStockView
+          articles={safeArticles}
+          onStockUpdated={onStockUpdated}
+          onOpenOperationModal={ouvrirOperationStock}
+        />
+      )}
+
       {/* SUBTAB 4 : HISTORIQUE MOUVEMENTS */}
       {subTab === 'historique' && (
         <div className="space-y-4">
           {/* Filtres type mouvement */}
           <div className="flex flex-wrap items-center gap-2">
-            {['TOUS', 'SORTIE_BARRE_NEUVE', 'SORTIE_CHUTE', 'ENTREE_CHUTE', 'AJUSTEMENT_CHUTE', 'AJUSTEMENT_INVENTAIRE'].map(t => (
+            {['TOUS', 'RECEPTION_MARCHANDISE', 'SORTIE_MANUELLE', 'SORTIE_BARRE_NEUVE', 'SORTIE_CHUTE', 'ENTREE_CHUTE', 'AJUSTEMENT_CHUTE', 'AJUSTEMENT_INVENTAIRE'].map(t => (
               <button
                 key={t}
                 onClick={() => setFiltreTypeMvt(t)}
@@ -1855,6 +1989,8 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                 }`}
               >
                 {t === 'TOUS' ? 'Tous'
+                  : t === 'RECEPTION_MARCHANDISE' ? '📥 Réception Marchandise'
+                  : t === 'SORTIE_MANUELLE' ? '📤 Sortie Manuelle'
                   : t === 'SORTIE_BARRE_NEUVE' ? '🔻 Sortie Barre'
                   : t === 'SORTIE_CHUTE' ? '🔻 Sortie Chute'
                   : t === 'ENTREE_CHUTE' ? '🔺 Entrée Chute'
@@ -1925,9 +2061,9 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                         <td className="py-2 px-3 border-r border-slate-800 font-mono text-slate-400 text-[11px]">{m.date}</td>
                         <td className="py-2 px-3 border-r border-slate-800">
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                            m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE'
-                              ? 'bg-red-900/40 text-red-300 border-red-700/40'
-                            : m.type === 'ENTREE_CHUTE'
+                            m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE' || m.type === 'SORTIE_MANUELLE'
+                              ? 'bg-rose-900/40 text-rose-300 border-rose-700/40'
+                            : m.type === 'ENTREE_CHUTE' || m.type === 'RECEPTION_MARCHANDISE'
                               ? 'bg-emerald-900/40 text-emerald-300 border-emerald-700/40'
                             : m.type === 'AJUSTEMENT_CHUTE' || m.type === 'AJUSTEMENT_INVENTAIRE'
                               ? 'bg-amber-900/40 text-amber-300 border-amber-700/40'
@@ -1935,6 +2071,8 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                           }`}>
                             {m.type === 'SORTIE_BARRE_NEUVE' ? '🔻 Sortie Barre'
                               : m.type === 'SORTIE_CHUTE' ? '🔻 Sortie Chute'
+                              : m.type === 'SORTIE_MANUELLE' ? '📤 Sortie Manuelle'
+                              : m.type === 'RECEPTION_MARCHANDISE' ? '📥 Réception'
                               : m.type === 'ENTREE_CHUTE' ? '🔺 Entrée Chute'
                               : m.type === 'AJUSTEMENT_CHUTE' ? '✂️ Ajust. Chute'
                               : '📝 Ajust. Inventaire'}
@@ -1973,6 +2111,19 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
         chutesBarresExistantes={chutesBarres}
         chutesMailleExistantes={chutesMaille}
         onImportComplete={onStockUpdated}
+      />
+
+      {/* Modal Opérations Stock (Réception Marchandise, Sortie Manuelle, Inventaire) */}
+      <OperationsStockModal
+        isOpen={isOperationsModalOpen}
+        initialType={operationModalType}
+        initialArticle={operationModalArticle}
+        articles={articles}
+        onClose={() => {
+          setIsOperationsModalOpen(false);
+          setOperationModalArticle(null);
+        }}
+        onStockUpdated={onStockUpdated}
       />
 
       {/* Modal Dédiée : Gérer les Familles de Chutes */}
