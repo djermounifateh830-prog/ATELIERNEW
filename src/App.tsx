@@ -119,8 +119,8 @@ export default function App() {
         onRefreshData={loadData}
       />
 
-      {/* Main Content Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* Main Content Body (Full screen width exploited) */}
+      <main className="flex-1 w-full px-3 sm:px-5 lg:px-8 py-5">
         {activeTab === 'monitoring' && (
           <MonitoringAtelierTab
             dossiers={dossiers}
@@ -223,7 +223,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="bg-slate-950 border-t border-slate-900 py-4 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-wrap items-center justify-center gap-2">
+        <div className="w-full px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-center gap-2">
           <span>3M Atelier — Système d'Optimisation de Découpe & Gestion de Stock (SQLite 3m_atelier.db)</span>
         </div>
       </footer>

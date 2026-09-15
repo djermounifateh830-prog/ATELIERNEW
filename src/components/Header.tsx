@@ -123,8 +123,8 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="bg-slate-900 text-white shadow-xl border-b border-slate-800">
-      {/* Top Banner */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      {/* Top Banner (Full Screen Width) */}
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-400 flex items-center justify-center shadow-md font-black text-slate-950 text-xl tracking-wider">
             3M
@@ -192,8 +192,8 @@ export const Header: React.FC<HeaderProps> = ({
         }}
       />
 
-      {/* Navigation Tabs */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Navigation Tabs (Full Screen Width) */}
+      <div className="w-full px-4 sm:px-6 lg:px-8">
         <nav className="flex space-x-1 sm:space-x-2 overflow-x-auto py-2 scrollbar-none">
           {tabs.map(tab => {
             const Icon = tab.icon;
