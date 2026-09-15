@@ -4,7 +4,9 @@ import {
   DossierCommandeGlobal,
   SuiviOF,
   EstimationLivraisonDossier,
-  EstimationDelaiDetail
+  EstimationDelaiDetail,
+  InfoStatutDelai,
+  StatutRespectDelai
 } from '../types';
 
 export const NOMS_JOURS_SEMAINE = [
@@ -48,20 +50,6 @@ export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
       libelle: 'Tabliers de volet',
       tempsUnitaireMinutes: 15,
       capaciteJournalierePieces: 35,
-      delaiFixeJours: 0
-    },
-    SOUS_FACE: {
-      famille: 'SOUS_FACE',
-      libelle: 'Sous-faces seules',
-      tempsUnitaireMinutes: 4,
-      capaciteJournalierePieces: 120,
-      delaiFixeJours: 0
-    },
-    MULTI_FAMILLES: {
-      famille: 'MULTI_FAMILLES',
-      libelle: 'Multi-Familles / Divers',
-      tempsUnitaireMinutes: 10,
-      capaciteJournalierePieces: 50,
       delaiFixeJours: 0
     }
   }
@@ -196,6 +184,156 @@ export class DelaisProductionService {
   }
 
   /**
+   * Convertit un objet Date en format YYYY-MM-DD
+   */
+  static toISODateString(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  /**
+   * Extrait ou reconstruit la date de livraison cible d'une commande
+   */
+  static extraireDateLivraison(
+    dateLivTexte?: string,
+    dateLivISO?: string,
+    dateReferenceFallback?: string
+  ): Date {
+    if (dateLivISO) {
+      const parsedIso = new Date(dateLivISO);
+      if (!isNaN(parsedIso.getTime())) return parsedIso;
+    }
+    if (dateLivTexte) {
+      // Format complet avec année ex: "LIVRAISON : MERCREDI 16/09/2026" ou "LIVRÉ LE : 16/09/2026"
+      const fullMatch = dateLivTexte.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (fullMatch) {
+        const j = parseInt(fullMatch[1], 10);
+        const m = parseInt(fullMatch[2], 10) - 1;
+        const a = parseInt(fullMatch[3], 10);
+        return new Date(a, m, j);
+      }
+      // Format court sans année ex: "LIVRAISON : MERCREDI 16/09"
+      const shortMatch = dateLivTexte.match(/(\d{1,2})\/(\d{1,2})/);
+      if (shortMatch) {
+        const j = parseInt(shortMatch[1], 10);
+        const m = parseInt(shortMatch[2], 10) - 1;
+        let annee = new Date().getFullYear();
+        if (dateReferenceFallback) {
+          const fallbackDate = this.parseDateString(dateReferenceFallback);
+          annee = fallbackDate.getFullYear();
+        }
+        return new Date(annee, m, j);
+      }
+    }
+    if (dateReferenceFallback) {
+      return this.parseDateString(dateReferenceFallback);
+    }
+    return new Date();
+  }
+
+  /**
+   * Évalue le respect du délai de fabrication d'une commande.
+   * RÈGLE DEMANDÉE :
+   * Si une commande dépasse son délai de plus de 3 jours (retard >= 3 jours calendaires),
+   * le système affiche un drapeau (flag) distinctif et une alerte explicite :
+   * « 🚩 À VÉRIFIER EN ATELIER : DÉLAI NON RESPECTÉ (> 3j) ».
+   */
+  static evaluerStatutDelai(
+    dateLivPrevue?: string,
+    dateLivISO?: string,
+    dateCommande?: string,
+    statut?: string,
+    datePivot?: Date
+  ): InfoStatutDelai {
+    // Si la commande est déjà livrée ou clôturée, aucun retard d'atelier
+    if (statut === 'LIVRE' || statut === 'CLOTURE') {
+      return {
+        statutDelai: 'LIVRE',
+        joursDeRetard: 0,
+        estDepasse: false,
+        estRetardCritique: false,
+        texteAlerte: 'Commande livrée / clôturée',
+        badgeLabel: '✓ Livré',
+        badgeClasses: 'bg-emerald-950 text-emerald-300 border border-emerald-700/60',
+        ligneClasses: '',
+        flagEmoji: '✓'
+      };
+    }
+
+    const dateTarget = this.extraireDateLivraison(dateLivPrevue, dateLivISO, dateCommande);
+    const dateCible = new Date(dateTarget);
+    dateCible.setHours(0, 0, 0, 0);
+
+    const now = datePivot ? new Date(datePivot) : new Date();
+    now.setHours(0, 0, 0, 0);
+
+    // Calcul de la différence en jours
+    const diffMs = now.getTime() - dateCible.getTime();
+    const diffJours = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffJours >= 3) {
+      // RETARD CRITIQUE >= 3 JOURS : FLAG ROUGE VIF + VÉRIFICATION ATELIER REQUISE
+      return {
+        statutDelai: 'RETARD_CRITIQUE',
+        joursDeRetard: diffJours,
+        estDepasse: true,
+        estRetardCritique: true,
+        texteAlerte: `⚠️ DÉLAI NON RESPECTÉ (+${diffJours} jours) : À vérifier d'urgence dans l'atelier !`,
+        badgeLabel: `🚩 Retard +${diffJours}j : À VÉRIFIER EN ATELIER`,
+        badgeClasses: 'bg-rose-950 text-rose-200 border-2 border-rose-500 shadow-md shadow-rose-950/60 animate-pulse font-black',
+        ligneClasses: 'bg-rose-950/20 border-l-4 border-l-rose-500',
+        flagEmoji: '🚩',
+        dateLivraisonDate: dateCible
+      };
+    } else if (diffJours >= 1) {
+      // Retard modéré (1 ou 2 jours)
+      return {
+        statutDelai: 'RETARD_MODERE',
+        joursDeRetard: diffJours,
+        estDepasse: true,
+        estRetardCritique: false,
+        texteAlerte: `⚠️ Délai dépassé de ${diffJours} jour(s)`,
+        badgeLabel: `⚠️ Retard (+${diffJours}j)`,
+        badgeClasses: 'bg-amber-950 text-amber-300 border border-amber-600 font-bold',
+        ligneClasses: 'bg-amber-950/10 border-l-2 border-l-amber-500',
+        flagEmoji: '⚠️',
+        dateLivraisonDate: dateCible
+      };
+    } else if (diffJours === 0) {
+      // Échéance aujourd'hui
+      return {
+        statutDelai: 'ECHEANCE_AUJOURDHUI',
+        joursDeRetard: 0,
+        estDepasse: false,
+        estRetardCritique: false,
+        texteAlerte: `⏰ Livraison prévue aujourd'hui`,
+        badgeLabel: `⏰ Échéance aujourd'hui`,
+        badgeClasses: 'bg-amber-900/60 text-amber-200 border border-amber-500/50 font-semibold',
+        ligneClasses: '',
+        flagEmoji: '⏰',
+        dateLivraisonDate: dateCible
+      };
+    } else {
+      // Dans les délais
+      const joursRestants = Math.abs(diffJours);
+      return {
+        statutDelai: 'DANS_LES_TEMPS',
+        joursDeRetard: diffJours,
+        estDepasse: false,
+        estRetardCritique: false,
+        texteAlerte: `Dans les temps (reste ${joursRestants}j)`,
+        badgeLabel: `✓ Dans les délais`,
+        badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+        ligneClasses: '',
+        flagEmoji: '✓',
+        dateLivraisonDate: dateCible
+      };
+    }
+  }
+
+  /**
    * Compte le nombre total de pièces dans un dossier par famille
    */
   static compterPiecesDossierParFamille(dossier: DossierCommandeGlobal): Record<FamilleProduit, number> {
@@ -203,9 +341,7 @@ export class DelaisProductionService {
       CAISSON: 0,
       PRECADRE: 0,
       MOUSTIQUAIRE: 0,
-      TABLIER: 0,
-      SOUS_FACE: 0,
-      MULTI_FAMILLES: 0
+      TABLIER: 0
     };
 
     if (dossier.articlesCaissons && dossier.articlesCaissons.length > 0) {
@@ -257,19 +393,21 @@ export class DelaisProductionService {
     targetOF: SuiviOF,
     allSuivisOF: SuiviOF[],
     paramsCustom?: ParametresProductionAtelier
-  ): { dateLivraison: Date; texteFormatte: string; joursOuvresRequis: number } {
+  ): { dateLivraison: Date; texteFormatte: string; dateLivraisonISO: string; joursOuvresRequis: number } {
     // Si déjà livré avec une fiche de transfert
     if (targetOF.statut === 'LIVRE' && targetOF.dateLivraison) {
+      const dLivre = this.parseDateString(targetOF.dateLivraison);
       return {
-        dateLivraison: this.parseDateString(targetOF.dateLivraison),
+        dateLivraison: dLivre,
         texteFormatte: `LIVRÉ LE : ${targetOF.dateLivraison}`,
+        dateLivraisonISO: this.toISODateString(dLivre),
         joursOuvresRequis: 0
       };
     }
 
     const params = paramsCustom || this.getParametres();
     const fam = targetOF.famille || 'CAISSON';
-    const famKey: FamilleProduit = (fam === 'SOUS_FACE' ? 'CAISSON' : fam) as FamilleProduit;
+    const famKey: FamilleProduit = ((fam as string) === 'SOUS_FACE' ? 'CAISSON' : fam) as FamilleProduit;
     const configFam = params.familles[famKey] || params.familles.CAISSON;
 
     // Récupérer tous les OFs en cours de la même famille émis avant cet OF
@@ -282,7 +420,7 @@ export class DelaisProductionService {
       if (of.id === targetOF.id) return;
       if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
 
-      const ofFam = of.famille === 'SOUS_FACE' ? 'CAISSON' : of.famille;
+      const ofFam = (of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille;
       if (ofFam === famKey) {
         const otherSeq = of.numeroEmission || 0;
         // Si l'autre OF est antérieur dans la file FIFO
@@ -301,6 +439,7 @@ export class DelaisProductionService {
     return {
       dateLivraison,
       texteFormatte: this.formaterDateLivraison(dateLivraison),
+      dateLivraisonISO: this.toISODateString(dateLivraison),
       joursOuvresRequis: Math.max(1, Math.ceil(joursRequis))
     };
   }
@@ -322,6 +461,7 @@ export class DelaisProductionService {
       return {
         dateMaximale: dLivre,
         dateLivraisonFormattee: `LIVRÉ LE : ${dossier.dateLivraison}`,
+        dateLivraisonISO: this.toISODateString(dLivre),
         joursOuvresMax: 0,
         detailsParFamille: {}
       };
@@ -350,7 +490,7 @@ export class DelaisProductionService {
       let piecesEnFile = 0;
       const ofsEnCours = suivisOF.filter(o =>
         (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE') &&
-        (o.famille === fam || (fam === 'CAISSON' && o.famille === 'SOUS_FACE'))
+        (o.famille === fam || (fam === 'CAISSON' && (o.famille as string) === 'SOUS_FACE'))
       );
 
       ofsEnCours.forEach(o => {
@@ -406,6 +546,7 @@ export class DelaisProductionService {
     return {
       dateMaximale: dateMax,
       dateLivraisonFormattee: this.formaterDateLivraison(dateMax),
+      dateLivraisonISO: this.toISODateString(dateMax),
       joursOuvresMax: joursMax,
       detailsParFamille
     };

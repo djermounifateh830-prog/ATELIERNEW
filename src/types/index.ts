@@ -175,6 +175,7 @@ export interface BesoinMoustiquaire {
   articleDesignationMaille?: string;
   articleCodeCadre?: string;
   articleDesignationCadre?: string;
+  articleDesignation?: string;
   articleCodeCoulisse?: string;
   articleDesignationCoulisse?: string;
   articleCodeBarreInf?: string;
@@ -226,6 +227,7 @@ export interface CommandePrecadre {
   jeuMaconnerie?: number; // Obsolete / 0mm
   articleCode?: string;
   articleDesignation?: string;
+  typePrecadre?: 'TYPE_36' | 'TYPE_50' | string; // Type 36 mm ou Type 50 mm
   bouchonArticleCode?: string;
   bouchonArticleDesignation?: string;
   typeAssemblage?: 'BOUCHON' | 'EQUERRE';
@@ -256,6 +258,7 @@ export interface DossierCommandeGlobal {
   ficheTransfertId?: string; // ID de la fiche de transfert associée lors de la livraison
   dateLivraison?: string;    // Date de remise au transporteur
   dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
+  dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
   nomChauffeur?: string;     // Nom du chauffeur transporteur
 }
@@ -449,6 +452,7 @@ export interface SuiviOF {
   ficheTransfertId?: string;
   dateLivraison?: string;
   dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
+  dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
   nomChauffeur?: string;
 }
@@ -555,8 +559,29 @@ export interface EstimationDelaiDetail {
 export interface EstimationLivraisonDossier {
   dateMaximale: Date;
   dateLivraisonFormattee: string;     // ex: "LIVRAISON : MERCREDI 16/09"
+  dateLivraisonISO?: string;          // ex: "2026-09-16"
   joursOuvresMax: number;
   detailsParFamille: Record<string, EstimationDelaiDetail>;
+}
+
+export type StatutRespectDelai =
+  | 'DANS_LES_TEMPS'
+  | 'ECHEANCE_AUJOURDHUI'
+  | 'RETARD_MODERE'
+  | 'RETARD_CRITIQUE'
+  | 'LIVRE';
+
+export interface InfoStatutDelai {
+  statutDelai: StatutRespectDelai;
+  joursDeRetard: number;
+  estDepasse: boolean;
+  estRetardCritique: boolean; // >= 3 jours
+  texteAlerte: string;
+  badgeLabel: string;
+  badgeClasses: string;
+  ligneClasses: string;
+  flagEmoji: string;
+  dateLivraisonDate?: Date;
 }
 
 

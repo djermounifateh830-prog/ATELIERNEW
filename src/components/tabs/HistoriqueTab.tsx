@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   History,
   Search,
@@ -231,8 +231,8 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               >
                 <div className="space-y-2">
                   {/* Top Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-sm font-black text-amber-300 bg-amber-950/60 px-2.5 py-0.5 rounded border border-amber-500/30">
                         {dossier.refCommande}
                       </span>
@@ -240,6 +240,15 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                         <Calendar className="w-3 h-3 text-slate-500" />
                         {dossier.dateCommande}
                       </span>
+                      {(() => {
+                        const dateAffichee = dossier.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiDossier(dossier, dossiers, suivisOF).dateLivraisonFormattee;
+                        return (
+                          <span className="text-[11px] font-mono font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-amber-400" />
+                            <span>{dateAffichee}</span>
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <span

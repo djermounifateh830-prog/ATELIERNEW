@@ -43,12 +43,14 @@ import {
   Truck,
   FileCheck,
   RotateCcw,
-  Ban
+  Ban,
+  Activity
 } from 'lucide-react';
 
 interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
   onRefreshData: () => void;
+  onNavigateToTab?: (tabId: string) => void;
   dossiers?: DossierCommandeGlobal[];
   clientCodifications?: ClientCodification[];
   fichesTransfert?: FicheTransfert[];
@@ -60,6 +62,7 @@ interface OrdresEnCoursTabProps {
 export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   suivisOF = [],
   onRefreshData,
+  onNavigateToTab,
   dossiers = [],
   clientCodifications = [],
   fichesTransfert = [],
@@ -299,6 +302,17 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {onNavigateToTab && (
+            <button
+              onClick={() => onNavigateToTab('monitoring')}
+              className="px-3.5 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-emerald-500/40 shadow-sm transition cursor-pointer"
+              title="Ouvrir le tableau de bord de monitoring (Stats Caissons 25/30/40, Tabliers 43/55 et délais)"
+            >
+              <Activity className="w-4 h-4 text-emerald-400" />
+              <span>📊 Monitoring Atelier</span>
+            </button>
+          )}
+
           {/* Bouton Créer Fiche de Transfert */}
           <button
             onClick={() => {

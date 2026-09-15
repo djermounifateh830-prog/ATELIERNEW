@@ -137,7 +137,6 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
   const getFamilleIcon = (fam: FamilleProduit) => {
     switch (fam) {
       case 'CAISSON':
-      case 'SOUS_FACE':
         return <Layers className="w-5 h-5 text-amber-400" />;
       case 'PRECADRE':
         return <Boxes className="w-5 h-5 text-purple-400" />;

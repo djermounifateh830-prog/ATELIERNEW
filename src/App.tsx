@@ -10,6 +10,7 @@ import { DevisTab } from './components/tabs/DevisTab';
 import { DocumentationTab } from './components/tabs/DocumentationTab';
 import { HistoriqueTab } from './components/tabs/HistoriqueTab';
 import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
+import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
 import { StorageService } from './services/storage';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
 
@@ -112,6 +113,7 @@ export default function App() {
         chutesBarres={chutesBarres}
         chutesMaille={chutesMaille}
         suivisOF={suivisOF}
+        dossiers={dossiers}
         articlesCount={articles.length}
         chutesSheetsCount={chutesSheetsCount}
         onRefreshData={loadData}
@@ -119,6 +121,16 @@ export default function App() {
 
       {/* Main Content Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {activeTab === 'monitoring' && (
+          <MonitoringAtelierTab
+            dossiers={dossiers}
+            suivisOF={suivisOF}
+            articles={articles}
+            onRefreshData={loadData}
+            onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
+          />
+        )}
+
         {activeTab === 'ecosysteme' && (
           <EcosystemeCommandesTab
             articles={articles}
@@ -140,6 +152,7 @@ export default function App() {
             clientCodifications={clientCodifications}
             fichesTransfert={fichesTransfert}
             onRefreshData={loadData}
+            onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
             articles={articles}
             chutesBarres={chutesBarres}
             mapping={mapping}

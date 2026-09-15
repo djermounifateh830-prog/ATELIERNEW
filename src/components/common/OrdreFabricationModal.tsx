@@ -502,10 +502,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       const ofRef: SuiviOF = match || {
         id: 'preview',
         numCommande: refCommande || 'CMD',
+        nomClient: nomClient || agenceInfo.nom || '',
+        donneurOrdre: donneurOrdre || agenceInfo.nom || '',
         famille: familleRecherche,
         statut: 'EMIS',
         dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
-        titreSection: titreProduit,
+        titreSection: titreProduit || '',
         totalBarresNeuvesPrevu: 0,
         totalChutesUtiliseesPrevu: 0,
         lignesRetour: []

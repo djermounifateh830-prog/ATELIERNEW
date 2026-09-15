@@ -720,6 +720,23 @@ export class StorageService {
     }
   }
 
+  static async saveSuivisOF(suivis: SuiviOF[]): Promise<void> {
+    try {
+      await this.request('/api/of', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(suivis)
+      });
+      logger.sqlite('Suivis OF', `${suivis.length} ordre(s) de fabrication sauvegardé(s) en SQLite.`, {
+        count: suivis.length
+      });
+    } catch (e: any) {
+      console.error('Erreur sauvegarde suivis OF:', e);
+      logger.error('Suivis OF', 'Erreur lors de la sauvegarde globale des suivis OF en SQLite.', { error: e.message });
+      throw e;
+    }
+  }
+
   static async upsertSuiviOF(suivi: SuiviOF): Promise<void> {
     try {
       await this.request('/api/of', {

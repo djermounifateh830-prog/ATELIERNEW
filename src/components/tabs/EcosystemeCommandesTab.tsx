@@ -3637,10 +3637,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
       const prcCode = prcObj?.code_art || precadreConfig.articleCode || 'ART0060';
       const prcDesig = prcObj?.designation || 'PRÉCADRE PRC 43';
-      const bchCode = bchObj?.code_art || precadreConfig.bouchonArticleCode || 'ART0065';
-      const bchDesig = bchObj?.designation || 'BOUCHON PRECADRE 43';
+      const bchCode = bchObj?.code_art || precadreConfig.bouchonArticleCode || 'ART0072';
+      const bchDesig = bchObj?.designation || 'BOUCHON PRÉCADRE 36';
 
       const formattedRefPrc = formaterRefCommandeAvecPrefixe(numCommandePrecadre, monClient, clientCodifications) || 'CMD-PRC';
+      const is50 = prcDesig.includes('50') || prcCode === 'ART0071' || (precadreConfig as any).typePrecadre === 'TYPE_50';
       const nouvelleLigne: CommandePrecadre = {
         id: String(Date.now()),
         refCommande: formattedRefPrc,
@@ -3659,6 +3660,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         jeuMaconnerie: 0,
         articleCode: prcCode,
         articleDesignation: prcDesig,
+        typePrecadre: is50 ? 'TYPE_50' : 'TYPE_36',
         bouchonArticleCode: bchCode,
         bouchonArticleDesignation: bchDesig,
         typeAssemblage: hasDebordement ? 'EQUERRE' : 'BOUCHON'

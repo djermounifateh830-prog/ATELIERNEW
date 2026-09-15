@@ -351,6 +351,10 @@ class AtelierDatabase {
         stmtJ.run('ART0064', 'CT JOUE 30', 'NORMAL', 0, 0, 0, 0, 0, 0, 350, 0, 300, 50);
         stmtJ.run('ART0067', 'CT JOUE 35', 'NORMAL', 0, 0, 0, 0, 0, 0, 150, 0, 350, 30);
         stmtJ.run('ART0068', 'CT JOUE 40', 'NORMAL', 0, 0, 0, 0, 0, 0, 100, 0, 400, 20);
+        stmtJ.run('ART0070', 'PRÉCADRE TYPE 36', 'NORMAL', 36, 6000, 4.0, 0, 300, 1200, 55, 0, 2350, 10);
+        stmtJ.run('ART0071', 'PRÉCADRE TYPE 50', 'NORMAL', 50, 6000, 4.0, 0, 300, 1200, 48, 0, 2750, 10);
+        stmtJ.run('ART0072', 'BOUCHON PRECADRE 36', 'NORMAL', 36, 6000, 4.0, -10, 200, 1000, 250, 0, 140, 50);
+        stmtJ.run('ART0073', 'BOUCHON PRECADRE 50', 'NORMAL', 50, 6000, 4.0, -10, 200, 1000, 250, 0, 160, 50);
       }
       return; // Ne jamais ré-écraser les choix de l'utilisateur une fois initialisé
     }

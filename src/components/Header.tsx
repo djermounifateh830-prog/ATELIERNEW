@@ -15,12 +15,13 @@ import {
   Boxes,
   History,
   Terminal,
-  ClipboardCheck
+  ClipboardCheck,
+  Activity
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
 import { SystemLogsModal } from './common/SystemLogsModal';
 import { ParametresProductionModal } from './common/ParametresProductionModal';
-import { Article, ChuteItem, ChuteMaille, SuiviOF } from '../types';
+import { Article, ChuteItem, ChuteMaille, SuiviOF, DossierCommandeGlobal } from '../types';
 
 interface HeaderProps {
   activeTab: string;
@@ -29,6 +30,7 @@ interface HeaderProps {
   chutesBarres?: Record<string, ChuteItem[]>;
   chutesMaille?: ChuteMaille[];
   suivisOF?: SuiviOF[];
+  dossiers?: DossierCommandeGlobal[];
   articlesCount: number;
   chutesSheetsCount: number;
   onRefreshData: () => void;
@@ -41,6 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
   chutesBarres = {},
   chutesMaille = [],
   suivisOF = [],
+  dossiers = [],
   articlesCount,
   chutesSheetsCount,
   onRefreshData
@@ -93,8 +96,17 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const activeOfCount = suivisOF.filter(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE').length;
+  const dossiersActifsCount = (dossiers || []).filter(d => d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE').length;
+  const totalActifsAtelier = Math.max(activeOfCount, dossiersActifsCount);
 
   const tabs = [
+    {
+      id: 'monitoring',
+      label: '📊 Monitoring Atelier',
+      icon: Activity,
+      badge: totalActifsAtelier > 0 ? totalActifsAtelier : undefined,
+      badgeBg: 'bg-emerald-600 text-white'
+    },
     { id: 'ecosysteme', label: '📁 Écosystème & Commandes', icon: Boxes },
     {
       id: 'encours',
