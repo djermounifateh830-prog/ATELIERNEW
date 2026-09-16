@@ -87,21 +87,28 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       }
       // Filtre sous-type précis (ex: 25, 30, 40, 43, 55, Précadre 36/50, Moustiquaires)
       if (filtreSousType !== 'TOUS') {
-        if (cmd.sousTypeCle && cmd.sousTypeCle === filtreSousType) {
-          // Correspondance exacte sur la clé typée
+        const cles: string[] = (cmd.sousTypesCles && cmd.sousTypesCles.length > 0)
+          ? cmd.sousTypesCles
+          : (cmd.sousTypeCle ? [cmd.sousTypeCle] : []);
+
+        if (cles.length > 0) {
+          if (!cles.includes(filtreSousType)) {
+            return false;
+          }
         } else {
-          const typeStr = (cmd.typePrecision + ' ' + cmd.detailArticles + ' ' + (cmd.sousTypeCle || '')).toUpperCase();
-          if (filtreSousType === 'CAISSON_30' && !typeStr.includes('30')) return false;
-          if (filtreSousType === 'CAISSON_25' && !typeStr.includes('25')) return false;
-          if (filtreSousType === 'CAISSON_40' && !typeStr.includes('40')) return false;
-          if (filtreSousType === 'TABLIER_43' && !typeStr.includes('43')) return false;
-          if (filtreSousType === 'TABLIER_55' && !typeStr.includes('55')) return false;
-          if (filtreSousType === 'PRECADRE_36' && !(typeStr.includes('36') || typeStr.includes('PRECADRE_36'))) return false;
-          if (filtreSousType === 'PRECADRE_50' && !(typeStr.includes('50') || typeStr.includes('PRECADRE_50'))) return false;
-          if (filtreSousType === 'MSTQ_PORTE_FENETRE' && !(typeStr.includes('PORTE') || typeStr.includes('PF'))) return false;
-          if (filtreSousType === 'MSTQ_FENETRE' && !(typeStr.includes('FENETRE') || typeStr.includes('FENÊTRE') || typeStr.includes('1 VANTAIL'))) return false;
-          if (filtreSousType === 'MSTQ_DOUBLE_VANTAUX' && !(typeStr.includes('DOUBLE') || typeStr.includes('VENTO') || typeStr.includes('VANTAUX') || typeStr.includes('DV'))) return false;
-          if (filtreSousType === 'MSTQ_FIXE' && !(typeStr.includes('FIX') || typeStr.includes('FIXE'))) return false;
+          // Fallback uniquement sur typePrecision (JAMAIS sur detailArticles pour éviter les longueurs comme 1300mm, 2300mm)
+          const p = (cmd.typePrecision || '').toUpperCase();
+          if (filtreSousType === 'CAISSON_30' && !(/\b30\b|CAISSON\s*30/i.test(p))) return false;
+          if (filtreSousType === 'CAISSON_25' && !(/\b25\b|CAISSON\s*25/i.test(p))) return false;
+          if (filtreSousType === 'CAISSON_40' && !(/\b40\b|CAISSON\s*40/i.test(p))) return false;
+          if (filtreSousType === 'TABLIER_43' && !(/\b43\b|LAME\s*43/i.test(p))) return false;
+          if (filtreSousType === 'TABLIER_55' && !(/\b55\b|LAME\s*55/i.test(p))) return false;
+          if (filtreSousType === 'PRECADRE_36' && !(/\b36\b|PRECADRE\s*36/i.test(p))) return false;
+          if (filtreSousType === 'PRECADRE_50' && !(/\b50\b|PRECADRE\s*50/i.test(p))) return false;
+          if (filtreSousType === 'MSTQ_PORTE_FENETRE' && !(p.includes('PORTE') || p.includes('PF'))) return false;
+          if (filtreSousType === 'MSTQ_FENETRE' && (p.includes('PORTE') || !(p.includes('FENETRE') || p.includes('FENÊTRE') || p.includes('1 VANTAIL')))) return false;
+          if (filtreSousType === 'MSTQ_DOUBLE_VANTAUX' && !(p.includes('DOUBLE') || p.includes('VENTO') || p.includes('VANTAUX') || p.includes('DV'))) return false;
+          if (filtreSousType === 'MSTQ_FIXE' && !(p.includes('FIX') || p.includes('FIXE'))) return false;
         }
       }
       // Filtre recherche textuelle
@@ -1123,7 +1130,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('CAISSON');
-                setFiltreSousType('CAISSON_30');
+                setFiltreSousType(filtreSousType === 'CAISSON_30' ? 'TOUS' : 'CAISSON_30');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'CAISSON_30'
@@ -1137,7 +1144,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('CAISSON');
-                setFiltreSousType('CAISSON_25');
+                setFiltreSousType(filtreSousType === 'CAISSON_25' ? 'TOUS' : 'CAISSON_25');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'CAISSON_25'
@@ -1151,7 +1158,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('CAISSON');
-                setFiltreSousType('CAISSON_40');
+                setFiltreSousType(filtreSousType === 'CAISSON_40' ? 'TOUS' : 'CAISSON_40');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'CAISSON_40'
@@ -1179,7 +1186,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('TABLIER');
-                setFiltreSousType('TABLIER_43');
+                setFiltreSousType(filtreSousType === 'TABLIER_43' ? 'TOUS' : 'TABLIER_43');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'TABLIER_43'
@@ -1193,7 +1200,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('TABLIER');
-                setFiltreSousType('TABLIER_55');
+                setFiltreSousType(filtreSousType === 'TABLIER_55' ? 'TOUS' : 'TABLIER_55');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'TABLIER_55'
@@ -1222,7 +1229,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('PRECADRE');
-                setFiltreSousType('PRECADRE_36');
+                setFiltreSousType(filtreSousType === 'PRECADRE_36' ? 'TOUS' : 'PRECADRE_36');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'PRECADRE_36'
@@ -1236,7 +1243,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('PRECADRE');
-                setFiltreSousType('PRECADRE_50');
+                setFiltreSousType(filtreSousType === 'PRECADRE_50' ? 'TOUS' : 'PRECADRE_50');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'PRECADRE_50'
@@ -1265,7 +1272,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType('MSTQ_PORTE_FENETRE');
+                setFiltreSousType(filtreSousType === 'MSTQ_PORTE_FENETRE' ? 'TOUS' : 'MSTQ_PORTE_FENETRE');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'MSTQ_PORTE_FENETRE'
@@ -1279,7 +1286,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType('MSTQ_FENETRE');
+                setFiltreSousType(filtreSousType === 'MSTQ_FENETRE' ? 'TOUS' : 'MSTQ_FENETRE');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'MSTQ_FENETRE'
@@ -1293,7 +1300,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType('MSTQ_DOUBLE_VANTAUX');
+                setFiltreSousType(filtreSousType === 'MSTQ_DOUBLE_VANTAUX' ? 'TOUS' : 'MSTQ_DOUBLE_VANTAUX');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'MSTQ_DOUBLE_VANTAUX'
@@ -1307,7 +1314,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             <button
               onClick={() => {
                 setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType('MSTQ_FIXE');
+                setFiltreSousType(filtreSousType === 'MSTQ_FIXE' ? 'TOUS' : 'MSTQ_FIXE');
               }}
               className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
                 filtreSousType === 'MSTQ_FIXE'

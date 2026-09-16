@@ -739,20 +739,38 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       {/* Actions */}
                       <td className="py-2.5 px-2 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
-                          {/* Bouton Marquer Retour Reçu si EMIS */}
+                          {/* Actions selon le statut de l'OF */}
                           {isEmis && (
-                            <button
-                              onClick={() => handleMarquerRetourRecu(of)}
-                              title="Marquer comme retour reçu de l'atelier"
-                              className="px-2 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-700/50 rounded-md text-[11px] font-bold transition cursor-pointer flex items-center gap-1"
-                            >
-                              <Clock className="w-3 h-3" />
-                              <span>Reçu</span>
-                            </button>
+                            /* Un ordre doit être reçu de l'atelier avant de pouvoir être clôturé */
+                            <>
+                              <button
+                                onClick={() => handleMarquerRetourRecu(of)}
+                                title="Marquer comme retour reçu de l'atelier pour pouvoir clôturer l'OF"
+                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
+                              >
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>Marquer Reçu</span>
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  await handleMarquerRetourRecu(of);
+                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                  localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
+                                  if (onNavigateToTab) {
+                                    onNavigateToTab('cockpit-cloture');
+                                  }
+                                }}
+                                title="Marquer le retour atelier comme reçu et ouvrir directement le Cockpit de clôture"
+                                className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                              >
+                                <Scale className="w-3 h-3" />
+                                <span>Reçu &amp; Cockpit</span>
+                              </button>
+                            </>
                           )}
 
-                          {/* Bouton Saisir Corrections & Clôturer si non clôturé */}
-                          {!isCloture && !isLivre ? (
+                          {isAttente && (
+                            /* Ordre Reçu de l'atelier : prêt pour la clôture */
                             <>
                               <button
                                 onClick={() => {
@@ -762,10 +780,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                                     onNavigateToTab('cockpit-cloture');
                                   }
                                 }}
-                                title="Clôturer rapidement via le nouveau Cockpit Éclair (Votre Méthode par Exception)"
-                                className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
+                                title="Clôturer rapidement via le Cockpit Éclair"
+                                className="px-2.5 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
                               >
-                                <Scale className="w-3 h-3" />
+                                <Scale className="w-3.5 h-3.5" />
                                 <span>Cockpit</span>
                               </button>
                               <button
@@ -783,7 +801,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                                 <span>Classique</span>
                               </button>
                             </>
-                          ) : (
+                          )}
+
+                          {(isCloture || isLivre) && (
                             <button
                               onClick={() => {
                                 setSelectedSuiviForDetails(of);

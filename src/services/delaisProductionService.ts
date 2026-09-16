@@ -262,6 +262,21 @@ export class DelaisProductionService {
       };
     }
 
+    // Si la commande est en pause / interrompue (rupture matière, attente client...)
+    if (statut === 'EN_PAUSE') {
+      return {
+        statutDelai: 'EN_PAUSE',
+        joursDeRetard: 0,
+        estDepasse: false,
+        estRetardCritique: false,
+        texteAlerte: '⏸️ Commande suspendue temporairement (En pause)',
+        badgeLabel: '⏸️ En Pause',
+        badgeClasses: 'bg-amber-950 text-amber-300 border-2 border-amber-500 shadow-md font-black',
+        ligneClasses: 'bg-amber-950/25 border-l-4 border-l-amber-500',
+        flagEmoji: '⏸️'
+      };
+    }
+
     const dateTarget = this.extraireDateLivraison(dateLivPrevue, dateLivISO, dateCommande);
     const dateCible = new Date(dateTarget);
     dateCible.setHours(0, 0, 0, 0);
@@ -405,6 +420,16 @@ export class DelaisProductionService {
       };
     }
 
+    // Si l'OF est en pause / interrompu pour rupture de stock ou attente
+    const estEnPauseOF = targetOF.statut === 'EN_PAUSE' || targetOF.estEnPause;
+    let joursInterruptionOF = targetOF.dureePauseJours || 0;
+    if (estEnPauseOF && targetOF.datePause) {
+      const dPause = this.parseDateString(targetOF.datePause);
+      const now = new Date();
+      const diffJours = Math.max(0, Math.floor((now.getTime() - dPause.getTime()) / (1000 * 60 * 60 * 24)));
+      joursInterruptionOF = Math.max(joursInterruptionOF, diffJours);
+    }
+
     // Si une date personnalisée ou prioritaire a été définie pour cet OF
     if (targetOF.dateLivraisonPrevisionnelle) {
       let dateLiv: Date | null = null;
@@ -421,18 +446,31 @@ export class DelaisProductionService {
           dateLiv = new Date();
         }
       }
+
+      // Si l'OF a subi une interruption (pause), décaler la date de livraison personnalisée d'autant de jours ouvrés
+      if (joursInterruptionOF > 0 && dateLiv) {
+        const paramsProd = paramsCustom || this.getParametres();
+        dateLiv = this.ajouterJoursOuvres(dateLiv, joursInterruptionOF, paramsProd.joursOuvres);
+      }
+
       const prefix = targetOF.estPrioritaire ? '⚡ ' : '';
-      const texteAffiche = targetOF.dateLivraisonPrevisionnelle.startsWith('⚡') || targetOF.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
+      let texteAffiche = targetOF.dateLivraisonPrevisionnelle.startsWith('⚡') || targetOF.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
         ? targetOF.dateLivraisonPrevisionnelle
         : targetOF.estPrioritaire
         ? `⚡ PRIORITAIRE : ${targetOF.dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')}`
         : targetOF.dateLivraisonPrevisionnelle;
 
+      if (estEnPauseOF) {
+        texteAffiche = `⏸️ EN PAUSE : ${targetOF.motifPause || 'Rupture'}`;
+      } else if (joursInterruptionOF > 0 && dateLiv) {
+        texteAffiche = this.formaterDateLivraison(dateLiv);
+      }
+
       return {
         dateLivraison: dateLiv,
         texteFormatte: texteAffiche,
-        dateLivraisonISO: targetOF.dateLivraisonPrevisionnelleISO || this.toISODateString(dateLiv),
-        joursOuvresRequis: targetOF.delaiPrevisionnelJours || (targetOF.estPrioritaire ? 1 : 2)
+        dateLivraisonISO: this.toISODateString(dateLiv),
+        joursOuvresRequis: (targetOF.delaiPrevisionnelJours || (targetOF.estPrioritaire ? 1 : 2)) + joursInterruptionOF
       };
     }
 
@@ -452,6 +490,8 @@ export class DelaisProductionService {
         // Ne considérer que les OFs encore en cours de fabrication
         if (of.id === targetOF.id) return;
         if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
+        // 💡 Les OFs mis en pause (rupture...) ne bloquent pas les machines pour les autres commandes actives
+        if (of.estEnPause) return;
 
         const ofFam = (of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille;
         if (ofFam === famKey) {
@@ -467,11 +507,14 @@ export class DelaisProductionService {
     const piecesTarget = this.compterPiecesOF(targetOF);
     const totalPieces = piecesEnFileAttente + piecesTarget;
     const capaciteJour = configFam.capaciteJournalierePieces || 120;
-    const joursRequis = totalPieces / capaciteJour + (configFam.delaiFixeJours || 0);
+    const joursRequis = totalPieces / capaciteJour + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
 
     const dateLivraison = this.ajouterJoursOuvres(ofDateRef, targetOF.estPrioritaire ? Math.min(1, joursRequis) : joursRequis, params.joursOuvres);
     const texteDate = this.formaterDateLivraison(dateLivraison);
-    const texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
+    let texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
+    if (estEnPauseOF) {
+      texteFinal = `⏸️ EN PAUSE : ${targetOF.motifPause || 'Rupture'}`;
+    }
 
     return {
       dateLivraison,
@@ -504,6 +547,16 @@ export class DelaisProductionService {
       };
     }
 
+    // Si le dossier est en pause / interrompu pour rupture de stock ou attente
+    const estEnPauseDossier = dossier.statut === 'EN_PAUSE' || dossier.estEnPause;
+    let joursInterruptionDossier = dossier.dureePauseJours || 0;
+    if (estEnPauseDossier && dossier.datePause) {
+      const dPause = this.parseDateString(dossier.datePause);
+      const now = new Date();
+      const diffJours = Math.max(0, Math.floor((now.getTime() - dPause.getTime()) / (1000 * 60 * 60 * 24)));
+      joursInterruptionDossier = Math.max(joursInterruptionDossier, diffJours);
+    }
+
     // Si une date personnalisée ou prioritaire a été définie pour ce dossier
     if (dossier.dateLivraisonPrevisionnelle) {
       let dateLiv: Date | null = null;
@@ -520,17 +573,30 @@ export class DelaisProductionService {
           dateLiv = new Date();
         }
       }
-      const texteAffiche = dossier.dateLivraisonPrevisionnelle.startsWith('⚡') || dossier.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
+
+      // Si le dossier a été interrompu, décaler la date de livraison personnalisée d'autant de jours ouvrés
+      if (joursInterruptionDossier > 0 && dateLiv) {
+        const paramsProd = paramsCustom || this.getParametres();
+        dateLiv = this.ajouterJoursOuvres(dateLiv, joursInterruptionDossier, paramsProd.joursOuvres);
+      }
+
+      let texteAffiche = dossier.dateLivraisonPrevisionnelle.startsWith('⚡') || dossier.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
         ? dossier.dateLivraisonPrevisionnelle
         : dossier.estPrioritaire
         ? `⚡ PRIORITAIRE : ${dossier.dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')}`
         : dossier.dateLivraisonPrevisionnelle;
 
+      if (estEnPauseDossier) {
+        texteAffiche = `⏸️ EN PAUSE : ${dossier.motifPause || 'Rupture'}`;
+      } else if (joursInterruptionDossier > 0 && dateLiv) {
+        texteAffiche = this.formaterDateLivraison(dateLiv);
+      }
+
       return {
         dateMaximale: dateLiv,
         dateLivraisonFormattee: texteAffiche,
-        dateLivraisonISO: dossier.dateLivraisonPrevisionnelleISO || this.toISODateString(dateLiv),
-        joursOuvresMax: dossier.delaiPrevisionnelJours || (dossier.estPrioritaire ? 1 : 2),
+        dateLivraisonISO: this.toISODateString(dateLiv),
+        joursOuvresMax: (dossier.delaiPrevisionnelJours || (dossier.estPrioritaire ? 1 : 2)) + joursInterruptionDossier,
         detailsParFamille: {}
       };
     }
@@ -554,10 +620,11 @@ export class DelaisProductionService {
       const configFam = params.familles[fam] || PARAMETRES_PRODUCTION_DEFAUT.familles[fam];
 
       // Calculer le volume des travaux en cours de cette famille
-      // 1. D'après les OFs en cours de cette famille
+      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
       let piecesEnFile = 0;
       const ofsEnCours = suivisOF.filter(o =>
         (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE') &&
+        !o.estEnPause &&
         (o.famille === fam || (fam === 'CAISSON' && (o.famille as string) === 'SOUS_FACE'))
       );
 
@@ -571,10 +638,10 @@ export class DelaisProductionService {
         piecesEnFile += this.compterPiecesOF(o);
       });
 
-      // 2. D'après les autres dossiers en cours antérieurs si pas encore d'OF
+      // 2. D'après les autres dossiers en cours antérieurs si pas encore d'OF (en excluant les suspendus)
       tousDossiers.forEach(d => {
         if (d.id === dossier.id) return;
-        if (d.statut !== 'EN_COURS') return;
+        if (d.statut !== 'EN_COURS' || d.estEnPause) return;
         // Éviter double compte si un OF existe déjà pour ce dossier
         const hasOF = suivisOF.some(o => o.numCommande === d.refCommande);
         if (!hasOF) {
@@ -585,7 +652,7 @@ export class DelaisProductionService {
 
       const totalChargePieces = piecesEnFile + nbPieces;
       const cap = configFam.capaciteJournalierePieces || 120;
-      const joursRequis = totalChargePieces / cap + (configFam.delaiFixeJours || 0);
+      const joursRequis = totalChargePieces / cap + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
       const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursRequis, params.joursOuvres);
 
       if (dateEstimee.getTime() > dateMax.getTime()) {
@@ -607,13 +674,18 @@ export class DelaisProductionService {
 
     if (!auMoinsUneFamille) {
       // Dossier sans pièces configurées : délai standard de 1 jour ouvré
-      dateMax = this.ajouterJoursOuvres(dateDepart, 1, params.joursOuvres);
-      joursMax = 1;
+      dateMax = this.ajouterJoursOuvres(dateDepart, 1 + joursInterruptionDossier, params.joursOuvres);
+      joursMax = 1 + joursInterruptionDossier;
     }
+
+    const texteDateDossier = this.formaterDateLivraison(dateMax);
+    const texteFinalDossier = estEnPauseDossier
+      ? `⏸️ EN PAUSE : ${dossier.motifPause || 'Rupture'}`
+      : texteDateDossier;
 
     return {
       dateMaximale: dateMax,
-      dateLivraisonFormattee: this.formaterDateLivraison(dateMax),
+      dateLivraisonFormattee: texteFinalDossier,
       dateLivraisonISO: this.toISODateString(dateMax),
       joursOuvresMax: joursMax,
       detailsParFamille

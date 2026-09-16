@@ -12,11 +12,13 @@ import {
   RefreshCw,
   Clock,
   ChevronRight,
-  ShieldCheck
+  ShieldCheck,
+  ArrowLeft
 } from 'lucide-react';
 import { Article, ChuteItem, DossierCommandeGlobal, SuiviOF } from '../../types';
 import { ConcordanceOFService, BilanCockpitOF } from '../../services/concordanceOFService';
 import { SimulationClotureTester, ResultatSimulation } from '../../services/simulationClotureTester';
+import { StorageService } from '../../services/storage';
 import { CockpitEclairView } from './cloture/CockpitEclairView';
 import { ClotureClassiqueView } from './cloture/ClotureClassiqueView';
 
@@ -131,7 +133,19 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
     <div className="space-y-6 pb-12">
       {/* ── Entête Supérieur avec Switcher de Mode ── */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div className="flex items-center gap-4">
+          {onNavigateToTab && (
+            <button
+              type="button"
+              onClick={() => onNavigateToTab('encours')}
+              className="px-3.5 py-2 rounded-2xl bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-sm group"
+              title="Revenir à la liste des Ordres en Cours"
+            >
+              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform text-amber-400" />
+              <span>← Ordres en Cours</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-500 flex items-center justify-center text-slate-950 font-black shadow-lg shadow-emerald-500/20">
               <Scale className="w-5 h-5" />
@@ -352,7 +366,38 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
           </div>
 
           {/* Panneau de droite : Espace de travail de Clôture */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-3 space-y-4">
+            {/* Avertissement statut : un ordre doit être reçu pour être clôturé */}
+            {currentOF && currentOF.statut === 'EMIS' && (
+              <div className="bg-amber-950/60 border border-amber-600/70 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-amber-200">
+                      Ordre de Fabrication en statut ÉMIS (en cours à l'atelier)
+                    </h4>
+                    <p className="text-[11px] text-amber-300/80 mt-0.5">
+                      Un ordre doit impérativement être marqué comme <strong>REÇU</strong> de l'atelier pour pouvoir être clôturé.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const updated: SuiviOF = { ...currentOF, statut: 'RETOUR_EN_ATTENTE' };
+                    await StorageService.upsertSuiviOF(updated);
+                    onRefreshData();
+                  }}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-md cursor-pointer transition"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Marquer comme Reçu maintenant</span>
+                </button>
+              </div>
+            )}
+
             {!currentOF ? (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-slate-500">
                 <Scale className="w-12 h-12 mx-auto mb-3 opacity-30" />

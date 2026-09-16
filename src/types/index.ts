@@ -244,7 +244,7 @@ export interface CommandePrecadre {
 
 export type FamilleProduit = 'TABLIER' | 'MOUSTIQUAIRE' | 'CAISSON' | 'PRECADRE';
 
-export type StatutDossier = 'BROUILLON' | 'EN_ATTENTE' | 'EN_COURS' | 'OPTIMISE' | 'FABRIQUE' | 'CLOTURE' | 'LIVRE' | 'TERMINE';
+export type StatutDossier = 'BROUILLON' | 'EN_ATTENTE' | 'EN_COURS' | 'EN_PAUSE' | 'OPTIMISE' | 'FABRIQUE' | 'CLOTURE' | 'LIVRE' | 'TERMINE';
 
 export interface DossierCommandeGlobal {
   id: string;
@@ -272,6 +272,10 @@ export interface DossierCommandeGlobal {
   estPrioritaire?: boolean;  // Commande prioritaire / urgente
   motifPriorite?: string;    // Motif de la priorité (ex: "Chantier urgent", "VIP", etc.)
   nomChauffeur?: string;     // Nom du chauffeur transporteur
+  estEnPause?: boolean;      // Commande suspendue temporairement (ex: rupture matière, attente client)
+  motifPause?: string;       // Motif de la pause (ex: "Rupture de stock CT SOMO 30 BL")
+  datePause?: string;        // Date de mise en pause
+  dureePauseJours?: number;  // Nombre de jours cumulés d'interruption
 }
 
 // ============================================================================
@@ -370,7 +374,7 @@ export interface ModeleMoustiquaireConfig {
 // ============================================================================
 
 /** État d'avancement d'un Ordre de Fabrication */
-export type StatutOF = 'EMIS' | 'RETOUR_EN_ATTENTE' | 'EN_COURS' | 'CLOTURE' | 'LIVRE' | 'ANNULE';
+export type StatutOF = 'EMIS' | 'RETOUR_EN_ATTENTE' | 'EN_COURS' | 'EN_PAUSE' | 'CLOTURE' | 'LIVRE' | 'ANNULE';
 
 /**
  * Ligne de retour opérateur pour une barre/chute utilisée dans l'OF.
@@ -468,6 +472,11 @@ export interface SuiviOF {
   estPrioritaire?: boolean; // Commande prioritaire / urgente
   motifPriorite?: string;   // Motif de la priorité
   nomChauffeur?: string;
+  estEnPause?: boolean;     // OF suspendu temporairement (rupture profilé, attente client)
+  motifPause?: string;      // Motif explicite de l'interruption
+  datePause?: string;       // Date de mise en pause
+  dureePauseJours?: number; // Jours de suspension
+  dateReprise?: string;     // Date de reprise d'activité
 }
 
 export interface ChuteReserveeOF {
@@ -584,6 +593,7 @@ export type StatutRespectDelai =
   | 'ECHEANCE_AUJOURDHUI'
   | 'RETARD_MODERE'
   | 'RETARD_CRITIQUE'
+  | 'EN_PAUSE'
   | 'LIVRE';
 
 export interface InfoStatutDelai {

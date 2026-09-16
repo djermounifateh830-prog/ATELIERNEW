@@ -80,7 +80,8 @@ export interface LigneCommandeMonitoring {
   statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON';
   statutBadgeLabel: string;
   typePrecision: string; // Ex: "Caisson 30", "Tablier Lame 43", etc.
-  sousTypeCle?: string; // Clé normalisée pour filtrage rapide
+  sousTypeCle?: string; // Clé normalisée principale pour filtrage rapide (ex: 'CAISSON_30')
+  sousTypesCles?: string[]; // Liste de toutes les clés de sous-types contenues dans la commande
   detailArticles: string;
   quantiteTotalPieces: number;
   dateLivraisonPrevisionnelle: string;
@@ -301,6 +302,7 @@ export class MonitoringService {
       let totalPiecesCeDossier = 0;
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal: string = '';
+      const sousTypesSet = new Set<string>();
 
       dossier.articlesCaissons.forEach(c => {
         const qte = Number(c.quantite) || 1;
@@ -314,18 +316,22 @@ export class MonitoringService {
         if (classification.cle === '25') {
           piecesCaissons25 += qte;
           caissons25CommandesSet.add(ref);
+          sousTypesSet.add('CAISSON_25');
           if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 25';
         } else if (classification.cle === '30') {
           piecesCaissons30 += qte;
           caissons30CommandesSet.add(ref);
+          sousTypesSet.add('CAISSON_30');
           if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 30';
         } else if (classification.cle === '40') {
           piecesCaissons40 += qte;
           caissons40CommandesSet.add(ref);
+          sousTypesSet.add('CAISSON_40');
           if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 40';
         } else {
           piecesCaissonsAutres += qte;
           caissonsAutresCommandesSet.add(ref);
+          sousTypesSet.add('CAISSON_AUTRE');
           if (!sousTypePrincipal) sousTypePrincipal = 'Caisson Autre';
         }
 
@@ -348,6 +354,15 @@ export class MonitoringService {
         dossier.statut
       );
 
+      const sousTypesList = Array.from(sousTypesSet);
+      const primaryKey = sousTypePrincipal.includes('30')
+        ? 'CAISSON_30'
+        : sousTypePrincipal.includes('25')
+        ? 'CAISSON_25'
+        : sousTypePrincipal.includes('40')
+        ? 'CAISSON_40'
+        : (sousTypesList[0] || 'CAISSON_AUTRE');
+
       lignesCommandesCaissons.push({
         id: `DOS-CAISS-${dossier.id}`,
         refCommande: dossier.refCommande,
@@ -358,7 +373,8 @@ export class MonitoringService {
         statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
         statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Caisson',
-        sousTypeCle: sousTypePrincipal.includes('30') ? 'CAISSON_30' : sousTypePrincipal.includes('25') ? 'CAISSON_25' : sousTypePrincipal.includes('40') ? 'CAISSON_40' : 'CAISSON_AUTRE',
+        sousTypeCle: primaryKey,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
         detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} caissons`,
         quantiteTotalPieces: totalPiecesCeDossier,
         dateLivraisonPrevisionnelle: dateLiv,
@@ -415,6 +431,7 @@ export class MonitoringService {
           statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
           typePrecision: classification.label,
           sousTypeCle: classification.cle === '30' ? 'CAISSON_30' : classification.cle === '25' ? 'CAISSON_25' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE',
+          sousTypesCles: [classification.cle === '30' ? 'CAISSON_30' : classification.cle === '25' ? 'CAISSON_25' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE'],
           detailArticles: `${nbP}x ${of.titreSection || 'Caissons'}`,
           quantiteTotalPieces: nbP,
           dateLivraisonPrevisionnelle: dateLiv,
@@ -435,7 +452,17 @@ export class MonitoringService {
       : 1;
 
     const dateFinCaisson = DelaisProductionService.ajouterJoursOuvres(dateRef, joursRequisCaisson, params.joursOuvres);
-    const dateLivraisonCaissonJusquAu = DelaisProductionService.formaterDateLivraison(dateFinCaisson);
+    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
+    let dateFinCaissonFinale = dateFinCaisson;
+    lignesCommandesCaissons.forEach(l => {
+      if (l.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(l.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime()) && d.getTime() > dateFinCaissonFinale.getTime()) {
+          dateFinCaissonFinale = d;
+        }
+      }
+    });
+    const dateLivraisonCaissonJusquAu = DelaisProductionService.formaterDateLivraison(dateFinCaissonFinale);
 
     const chargeHeuresCaisson = Math.round(((piecesCaissonsTotal * (configCaisson.tempsUnitaireMinutes || 5)) / 60) * 10) / 10;
 
@@ -483,7 +510,7 @@ export class MonitoringService {
       chargeHeuresEstimee: chargeHeuresCaisson,
       joursOuvresRequis: joursRequisCaisson,
       dateLivraisonJusquAu: dateLivraisonCaissonJusquAu,
-      dateFinDate: dateFinCaisson,
+      dateFinDate: dateFinCaissonFinale,
       tauxOccupationJour: Math.min(100, Math.round((piecesCaissonsTotal / capaciteJourCaisson) * 100))
     };
 
@@ -509,6 +536,7 @@ export class MonitoringService {
       let totalPiecesCeDossier = 0;
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal: string = '';
+      const sousTypesSet = new Set<string>();
 
       dossier.articlesTabliers.forEach(t => {
         const qte = Number(t.quantite) || 1;
@@ -521,14 +549,17 @@ export class MonitoringService {
         if (classification.cle === '43') {
           piecesTabliers43 += qte;
           tabliers43CommandesSet.add(ref);
+          sousTypesSet.add('TABLIER_43');
           if (!sousTypePrincipal) sousTypePrincipal = 'Lame 43';
         } else if (classification.cle === '55') {
           piecesTabliers55 += qte;
           tabliers55CommandesSet.add(ref);
+          sousTypesSet.add('TABLIER_55');
           if (!sousTypePrincipal) sousTypePrincipal = 'Lame 55';
         } else {
           piecesTabliersAutres += qte;
           tabliersAutresCommandesSet.add(ref);
+          sousTypesSet.add('TABLIER_AUTRE');
           if (!sousTypePrincipal) sousTypePrincipal = 'Lame Spéciale';
         }
 
@@ -550,6 +581,13 @@ export class MonitoringService {
         dossier.statut
       );
 
+      const sousTypesList = Array.from(sousTypesSet);
+      const primaryKey = sousTypePrincipal.includes('43')
+        ? 'TABLIER_43'
+        : sousTypePrincipal.includes('55')
+        ? 'TABLIER_55'
+        : (sousTypesList[0] || 'TABLIER_AUTRE');
+
       lignesCommandesTabliers.push({
         id: `DOS-TABL-${dossier.id}`,
         refCommande: dossier.refCommande,
@@ -560,7 +598,8 @@ export class MonitoringService {
         statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
         statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Tablier',
-        sousTypeCle: sousTypePrincipal.includes('43') ? 'TABLIER_43' : sousTypePrincipal.includes('55') ? 'TABLIER_55' : 'TABLIER_AUTRE',
+        sousTypeCle: primaryKey,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
         detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} tabliers`,
         quantiteTotalPieces: totalPiecesCeDossier,
         dateLivraisonPrevisionnelle: dateLiv,
@@ -614,6 +653,7 @@ export class MonitoringService {
           statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
           typePrecision: classification.label,
           sousTypeCle: classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE',
+          sousTypesCles: [classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE'],
           detailArticles: `${nbP}x ${of.titreSection || 'Tablier'}`,
           quantiteTotalPieces: nbP,
           dateLivraisonPrevisionnelle: dateLiv,
@@ -633,7 +673,17 @@ export class MonitoringService {
       : 1;
 
     const dateFinTablier = DelaisProductionService.ajouterJoursOuvres(dateRef, joursRequisTablier, params.joursOuvres);
-    const dateLivraisonTablierJusquAu = DelaisProductionService.formaterDateLivraison(dateFinTablier);
+    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
+    let dateFinTablierFinale = dateFinTablier;
+    lignesCommandesTabliers.forEach(l => {
+      if (l.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(l.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime()) && d.getTime() > dateFinTablierFinale.getTime()) {
+          dateFinTablierFinale = d;
+        }
+      }
+    });
+    const dateLivraisonTablierJusquAu = DelaisProductionService.formaterDateLivraison(dateFinTablierFinale);
 
     const chargeHeuresTablier = Math.round(((piecesTabliersTotal * (configTablier.tempsUnitaireMinutes || 8)) / 60) * 10) / 10;
 
@@ -673,7 +723,7 @@ export class MonitoringService {
       chargeHeuresEstimee: chargeHeuresTablier,
       joursOuvresRequis: joursRequisTablier,
       dateLivraisonJusquAu: dateLivraisonTablierJusquAu,
-      dateFinDate: dateFinTablier,
+      dateFinDate: dateFinTablierFinale,
       tauxOccupationJour: Math.min(100, Math.round((piecesTabliersTotal / capaciteJourTablier) * 100))
     };
 
@@ -699,6 +749,7 @@ export class MonitoringService {
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal = '';
       let sousTypeCode = 'PRECADRE_36';
+      const sousTypesSet = new Set<string>();
 
       dossier.articlesPrecadres.forEach(p => {
         const q = Number(p.quantite) || 1;
@@ -716,6 +767,7 @@ export class MonitoringService {
         if (classification.cle === '36') {
           piecesPrecadres36 += q;
           precadres36CommandesSet.add(ref);
+          sousTypesSet.add('PRECADRE_36');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'PRECADRE_36';
@@ -723,6 +775,7 @@ export class MonitoringService {
         } else if (classification.cle === '50') {
           piecesPrecadres50 += q;
           precadres50CommandesSet.add(ref);
+          sousTypesSet.add('PRECADRE_50');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'PRECADRE_50';
@@ -730,6 +783,7 @@ export class MonitoringService {
         } else {
           piecesPrecadresAutres += q;
           precadresAutresCommandesSet.add(ref);
+          sousTypesSet.add('PRECADRE_AUTRE');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'PRECADRE_AUTRE';
@@ -753,6 +807,8 @@ export class MonitoringService {
         o.famille === 'PRECADRE'
       );
 
+      const sousTypesList = Array.from(sousTypesSet);
+
       lignesCommandesPrecadres.push({
         id: `DOS-PREC-${dossier.id}`,
         refCommande: dossier.refCommande,
@@ -764,6 +820,7 @@ export class MonitoringService {
         statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Précadre Type 36',
         sousTypeCle: sousTypeCode,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
         detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} précadre(s)`,
         quantiteTotalPieces: totalPiecesCeDossier,
         dateLivraisonPrevisionnelle: dateLiv,
@@ -816,6 +873,7 @@ export class MonitoringService {
           statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
           typePrecision: classification.label,
           sousTypeCle: classification.codeSousType,
+          sousTypesCles: [classification.codeSousType],
           detailArticles: `${nbP}x ${of.titreSection || 'Précadres'}`,
           quantiteTotalPieces: nbP,
           dateLivraisonPrevisionnelle: dateLiv,
@@ -831,6 +889,17 @@ export class MonitoringService {
     const capPrecadre = configPrecadre.capaciteJournalierePieces || 50;
     const jPrecadre = piecesPrecadresTotal > 0 ? Math.max(1, Math.ceil(piecesPrecadresTotal / capPrecadre)) : 1;
     const dateFinPrecadre = DelaisProductionService.ajouterJoursOuvres(dateRef, jPrecadre, params.joursOuvres);
+    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
+    let dateFinPrecadreFinale = dateFinPrecadre;
+    lignesCommandesPrecadres.forEach(l => {
+      if (l.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(l.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime()) && d.getTime() > dateFinPrecadreFinale.getTime()) {
+          dateFinPrecadreFinale = d;
+        }
+      }
+    });
+    const dateLivraisonPrecadreJusquAu = DelaisProductionService.formaterDateLivraison(dateFinPrecadreFinale);
 
     const statsPrecadres: StatsFamilleMonitoring = {
       famille: 'PRECADRE',
@@ -885,8 +954,8 @@ export class MonitoringService {
       tempsUnitaireMin: configPrecadre.tempsUnitaireMinutes || 12,
       chargeHeuresEstimee: Math.round(((piecesPrecadresTotal * (configPrecadre.tempsUnitaireMinutes || 12)) / 60) * 10) / 10,
       joursOuvresRequis: jPrecadre,
-      dateLivraisonJusquAu: DelaisProductionService.formaterDateLivraison(dateFinPrecadre),
-      dateFinDate: dateFinPrecadre,
+      dateLivraisonJusquAu: dateLivraisonPrecadreJusquAu,
+      dateFinDate: dateFinPrecadreFinale,
       tauxOccupationJour: Math.min(100, Math.round((piecesPrecadresTotal / capPrecadre) * 100))
     };
 
@@ -916,6 +985,7 @@ export class MonitoringService {
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal = '';
       let sousTypeCode = 'MSTQ_FENETRE';
+      const sousTypesSet = new Set<string>();
 
       dossier.articlesMoustiquaires.forEach(m => {
         const q = Number(m.quantite) || 1;
@@ -928,6 +998,7 @@ export class MonitoringService {
         if (classification.cle === 'PORTE_FENETRE') {
           piecesMstqPF += q;
           mstqPFCommandesSet.add(ref);
+          sousTypesSet.add('MSTQ_PORTE_FENETRE');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'MSTQ_PORTE_FENETRE';
@@ -935,6 +1006,7 @@ export class MonitoringService {
         } else if (classification.cle === 'FENETRE') {
           piecesMstqFen += q;
           mstqFenCommandesSet.add(ref);
+          sousTypesSet.add('MSTQ_FENETRE');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'MSTQ_FENETRE';
@@ -942,6 +1014,7 @@ export class MonitoringService {
         } else if (classification.cle === 'DOUBLE_VANTAUX') {
           piecesMstqDV += q;
           mstqDVCommandesSet.add(ref);
+          sousTypesSet.add('MSTQ_DOUBLE_VANTAUX');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'MSTQ_DOUBLE_VANTAUX';
@@ -949,6 +1022,7 @@ export class MonitoringService {
         } else if (classification.cle === 'FIXE') {
           piecesMstqFixe += q;
           mstqFixeCommandesSet.add(ref);
+          sousTypesSet.add('MSTQ_FIXE');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'MSTQ_FIXE';
@@ -956,6 +1030,7 @@ export class MonitoringService {
         } else {
           piecesMstqAutres += q;
           mstqAutresCommandesSet.add(ref);
+          sousTypesSet.add('MSTQ_AUTRE');
           if (!sousTypePrincipal) {
             sousTypePrincipal = classification.label;
             sousTypeCode = 'MSTQ_AUTRE';
@@ -979,6 +1054,8 @@ export class MonitoringService {
         o.famille === 'MOUSTIQUAIRE'
       );
 
+      const sousTypesList = Array.from(sousTypesSet);
+
       lignesCommandesMstq.push({
         id: `DOS-MSTQ-${dossier.id}`,
         refCommande: dossier.refCommande,
@@ -990,6 +1067,7 @@ export class MonitoringService {
         statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Moustiquaire Plissée',
         sousTypeCle: sousTypeCode,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
         detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} moustiquaire(s)`,
         quantiteTotalPieces: totalPiecesCeDossier,
         dateLivraisonPrevisionnelle: dateLiv,
@@ -1048,6 +1126,7 @@ export class MonitoringService {
           statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
           typePrecision: classification.label,
           sousTypeCle: classification.codeSousType,
+          sousTypesCles: [classification.codeSousType],
           detailArticles: `${nbP}x ${of.titreSection || 'Moustiquaires'}`,
           quantiteTotalPieces: nbP,
           dateLivraisonPrevisionnelle: dateLiv,
@@ -1063,6 +1142,17 @@ export class MonitoringService {
     const capMstq = configMstq.capaciteJournalierePieces || 35;
     const jMstq = piecesMstqTotal > 0 ? Math.max(1, Math.ceil(piecesMstqTotal / capMstq)) : 1;
     const dateFinMstq = DelaisProductionService.ajouterJoursOuvres(dateRef, jMstq, params.joursOuvres);
+    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
+    let dateFinMstqFinale = dateFinMstq;
+    lignesCommandesMstq.forEach(l => {
+      if (l.dateLivraisonPrevisionnelleISO) {
+        const d = new Date(l.dateLivraisonPrevisionnelleISO);
+        if (!isNaN(d.getTime()) && d.getTime() > dateFinMstqFinale.getTime()) {
+          dateFinMstqFinale = d;
+        }
+      }
+    });
+    const dateLivraisonMstqJusquAu = DelaisProductionService.formaterDateLivraison(dateFinMstqFinale);
 
     const statsMoustiquaires: StatsFamilleMonitoring = {
       famille: 'MOUSTIQUAIRE',
@@ -1149,8 +1239,8 @@ export class MonitoringService {
       tempsUnitaireMin: configMstq.tempsUnitaireMinutes || 15,
       chargeHeuresEstimee: Math.round(((piecesMstqTotal * (configMstq.tempsUnitaireMinutes || 15)) / 60) * 10) / 10,
       joursOuvresRequis: jMstq,
-      dateLivraisonJusquAu: DelaisProductionService.formaterDateLivraison(dateFinMstq),
-      dateFinDate: dateFinMstq,
+      dateLivraisonJusquAu: dateLivraisonMstqJusquAu,
+      dateFinDate: dateFinMstqFinale,
       tauxOccupationJour: Math.min(100, Math.round((piecesMstqTotal / capMstq) * 100))
     };
 
@@ -1169,10 +1259,10 @@ export class MonitoringService {
 
     // Date maximale d'achèvement de toutes les files
     let dateMaxAtelier = new Date(dateRef);
-    if (dateFinCaisson.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinCaisson;
-    if (dateFinTablier.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinTablier;
-    if (dateFinPrecadre.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinPrecadre;
-    if (dateFinMstq.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinMstq;
+    if (dateFinCaissonFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinCaissonFinale;
+    if (dateFinTablierFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinTablierFinale;
+    if (dateFinPrecadreFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinPrecadreFinale;
+    if (dateFinMstqFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinMstqFinale;
 
     const allCommandesList: LigneCommandeMonitoring[] = [
       ...lignesCommandesCaissons,

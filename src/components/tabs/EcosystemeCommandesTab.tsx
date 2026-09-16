@@ -5,6 +5,7 @@ import {
   ChuteMaille,
   MappingChutes,
   DossierCommandeGlobal,
+  StatutDossier,
   CommandeTablier,
   BesoinMoustiquaire,
   CommandeCaisson,
@@ -14,7 +15,8 @@ import {
   FamilleProduit,
   ResultatOptimisation,
   ClientCodification,
-  ParametresOptimisationMaille
+  ParametresOptimisationMaille,
+  SuiviOF
 } from '../../types';
 import {
   detecterAgence,
@@ -30,6 +32,7 @@ import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { logger } from '../../services/logger';
 import { calculerBesoinMaille, PARAMETRES_MAILLE_DEFAUT } from '../../services/moteurMoustiquaire';
 import { getDimensionsPrecadrePiece } from '../../utils/precadreCalculs';
+import { DelaisProductionService } from '../../services/delaisProductionService';
 import {
   trouverSousFacePourCaisson,
   optimiserListeSousFaces,
@@ -84,8 +87,10 @@ import {
   Clock,
   ExternalLink,
   ChevronUp,
+  ChevronDown,
   Lock,
-  History
+  History,
+  Pause
 } from 'lucide-react';
 
 export interface SectionMultiArticleCaisson {
@@ -1634,11 +1639,126 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const inputClientRef = useRef<HTMLInputElement>(null);
   const inputNumCmdRef = useRef<HTMLInputElement>(null);
   const inputLRef = useRef<HTMLInputElement>(null);
+  const inputHRef = useRef<HTMLInputElement>(null);
+  const inputQteRef = useRef<HTMLInputElement>(null);
   const inputRepereRef = useRef<HTMLInputElement>(null);
+  const btnAjouterLigneRef = useRef<HTMLButtonElement>(null);
+  const inputDateLivraisonRef = useRef<HTMLInputElement>(null);
   const [inputL, setInputL] = useState<string>('');
   const [inputH, setInputH] = useState<string>('');
   const [inputQte, setInputQte] = useState<string>('1');
   const [inputRepere, setInputRepere] = useState<string>('');
+
+  // Délais de production & suivi des interruptions/pauses
+  const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
+  const [dateLivraisonPrevisionnelle, setDateLivraisonPrevisionnelle] = useState<string>('');
+  const [dateLivraisonPrevisionnelleISO, setDateLivraisonPrevisionnelleISO] = useState<string>('');
+  const [delaiFixeManuellement, setDelaiFixeManuellement] = useState<boolean>(false);
+  const [estPrioritaire, setEstPrioritaire] = useState<boolean>(false);
+  const [motifPriorite, setMotifPriorite] = useState<string>('');
+  const [estEnPause, setEstEnPause] = useState<boolean>(false);
+  const [motifPause, setMotifPause] = useState<string>('');
+  const [datePause, setDatePause] = useState<string>('');
+  const [dureePauseJours, setDureePauseJours] = useState<number>(0);
+  const [afficherEditeurLivraison, setAfficherEditeurLivraison] = useState<boolean>(false);
+
+  // Charger les OFs pour les calculs de files d'attente
+  useEffect(() => {
+    StorageService.getSuivisOF().then(ofs => {
+      if (Array.isArray(ofs)) setSuivisOF(ofs);
+    }).catch(() => {});
+  }, [dossiers]);
+
+  // Dossier virtuel pour le calcul en direct de l'estimation de livraison
+  const dossierActuelVirtuel: DossierCommandeGlobal = useMemo(() => {
+    const activeRef = getActiveNumCommande() || 'DOSSIER-EN-COURS';
+    return {
+      id: editingDossierId || 'dossier-virtuel',
+      donneurOrdre: monClient,
+      nomClientFinal: clientDeMonClient || 'Client',
+      dateCommande: dateCommande,
+      refCommande: activeRef,
+      articlesCaissons: lignesCaissons,
+      articlesTabliers: lignesTabliers,
+      articlesMoustiquaires: lignesMoustiquaires,
+      articlesPrecadres: lignesPrecadres,
+      statut: estEnPause ? 'EN_PAUSE' : (editingDossierId ? (dossiers.find(d => d.id === editingDossierId)?.statut || 'EN_ATTENTE') : 'EN_ATTENTE'),
+      estEnPause: estEnPause,
+      motifPause: motifPause,
+      datePause: datePause,
+      dureePauseJours: dureePauseJours,
+      estPrioritaire: estPrioritaire,
+      motifPriorite: motifPriorite,
+      dateLivraisonPrevisionnelle: delaiFixeManuellement ? dateLivraisonPrevisionnelle : undefined,
+      dateLivraisonPrevisionnelleISO: delaiFixeManuellement ? dateLivraisonPrevisionnelleISO : undefined,
+    };
+  }, [
+    editingDossierId, monClient, clientDeMonClient, dateCommande,
+    numCommandeCaisson, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre,
+    lignesCaissons, lignesTabliers, lignesMoustiquaires, lignesPrecadres,
+    estEnPause, motifPause, datePause, dureePauseJours,
+    estPrioritaire, motifPriorite,
+    delaiFixeManuellement, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO,
+    dossiers
+  ]);
+
+  const estimationLivraisonLive = useMemo(() => {
+    return DelaisProductionService.estimerDelaiDossier(
+      dossierActuelVirtuel,
+      dossiers,
+      suivisOF
+    );
+  }, [dossierActuelVirtuel, dossiers, suivisOF]);
+
+  const texteLivraisonAffiche = useMemo(() => {
+    if (estEnPause) {
+      return `⏸️ EN PAUSE (${estimationLivraisonLive.dateLivraisonFormattee})`;
+    }
+    if (delaiFixeManuellement && dateLivraisonPrevisionnelle) {
+      return dateLivraisonPrevisionnelle;
+    }
+    return estimationLivraisonLive.dateLivraisonFormattee;
+  }, [estEnPause, delaiFixeManuellement, dateLivraisonPrevisionnelle, estimationLivraisonLive]);
+
+  // Raccourcis pour fixer la livraison
+  const appliquerRaccourciLivraison = (joursAjoutes: number) => {
+    const params = DelaisProductionService.getParametres();
+    const dRef = DelaisProductionService.parseDateString(dateCommande) || new Date();
+    const cible = DelaisProductionService.ajouterJoursOuvres(dRef, joursAjoutes, params.joursOuvres);
+    const iso = DelaisProductionService.toISODateString(cible);
+    const formattee = DelaisProductionService.formaterDateLivraison(cible);
+    setDateLivraisonPrevisionnelleISO(iso);
+    setDateLivraisonPrevisionnelle(formattee);
+    setDelaiFixeManuellement(true);
+    showFlashNotification(`Délai de livraison fixé : ${formattee}`, 'info');
+  };
+
+  const reinitialiserDelaiAutomatique = () => {
+    setDelaiFixeManuellement(false);
+    setDateLivraisonPrevisionnelle('');
+    setDateLivraisonPrevisionnelleISO('');
+    showFlashNotification(`Délai recalculé automatiquement selon la charge atelier.`, 'info');
+  };
+
+  const togglePauseCommande = () => {
+    if (!estEnPause) {
+      const dateAuj = getTodayDateString();
+      setEstEnPause(true);
+      setDatePause(dateAuj);
+      if (!motifPause) setMotifPause('Rupture de stock matière / attente approvisionnement');
+      showFlashNotification('⏸️ Dossier mis en pause. L\'interruption est désormais prise en compte dans le délai.', 'warn');
+    } else {
+      if (datePause) {
+        const dP = DelaisProductionService.parseDateString(datePause);
+        const now = new Date();
+        const diffJours = Math.max(0, Math.floor((now.getTime() - dP.getTime()) / (1000 * 60 * 60 * 24)));
+        setDureePauseJours(prev => prev + diffJours);
+      }
+      setEstEnPause(false);
+      setDatePause('');
+      showFlashNotification('▶️ Reprise de la commande. Les jours d\'interruption sont intégrés au délai.', 'success');
+    }
+  };
 
   // Focus initial et réactif intelligent
   useEffect(() => {
@@ -3106,20 +3226,30 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     // 8. Réinitialiser la famille active sur CAISSON
     setFamilleArticle('CAISSON');
 
-    // 9. Réinitialiser les configurations de fabrication aux valeurs d'usine par défaut
-    const premierCT = articlesCT[0]?.code_art || '';
-    const premierSF = articlesSF[0]?.code_art || '';
+    // 9. Réinitialiser les configurations de fabrication : Caisson et Sous-face vidés pour éviter toute saisie fausse
     setCaissonConfig(prev => ({
       ...prev,
       typeCommande: 'CAISSON_ET_SOUS_FACE',
-      ctArticleCode: premierCT,
-      sfArticleCode: premierSF,
+      ctArticleCode: '',
+      sfArticleCode: '',
       typeCaisson: 'TUNNEL_SIMPLE',
       avecSousFace: true,
       montageSousFace: 'MONTEE_ATELIER',
       avecPlaque: false,
       avecPeinture: false
     }));
+
+    // Réinitialiser les paramètres de délai et pause
+    setDelaiFixeManuellement(false);
+    setDateLivraisonPrevisionnelle('');
+    setDateLivraisonPrevisionnelleISO('');
+    setEstPrioritaire(false);
+    setMotifPriorite('');
+    setEstEnPause(false);
+    setMotifPause('');
+    setDatePause('');
+    setDureePauseJours(0);
+    setAfficherEditeurLivraison(false);
 
     const premierTBL = articlesTablier[0]?.code_art || '';
     const premierLF = articlesLameFinale[0]?.code_art || '';
@@ -3232,6 +3362,23 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setMonClient(dossier.donneurOrdre);
     setClientDeMonClient(dossier.nomClientFinal);
     setDateCommande(dossier.dateCommande);
+
+    // Restaurer le délai de livraison et l'état de pause/interruption
+    setEstPrioritaire(!!dossier.estPrioritaire);
+    setMotifPriorite(dossier.motifPriorite || '');
+    setEstEnPause(!!dossier.estEnPause || dossier.statut === 'EN_PAUSE');
+    setMotifPause(dossier.motifPause || '');
+    setDatePause(dossier.datePause || '');
+    setDureePauseJours(dossier.dureePauseJours || 0);
+    if (dossier.dateLivraisonPrevisionnelle) {
+      setDelaiFixeManuellement(true);
+      setDateLivraisonPrevisionnelle(dossier.dateLivraisonPrevisionnelle);
+      setDateLivraisonPrevisionnelleISO(dossier.dateLivraisonPrevisionnelleISO || '');
+    } else {
+      setDelaiFixeManuellement(false);
+      setDateLivraisonPrevisionnelle('');
+      setDateLivraisonPrevisionnelleISO('');
+    }
 
     const formatCmd = (val?: string) => {
       if (!val || !val.trim()) return '';
@@ -3861,9 +4008,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
       if (editingDossierId) {
         // MISE À JOUR D'UN DOSSIER EXISTANT DANS SQLITE
-        const updatedDossiers = dossiers.map(d => {
+        const updatedDossiers: DossierCommandeGlobal[] = dossiers.map(d => {
           if (d.id === editingDossierId) {
-            const statutPreserve = (d.statut === 'EN_COURS' || d.statut === 'FABRIQUE' || d.statut === 'CLOTURE' || d.statut === 'LIVRE')
+            const statutPreserve: StatutDossier = estEnPause
+              ? 'EN_PAUSE'
+              : (d.statut === 'EN_COURS' || d.statut === 'FABRIQUE' || d.statut === 'CLOTURE' || d.statut === 'LIVRE')
               ? d.statut
               : statutCible;
             return {
@@ -3881,7 +4030,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               articlesMoustiquaires: [...lignesMoustiquaires],
               articlesCaissons: [...lignesCaissons],
               articlesPrecadres: [...lignesPrecadres],
-              statut: statutPreserve
+              statut: statutPreserve,
+              dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
+              dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
+              delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
+              estPrioritaire: estPrioritaire,
+              motifPriorite: estPrioritaire ? motifPriorite : undefined,
+              estEnPause: estEnPause,
+              motifPause: estEnPause ? motifPause : undefined,
+              datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
+              dureePauseJours: dureePauseJours || 0
             };
           }
           return d;
@@ -3909,7 +4067,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           articlesCaissons: [...lignesCaissons],
           articlesPrecadres: [...lignesPrecadres],
           notes: `Commande enregistrée le ${dateCommande}`,
-          statut: statutCible
+          statut: estEnPause ? 'EN_PAUSE' : statutCible,
+          dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
+          dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
+          delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
+          estPrioritaire: estPrioritaire,
+          motifPriorite: estPrioritaire ? motifPriorite : undefined,
+          estEnPause: estEnPause,
+          motifPause: estEnPause ? motifPause : undefined,
+          datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
+          dureePauseJours: dureePauseJours || 0
         };
 
         const updated = [nouveauDossier, ...dossiers];
@@ -4097,20 +4264,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
         )}
 
-        {/* Formulaire En-tête : Mon Client / Client de Mon Client / Date */}
+        {/* Formulaire En-tête : Mon Client / Client de Mon Client / Date / Délai & Livraison */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3.5 items-center bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/80">
           {/* Mon Client (Donneur d'ordre) */}
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-3">
             <label className="block text-[11px] font-semibold text-sky-300 mb-1 flex items-center justify-between">
               <span className="flex items-center gap-1">
                 <Building2 className="w-3.5 h-3.5" />
-                <span>Mon Client (Donneur d'Ordre / Agence) *</span>
+                <span>Mon Client *</span>
               </span>
               {(() => {
                 const currentCodif = clientCodifications.find(c => c.nom === monClient);
                 return currentCodif?.prefixeCommande ? (
                   <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                    Préfixe : {currentCodif.prefixeCommande}
+                    {currentCodif.prefixeCommande}
                   </span>
                 ) : null;
               })()}
@@ -4118,27 +4285,33 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             <select
               value={monClient}
               onChange={e => handleMonClientChange(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  inputClientRef.current?.focus();
+                }
+              }}
               className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 shadow-inner cursor-pointer transition ${
                 !monClient
                   ? 'border-amber-500 text-amber-300 ring-2 ring-amber-500/20 bg-amber-950/20'
                   : 'border-sky-500/40 text-sky-200 focus:ring-sky-500'
               }`}
             >
-              <option value="">-- Sélectionner Mon Client (Obligatoire) * --</option>
+              <option value="">-- Mon Client (Agence) * --</option>
               {clientCodifications.filter(c => c.actif !== false).map(d => (
                 <option key={d.id || d.code} value={d.nom}>
-                  {d.nom} ({d.prefixeCommande} — {d.description || d.nom})
+                  {d.nom} ({d.prefixeCommande})
                 </option>
               ))}
             </select>
           </div>
 
           {/* Le Client de Mon Client (Client final / Chantier avec mémoire incrémentale) */}
-          <div className="lg:col-span-5 relative">
+          <div className="lg:col-span-4 relative">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-[11px] font-semibold text-emerald-300 flex items-center gap-1">
                 <User className="w-3.5 h-3.5" />
-                <span>Nom du Client de Mon Client (Chantier / Promoteur) *</span>
+                <span>Nom Client / Chantier *</span>
               </label>
               {clientsHistoriqueComplet.length > 0 && (
                 <button
@@ -4181,7 +4354,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     setShowClientSuggestions(false);
                   }
                 }}
-                placeholder="Nom du Client / Chantier / Promoteur (ex: Résidence El Bahia...) *"
+                placeholder="Nom du Client / Chantier *"
                 className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-xs text-slate-100 font-semibold focus:outline-none focus:ring-2 shadow-inner transition ${
                   !clientDeMonClient.trim()
                     ? 'border-amber-500/80 text-amber-200 ring-2 ring-amber-500/20 bg-amber-950/20 placeholder:text-amber-400/60'
@@ -4239,7 +4412,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
 
           {/* Date de la Commande */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
             <label className="block text-[11px] font-semibold text-purple-300 mb-1 flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
               <span>Date Dossier *</span>
@@ -4248,11 +4421,230 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               type="text"
               value={dateCommande}
               onChange={e => setDateCommande(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  inputNumCmdRef.current?.focus();
+                }
+              }}
               placeholder="JJ/MM/AAAA"
               className="w-full bg-slate-900 border border-purple-500/40 rounded-lg px-3 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-inner"
             />
           </div>
+
+          {/* Délai & Date de Livraison Prévisionnelle (Directement visible & modifiable ici) */}
+          <div className="lg:col-span-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-[11px] font-semibold text-amber-300 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Délai &amp; Livraison</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setAfficherEditeurLivraison(prev => !prev)}
+                className="text-[10px] text-amber-400 hover:text-amber-300 underline font-medium flex items-center gap-0.5 cursor-pointer"
+                title="Modifier ou fixer manuellement la date de livraison pour ce dossier"
+              >
+                <Edit2 className="w-3 h-3" />
+                <span>{delaiFixeManuellement ? 'Fixée (modifier)' : 'Fixer la date'}</span>
+              </button>
+            </div>
+
+            <div
+              onClick={() => setAfficherEditeurLivraison(prev => !prev)}
+              className={`w-full border rounded-lg px-2.5 py-1.5 flex items-center justify-between cursor-pointer transition shadow-inner ${
+                estEnPause
+                  ? 'bg-red-950/40 border-red-500/60 text-red-200 hover:bg-red-950/60'
+                  : delaiFixeManuellement
+                  ? 'bg-amber-950/40 border-amber-500/60 text-amber-200 hover:bg-amber-950/60'
+                  : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-600'
+              }`}
+              title="Cliquer pour afficher/masquer le panneau de réglage du délai de livraison et des pauses"
+            >
+              <div className="flex flex-col min-w-0">
+                <span className="text-[11px] font-mono font-bold truncate flex items-center gap-1.5">
+                  {estEnPause ? (
+                    <span className="text-red-400 font-black flex items-center gap-1">
+                      <Pause className="w-3 h-3 text-red-400 animate-pulse" />
+                      EN PAUSE
+                    </span>
+                  ) : delaiFixeManuellement ? (
+                    <span className="text-amber-400 font-bold flex items-center gap-1">
+                      <Zap className="w-3 h-3 text-amber-400" />
+                      FIXÉ :
+                    </span>
+                  ) : (
+                    <span className="text-sky-400 font-bold flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-sky-400" />
+                      PRÉVU :
+                    </span>
+                  )}
+                  <span className="truncate">{delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '') : estimationLivraisonLive.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+                </span>
+                <span className="text-[9px] text-slate-400 truncate">
+                  {estEnPause
+                    ? `Interruption : +${dureePauseJours}j (Pause en cours)`
+                    : delaiFixeManuellement
+                    ? 'Date personnalisée / fixée'
+                    : `Charge atelier : ${estimationLivraisonLive.joursOuvresMax}j ouvré(s)`}
+                </span>
+              </div>
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${afficherEditeurLivraison ? 'rotate-180 text-amber-400' : ''}`} />
+            </div>
+          </div>
         </div>
+
+        {/* Panneau dépliable de personnalisation du Délai & Mise en Pause de commande */}
+        {afficherEditeurLivraison && (
+          <div className="mt-2.5 bg-slate-950 p-3.5 rounded-xl border border-amber-500/40 shadow-xl space-y-3 animate-fade-in text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span className="font-bold text-slate-100">Fixer / Ajuster la Livraison &amp; Gestion des Interruptions</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAfficherEditeurLivraison(false)}
+                className="text-slate-400 hover:text-slate-200 text-xs px-2 py-0.5 rounded hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕ Fermer
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+              {/* Date ISO de livraison */}
+              <div className="md:col-span-4 space-y-1">
+                <label className="block text-[10px] uppercase font-bold text-slate-300">
+                  Date de livraison fixée
+                </label>
+                <input
+                  type="date"
+                  value={dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO || ''}
+                  onChange={e => {
+                    const iso = e.target.value;
+                    setDateLivraisonPrevisionnelleISO(iso);
+                    if (iso) {
+                      const parts = iso.split('-');
+                      if (parts.length === 3) {
+                        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                        if (!isNaN(d.getTime())) {
+                          const txt = DelaisProductionService.formaterDateLivraison(d);
+                          setDateLivraisonPrevisionnelle(txt);
+                        }
+                      }
+                    }
+                    setDelaiFixeManuellement(true);
+                  }}
+                  className="w-full bg-slate-900 border border-amber-500/50 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Raccourcis rapides */}
+              <div className="md:col-span-8 space-y-1">
+                <label className="block text-[10px] uppercase font-bold text-slate-300">
+                  Raccourcis Délais Ouvrés &amp; Calcul Atelier
+                </label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => appliquerRaccourciLivraison(1)}
+                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
+                  >
+                    +1j Ouvré
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appliquerRaccourciLivraison(2)}
+                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
+                  >
+                    +2j Ouvrés
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appliquerRaccourciLivraison(3)}
+                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
+                  >
+                    +3j Ouvrés
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => appliquerRaccourciLivraison(5)}
+                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
+                  >
+                    +5j (1 Semaine)
+                  </button>
+                  {delaiFixeManuellement && (
+                    <button
+                      type="button"
+                      onClick={reinitialiserDelaiAutomatique}
+                      className="px-2 py-1 bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 text-sky-300 rounded font-bold text-[11px] transition cursor-pointer flex items-center gap-1"
+                      title="Repasser au calcul automatique d'atelier basé sur la cadence réelle"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>↺ Revenir au Calcul Auto</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Section Mise en Pause pour rupture ou attente client */}
+            <div className="p-2.5 rounded-xl border bg-slate-900/60 border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={togglePauseCommande}
+                  className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md ${
+                    estEnPause
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                      : 'bg-red-600/90 hover:bg-red-500 text-white'
+                  }`}
+                  title={estEnPause ? "Reprendre la production du dossier" : "Mettre en pause (rupture profilé, attente client...)"}
+                >
+                  {estEnPause ? (
+                    <>
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>▶️ Reprendre Production</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="w-3.5 h-3.5 fill-current" />
+                      <span>⏸️ Mettre en Pause (Rupture / Attente)</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="space-y-0.5">
+                  <div className="text-[11px] text-slate-200 font-semibold flex items-center gap-1.5">
+                    <span>Statut :</span>
+                    {estEnPause ? (
+                      <span className="text-red-400 font-bold bg-red-950/80 border border-red-500/40 px-2 py-0.5 rounded">
+                        EN PAUSE (Date pause : {datePause || 'Aujourd\'hui'})
+                      </span>
+                    ) : (
+                      <span className="text-emerald-400 font-bold">En cours de traitement</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Les jours d'interruption sont automatiquement déduits du calcul pour reporter la date de livraison.
+                  </p>
+                </div>
+              </div>
+
+              {estEnPause && (
+                <div className="w-full md:w-auto flex-1 md:max-w-xs">
+                  <input
+                    type="text"
+                    value={motifPause}
+                    onChange={e => setMotifPause(e.target.value)}
+                    placeholder="Motif de pause (ex: Rupture profilé CT SOMO 30...)"
+                    className="w-full bg-slate-950 border border-red-500/40 rounded-lg px-2.5 py-1 text-xs text-red-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -6444,6 +6836,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       inputLRef.current?.focus();
+                      inputLRef.current?.select();
                     }
                   }}
                   placeholder={`Auto: ${genererRepereCaissonSousFace({
@@ -6469,6 +6862,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   type="number"
                   value={inputL}
                   onChange={e => setInputL(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      inputQteRef.current?.focus();
+                      inputQteRef.current?.select();
+                    }
+                  }}
                   placeholder={caissonConfig.typeCommande === 'SOUS_FACE_SEULE' ? "Longueur SF (ex: 2400)" : "Longueur Caisson (ex: 2400)"}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono font-bold text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
@@ -6480,11 +6880,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   Quantité *
                 </label>
                 <input
+                  ref={inputQteRef}
                   type="number"
                   min="1"
                   value={inputQte}
                   placeholder="1"
                   onChange={e => setInputQte(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (canAjouterLigne) {
+                        handleAjouterLigne(e);
+                      } else {
+                        btnAjouterLigneRef.current?.focus();
+                      }
+                    }
+                  }}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 text-center"
                 />
               </div>
@@ -6492,6 +6903,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               {/* Bouton Ajouter */}
               <div className="md:col-span-3">
                 <button
+                  ref={btnAjouterLigneRef}
                   type="submit"
                   disabled={!canAjouterLigne}
                   title={!canAjouterLigne ? `Champs obligatoires manquants : ${champsManquants.join(', ')}` : undefined}
@@ -6525,6 +6937,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       inputLRef.current?.focus();
+                      inputLRef.current?.select();
                     }
                   }}
                   placeholder={familleArticle === 'TABLIER' ? 'ex: SA-1, Chambre...' : familleArticle === 'MOUSTIQUAIRE' ? 'ex: H1, Cuisine...' : 'ex: 1R1, Salon...'}
@@ -6542,6 +6955,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   type="number"
                   value={inputL}
                   onChange={e => setInputL(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      inputHRef.current?.focus();
+                      inputHRef.current?.select();
+                    }
+                  }}
                   placeholder="Largeur (mm)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono font-bold text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
@@ -6553,9 +6973,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   Hauteur H (mm) *
                 </label>
                 <input
+                  ref={inputHRef}
                   type="number"
                   value={inputH}
                   onChange={e => setInputH(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      inputQteRef.current?.focus();
+                      inputQteRef.current?.select();
+                    }
+                  }}
                   placeholder="Hauteur (mm)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono font-bold text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
@@ -6567,11 +6995,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   Qté *
                 </label>
                 <input
+                  ref={inputQteRef}
                   type="number"
                   min="1"
                   value={inputQte}
                   placeholder="1"
                   onChange={e => setInputQte(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (canAjouterLigne) {
+                        handleAjouterLigne(e);
+                      } else {
+                        btnAjouterLigneRef.current?.focus();
+                      }
+                    }
+                  }}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs font-mono font-bold text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 text-center"
                 />
               </div>
@@ -6579,6 +7018,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               {/* Bouton Ajouter */}
               <div className="md:col-span-2">
                 <button
+                  ref={btnAjouterLigneRef}
                   type="submit"
                   disabled={!canAjouterLigne}
                   title={!canAjouterLigne ? `Champs obligatoires manquants : ${champsManquants.join(', ')}` : undefined}

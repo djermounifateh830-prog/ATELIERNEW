@@ -774,6 +774,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     return Array.from(map.values());
   }, [listeSections, articles]);
 
+  // Préparation magasin active (si barres neuves, chutes, accessoires ou toile existent)
+  const hasAnyPreparation = useMemo(() => {
+    const matieresNeuves = syntheseMatieres.filter(m => m.nbBarresNeuves > 0);
+    const chutesADestoquer = syntheseMatieres.flatMap(m => m.chutes);
+    const accessoiresFiltres = syntheseAccessoires.filter(a => !(a.designation || '').toUpperCase().includes('JOUE'));
+    const hasToile = Boolean(lignesMoustiquaires && lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length > 0);
+    return matieresNeuves.length > 0 || chutesADestoquer.length > 0 || accessoiresFiltres.length > 0 || hasToile;
+  }, [syntheseMatieres, syntheseAccessoires, lignesMoustiquaires]);
+
   // Totaux globaux
   const totalBarresNeuvesToutesSections = listeSections.reduce((s, sec) => s + (sec.resultat.total_barres_neuves || 0), 0);
   const totalChutesRecycleesToutesSections = listeSections.reduce((s, sec) => s + (sec.resultat.total_chutes_recyclees || 0), 0);
@@ -793,7 +802,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   const labelMontage = (avecSousFace: boolean, montage: string) => (!avecSousFace ? '' : montage === 'MONTEE_ATELIER' ? 'AVEC MONTAGE' : 'SANS MONTAGE');
 
   /* ─── RENDU HTML POUR EXPORT / TÉLÉCHARGEMENT ─────────────────────────────── */
-  const buildSectionHTML = (sec: SectionTraitee) => {
+  const buildSectionHTML = (sec: SectionTraitee, index?: number, total?: number) => {
     const { familleLabel, profileDesignation } = separerFamilleEtProfile(sec);
     const conditionsHtml = sec.titre.toUpperCase().includes('CAISSON') ? [
       labelFinition(sec.avecPeinture),
@@ -880,6 +889,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         <strong style="font-size:36px;font-weight:900;color:#000;font-family:Consolas,monospace;text-transform:uppercase;letter-spacing:2px;background:#fff;padding:4px 18px;border:3px solid #000;border-radius:6px;">
           ${profileDesignation}
         </strong>
+        ${total !== undefined && index !== undefined ? `<span style="font-size:14px;font-weight:900;background:#000;color:#fff;padding:4px 12px;border-radius:4px;font-family:Consolas,monospace;letter-spacing:0.5px;">PROFILÉ ${index + 1} / ${total}</span>` : ''}
         ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:13px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:4px 10px;border-radius:4px;">${c}</span>`).join(' ') : ''}
       </div>
       ${sec.groupesBarresNeuves.length > 0 ? `
@@ -1017,11 +1027,23 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       </div>
     ` : '';
 
-    // 2. Sections par familles (Profilés découpés)
-    const caissonsHTML = sectionsParFamille.caissons.map(sec => buildSectionHTML(sec)).join('');
-    const tabliersHTML = sectionsParFamille.tabliers.map(sec => buildSectionHTML(sec)).join('');
-    const precadresHTML = sectionsParFamille.precadres.map(sec => buildSectionHTML(sec)).join('');
-    const mstqHTML = sectionsParFamille.moustiquaires.map(sec => buildSectionHTML(sec)).join('');
+    // 2. Sections par familles (Profilés découpés) avec pagination du profilé (ex: Profilé 1 / 2)
+    const caissonsHTML = sectionsParFamille.caissons.map(sec => {
+      const gIdx = listeSections.indexOf(sec);
+      return buildSectionHTML(sec, gIdx >= 0 ? gIdx : 0, listeSections.length);
+    }).join('');
+    const tabliersHTML = sectionsParFamille.tabliers.map(sec => {
+      const gIdx = listeSections.indexOf(sec);
+      return buildSectionHTML(sec, gIdx >= 0 ? gIdx : 0, listeSections.length);
+    }).join('');
+    const precadresHTML = sectionsParFamille.precadres.map(sec => {
+      const gIdx = listeSections.indexOf(sec);
+      return buildSectionHTML(sec, gIdx >= 0 ? gIdx : 0, listeSections.length);
+    }).join('');
+    const mstqHTML = sectionsParFamille.moustiquaires.map(sec => {
+      const gIdx = listeSections.indexOf(sec);
+      return buildSectionHTML(sec, gIdx >= 0 ? gIdx : 0, listeSections.length);
+    }).join('');
 
     const htmlContent = `<!DOCTYPE html>
 <html lang="fr">
@@ -1029,7 +1051,31 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <meta charset="UTF-8">
   <title>Ordre de Fabrication — ${cmdAffichee} — ${clientAffiche}</title>
   <style>
-    @page { size: A4 portrait; margin: 8mm 8mm 12mm 8mm; }
+    @page {
+      size: A4 portrait;
+      margin: 10mm 8mm 14mm 8mm;
+      @top-right {
+        content: "${currentCodeOFAffiche} — PAGE " counter(page) " / " counter(pages);
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 9pt;
+        font-weight: 800;
+        color: #000000;
+      }
+      @bottom-right {
+        content: "PAGE " counter(page) " / " counter(pages);
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 11pt;
+        font-weight: 900;
+        color: #000000;
+      }
+      @bottom-left {
+        content: "${currentCodeOFAffiche} (#${currentSequenceNum}) • COMMANDE N° ${cmdAffichee} • ${clientAffiche}";
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 8.5pt;
+        font-weight: 700;
+        color: #222222;
+      }
+    }
     *, *::before, *::after { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; background: #fff; font-size: 13px; line-height: 1.35; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .print-doc-table { width: 100% !important; border-collapse: collapse !important; border: none !important; margin: 0 !important; padding: 0 !important; }
@@ -1175,11 +1221,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   ` : ''}
 
   <!-- PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS -->
-  <div style="margin-top:16px;border-top:3px solid #000;padding-top:10px;">
+  <div style="margin-top:16px;border-top:3px solid #000;padding-top:10px;${hasAnyPreparation ? 'page-break-before:always;' : ''}">
     <div style="background:#fff;color:#000;border:2.5px solid #000;padding:8px 12px;margin-bottom:12px;border-radius:4px;text-align:center;">
       <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
         <div style="font-size:18px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:1px;">
-          ✂️ OPTIMISATION DE DÉCOUPE
+          ✂️ ${hasAnyPreparation ? 'FICHE 2 : OPTIMISATION DE DÉCOUPE ATELIER' : 'FICHE 1 : OPTIMISATION DE DÉCOUPE ATELIER'}
         </div>
         <span style="padding:2px 8px;background:#000;color:#fff;font-family:Consolas,monospace;font-weight:900;font-size:14px;border-radius:4px;">
           ${currentCodeOFAffiche} (ORDRE N° ${currentSequenceNum})
@@ -1211,7 +1257,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <div style="white-space:nowrap;flex-shrink:0;padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};font-family:Consolas,monospace;font-size:11px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
           <div style="white-space:nowrap;flex-shrink:0;">
             <span style="font-family:Consolas,monospace;font-weight:900;border:1.5px solid #000;padding:1px 8px;border-radius:3px;background:#fff;font-size:11px;">
-              ${currentCodeOFAffiche} • Page Atelier
+              ${currentCodeOFAffiche} • ${listeSections.length > 0 ? `${listeSections.length} Profilé(s)` : 'Fiche Atelier'}
             </span>
           </div>
         </div>
@@ -1232,7 +1278,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   };
 
   const handlePrint = () => {
+    const prevTitle = document.title;
+    document.title = `${currentCodeOFAffiche} - Commande ${cmdAffichee} - ${clientAffiche}`;
     window.print();
+    setTimeout(() => {
+      document.title = prevTitle;
+    }, 1000);
   };
 
   const handleEmettreOF = async () => {
@@ -1512,6 +1563,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     }
 
     const { familleLabel, profileDesignation } = separerFamilleEtProfile(sec);
+    const globalIdx = listeSections.indexOf(sec);
+    const profileNum = (globalIdx >= 0 ? globalIdx : sIdx) + 1;
+    const totalProfiles = listeSections.length;
 
     return (
       <div key={sIdx} className="space-y-3 of-avoid-break pt-2">
@@ -1523,6 +1577,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <span className="text-black text-2xl sm:text-3xl font-black">→</span>
           <span className="text-2xl sm:text-4xl lg:text-5xl font-black text-black font-mono tracking-wider uppercase bg-white px-5 py-2 rounded-xl border-[3px] border-black">
             {profileDesignation}
+          </span>
+          <span className="font-mono font-black text-xs sm:text-base px-3.5 py-1.5 rounded-lg border-2 border-black bg-black text-white shrink-0 tracking-wider">
+            PROFILÉ {profileNum} / {totalProfiles}
           </span>
           {conditionsParts.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -1772,7 +1829,32 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 8mm 8mm 12mm 8mm;
+            margin: 10mm 8mm 14mm 8mm;
+            @top-right {
+              content: "${currentCodeOFAffiche} — PAGE " counter(page) " / " counter(pages);
+              font-family: Consolas, "Courier New", monospace;
+              font-size: 9pt;
+              font-weight: 800;
+              color: #000000;
+            }
+            @bottom-right {
+              content: "PAGE " counter(page) " / " counter(pages);
+              font-family: Consolas, "Courier New", monospace;
+              font-size: 11pt;
+              font-weight: 900;
+              color: #000000;
+            }
+            @bottom-left {
+              content: "${currentCodeOFAffiche} (#${currentSequenceNum}) • COMMANDE N° ${cmdAffichee} • ${clientAffiche}";
+              font-family: Consolas, "Courier New", monospace;
+              font-size: 8.5pt;
+              font-weight: 700;
+              color: #222222;
+            }
+          }
+          .of-partie-break {
+            page-break-before: always !important;
+            break-before: page !important;
           }
           .print-doc-table {
             width: 100% !important;
@@ -2129,7 +2211,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   <div className="space-y-4">
                     <div className="bg-white text-black border-2 border-black py-2.5 px-4 rounded-lg shadow-none text-center">
                       <span className="font-black text-sm sm:text-base uppercase tracking-tight text-black">
-                        📋 PARTIE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)
+                        📋 FICHE 1 : PRÉPARATION DU STOCK &amp; MATIÈRES PREMIÈRES (MAGASIN)
                       </span>
                     </div>
 
@@ -2321,11 +2403,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             {/* ========================================================================= */}
             {/* PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS   */}
             {/* ========================================================================= */}
-            <div className="space-y-4 pt-4 border-t-4 border-black">
+            <div className={`space-y-4 pt-4 border-t-4 border-black ${hasAnyPreparation ? 'of-partie-break print:mt-0 print:pt-4' : ''}`}>
               <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center shadow-none">
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <div className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
-                    ✂️ OPTIMISATION DE DÉCOUPE
+                    ✂️ {hasAnyPreparation ? 'FICHE 2 : OPTIMISATION DE DÉCOUPE ATELIER' : 'FICHE 1 : OPTIMISATION DE DÉCOUPE ATELIER'}
                   </div>
                   <span className="px-3 py-0.5 bg-black text-white font-mono font-black text-sm rounded-md border border-black">
                     {currentCodeOFAffiche} (ORDRE N° {currentSequenceNum})
@@ -2379,7 +2461,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="font-mono font-black text-black border-2 border-black px-2.5 py-0.5 rounded bg-white text-xs">
-                          {currentCodeOFAffiche} • Page Atelier
+                          {currentCodeOFAffiche} • {listeSections.length > 0 ? `${listeSections.length} Profilé(s)` : 'Fiche Atelier'}
                         </span>
                       </div>
                     </div>

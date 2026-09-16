@@ -16,8 +16,7 @@ import {
   History,
   Terminal,
   ClipboardCheck,
-  Activity,
-  Scale
+  Activity
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
 import { SystemLogsModal } from './common/SystemLogsModal';
@@ -115,13 +114,6 @@ export const Header: React.FC<HeaderProps> = ({
       icon: ClipboardCheck,
       badge: activeOfCount > 0 ? activeOfCount : undefined,
       badgeBg: 'bg-blue-600 text-white'
-    },
-    {
-      id: 'cockpit-cloture',
-      label: '⚖️ Cockpit Clôture & Bilan',
-      icon: Scale,
-      badge: activeOfCount > 0 ? 'Nouveau' : undefined,
-      badgeBg: 'bg-emerald-600 text-white'
     },
     { id: 'historique', label: '📜 Historique Commandes', icon: History },
     { id: 'stock', label: '📦 Gestion Stock & Chutes', icon: FileSpreadsheet },
