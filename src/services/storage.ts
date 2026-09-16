@@ -850,20 +850,59 @@ export class StorageService {
   // CODIFICATIONS CLIENTS & PRÉFIXES
   // =========================================================================
 
+  private static readonly CODIFICATIONS_CACHE_KEY = '3m_client_codifications_cache';
+
   static async getClientCodifications(): Promise<ClientCodification[]> {
+    let cachedList: ClientCodification[] = [];
+    try {
+      const cached = localStorage.getItem(this.CODIFICATIONS_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cachedList = parsed;
+        }
+      }
+    } catch {}
+
     try {
       const res = await this.request('/api/codifications');
       const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        return json.data;
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        const dbList = json.data as ClientCodification[];
+        // Si le cache local possédait des clients personnalisés qui manquent en base (ex: après réinitialisation DB), on les réintègre
+        const mergedMap = new Map<string, ClientCodification>();
+        dbList.forEach(c => mergedMap.set(c.id, c));
+        let hasNewFromCache = false;
+        cachedList.forEach(c => {
+          if (!mergedMap.has(c.id) && !Array.from(mergedMap.values()).some(existing => existing.nom.trim().toLowerCase() === c.nom.trim().toLowerCase())) {
+            mergedMap.set(c.id, c);
+            hasNewFromCache = true;
+            // Renvoyer en arrière-plan vers SQLite
+            this.upsertClientCodification(c).catch(() => {});
+          }
+        });
+
+        const finalList = Array.from(mergedMap.values());
+        try {
+          localStorage.setItem(this.CODIFICATIONS_CACHE_KEY, JSON.stringify(finalList));
+        } catch {}
+        return finalList;
       }
     } catch (e: any) {
-      console.error('Erreur chargement codifications clients:', e);
+      console.error('Erreur chargement codifications clients depuis SQLite, bascule sur cache local:', e);
+    }
+
+    if (cachedList.length > 0) {
+      return cachedList;
     }
     return INITIAL_CLIENT_CODIFICATIONS;
   }
 
   static async saveClientCodifications(codifs: ClientCodification[]): Promise<void> {
+    try {
+      localStorage.setItem(this.CODIFICATIONS_CACHE_KEY, JSON.stringify(codifs));
+    } catch {}
+
     try {
       await this.request('/api/codifications', {
         method: 'POST',
@@ -880,6 +919,18 @@ export class StorageService {
 
   static async upsertClientCodification(codif: ClientCodification): Promise<void> {
     try {
+      const cached = localStorage.getItem(this.CODIFICATIONS_CACHE_KEY);
+      let list: ClientCodification[] = cached ? JSON.parse(cached) : [];
+      const idx = list.findIndex(c => c.id === codif.id || c.nom.trim().toLowerCase() === codif.nom.trim().toLowerCase());
+      if (idx >= 0) {
+        list[idx] = codif;
+      } else {
+        list.push(codif);
+      }
+      localStorage.setItem(this.CODIFICATIONS_CACHE_KEY, JSON.stringify(list));
+    } catch {}
+
+    try {
       await this.request('/api/codifications', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -894,6 +945,15 @@ export class StorageService {
   }
 
   static async deleteClientCodification(id: string): Promise<void> {
+    try {
+      const cached = localStorage.getItem(this.CODIFICATIONS_CACHE_KEY);
+      if (cached) {
+        const list: ClientCodification[] = JSON.parse(cached);
+        const filtered = list.filter(c => c.id !== id);
+        localStorage.setItem(this.CODIFICATIONS_CACHE_KEY, JSON.stringify(filtered));
+      }
+    } catch {}
+
     try {
       await this.request(`/api/codifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
       logger.sqlite('Codification Clients', `Codification ID ${id} supprimée de SQLite.`);

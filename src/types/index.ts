@@ -276,6 +276,18 @@ export interface DossierCommandeGlobal {
   motifPause?: string;       // Motif de la pause (ex: "Rupture de stock CT SOMO 30 BL")
   datePause?: string;        // Date de mise en pause
   dureePauseJours?: number;  // Nombre de jours cumulés d'interruption
+  /**
+   * Délais et dates de livraison calculés individuellement par commande / famille de produit.
+   * La date globale du dossier correspond à la date la plus éloignée (goulot d'étranglement).
+   */
+  datesLivraisonCommandes?: Partial<Record<FamilleProduit, {
+    dateLivraison: string;       // ex: "MERCREDI 16/09"
+    dateLivraisonISO: string;    // ex: "2026-09-16"
+    delaiJours: number;          // ex: 3
+    numCommande?: string;        // ex: "CMD-CAISS-2601"
+    nbPieces: number;            // ex: 12
+    chargeFileAttente?: number;  // pièces en file pour cette famille
+  }>>;
 }
 
 // ============================================================================
@@ -581,10 +593,12 @@ export interface EstimationDelaiDetail {
 }
 
 export interface EstimationLivraisonDossier {
+  hasPieces: boolean;                 // Vrai si au moins un article/pièce est présent dans le dossier
   dateMaximale: Date;
   dateLivraisonFormattee: string;     // ex: "LIVRAISON : MERCREDI 16/09"
   dateLivraisonISO?: string;          // ex: "2026-09-16"
   joursOuvresMax: number;
+  familleGoulot?: FamilleProduit;     // Famille déterminante imposant la date la plus éloignée
   detailsParFamille: Record<string, EstimationDelaiDetail>;
 }
 

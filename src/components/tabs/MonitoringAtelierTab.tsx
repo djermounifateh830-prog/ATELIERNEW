@@ -301,9 +301,11 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
           <div className="text-3xl font-black text-slate-50 font-mono mt-1">
             {monitoringData.totalCommandesActives}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
-            <span className="text-amber-400 font-bold">{caissons.nbCommandesEnCours}</span> Caissons •{' '}
-            <span className="text-sky-400 font-bold">{tabliers.nbCommandesEnCours}</span> Tabliers
+          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className="text-amber-400 font-bold">{caissons.nbCommandesEnCours}</span> Cais. •{' '}
+            <span className="text-sky-400 font-bold">{tabliers.nbCommandesEnCours}</span> Tabl. •{' '}
+            <span className="text-purple-400 font-bold">{precadres.nbCommandesEnCours}</span> Préc. •{' '}
+            <span className="text-emerald-400 font-bold">{moustiquaires.nbCommandesEnCours}</span> Mstq.
           </div>
         </div>
 
@@ -316,8 +318,11 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
           <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
             {monitoringData.totalPiecesEnFabrication}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            Toutes familles confondues sur postes
+          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className="text-amber-400 font-semibold">{caissons.totalPiecesEnCours}</span> Cais. •{' '}
+            <span className="text-sky-400 font-semibold">{tabliers.totalPiecesEnCours}</span> Tabl. •{' '}
+            <span className="text-purple-400 font-semibold">{precadres.totalPiecesEnCours}</span> Préc. •{' '}
+            <span className="text-emerald-400 font-semibold">{moustiquaires.totalPiecesEnCours}</span> Mstq.
           </div>
         </div>
 
@@ -330,8 +335,11 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
           <div className="text-3xl font-black text-sky-400 font-mono mt-1">
             {monitoringData.chargeTotaleHeures} <span className="text-sm font-sans font-normal text-slate-400">heures</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            Temps de sciage, usinage et assemblage
+          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className="text-amber-400 font-semibold">{caissons.chargeHeuresEstimee}h</span> Cais. •{' '}
+            <span className="text-sky-400 font-semibold">{tabliers.chargeHeuresEstimee}h</span> Tabl. •{' '}
+            <span className="text-purple-400 font-semibold">{precadres.chargeHeuresEstimee}h</span> Préc. •{' '}
+            <span className="text-emerald-400 font-semibold">{moustiquaires.chargeHeuresEstimee}h</span> Mstq.
           </div>
         </div>
 
@@ -390,8 +398,123 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
         </div>
       </div>
 
+      {/* ── 2.1 SYNTHÈSE GLOBALE DES 4 FAMILLES & ACCÈS DIRECT ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Carte Caissons */}
+        <div
+          id="card-synthese-caissons"
+          onClick={() => {
+            const el = document.getElementById('section-monitoring-caissons');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-slate-900/90 border border-amber-500/40 hover:border-amber-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-amber-500/10 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📦</span>
+              <span className="font-bold text-xs text-amber-200 group-hover:text-amber-300">Caissons &amp; Sous-Faces</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
+              {caissons.nbCommandesEnCours} cmd(s)
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-2 font-mono">
+            <span className="text-lg font-black text-slate-100">{caissons.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
+            <span className="text-xs font-bold text-amber-400">{caissons.chargeHeuresEstimee}h ({caissons.capaciteJournaliere} pcs/j)</span>
+          </div>
+          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+            <span>Échéance :</span>
+            <span className="font-mono font-bold text-amber-300 truncate">{caissons.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+          </div>
+        </div>
+
+        {/* Carte Tabliers */}
+        <div
+          id="card-synthese-tabliers"
+          onClick={() => {
+            const el = document.getElementById('section-monitoring-tabliers');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-slate-900/90 border border-sky-500/40 hover:border-sky-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-sky-500/10 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🪟</span>
+              <span className="font-bold text-xs text-sky-200 group-hover:text-sky-300">Tabliers Volets</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-sky-950 text-sky-300 border border-sky-800">
+              {tabliers.nbCommandesEnCours} cmd(s)
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-2 font-mono">
+            <span className="text-lg font-black text-slate-100">{tabliers.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
+            <span className="text-xs font-bold text-sky-400">{tabliers.chargeHeuresEstimee}h ({tabliers.capaciteJournaliere} pcs/j)</span>
+          </div>
+          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+            <span>Échéance :</span>
+            <span className="font-mono font-bold text-sky-300 truncate">{tabliers.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+          </div>
+        </div>
+
+        {/* Carte Précadres */}
+        <div
+          id="card-synthese-precadres"
+          onClick={() => {
+            const el = document.getElementById('section-monitoring-precadres');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-slate-900/90 border border-purple-500/40 hover:border-purple-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-purple-500/10 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🚪</span>
+              <span className="font-bold text-xs text-purple-200 group-hover:text-purple-300">Précadres Aluminium</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800">
+              {precadres.nbCommandesEnCours} cmd(s)
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-2 font-mono">
+            <span className="text-lg font-black text-slate-100">{precadres.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
+            <span className="text-xs font-bold text-purple-400">{precadres.chargeHeuresEstimee}h ({precadres.capaciteJournaliere} pcs/j)</span>
+          </div>
+          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+            <span>Échéance :</span>
+            <span className="font-mono font-bold text-purple-300 truncate">{precadres.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+          </div>
+        </div>
+
+        {/* Carte Moustiquaires */}
+        <div
+          id="card-synthese-moustiquaires"
+          onClick={() => {
+            const el = document.getElementById('section-monitoring-moustiquaires');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="bg-slate-900/90 border border-emerald-500/40 hover:border-emerald-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-emerald-500/10 group"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🦟</span>
+              <span className="font-bold text-xs text-emerald-200 group-hover:text-emerald-300">Moustiquaires</span>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
+              {moustiquaires.nbCommandesEnCours} cmd(s)
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-2 font-mono">
+            <span className="text-lg font-black text-slate-100">{moustiquaires.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
+            <span className="text-xs font-bold text-emerald-400">{moustiquaires.chargeHeuresEstimee}h ({moustiquaires.capaciteJournaliere} pcs/j)</span>
+          </div>
+          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+            <span>Échéance :</span>
+            <span className="font-mono font-bold text-emerald-300 truncate">{moustiquaires.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+          </div>
+        </div>
+      </div>
+
       {/* ── 3. FOCUS MAJEUR : CAISSONS (30, 25, 40 & LIVRAISON JUSQU'AU) ── */}
-      <div className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+      <div id="section-monitoring-caissons" className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
         {/* Entête Caissons */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -580,7 +703,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       </div>
 
       {/* ── 4. FOCUS : TABLIERS (43, 55 & ESTIMATION LIVRAISON) ── */}
-      <div className="bg-slate-900 border-2 border-sky-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+      <div id="section-monitoring-tabliers" className="bg-slate-900 border-2 border-sky-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
         {/* Entête Tabliers */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -732,7 +855,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       </div>
 
       {/* ── 5. FOCUS : PRÉCADRES (TYPE 36 & TYPE 50) ── */}
-      <div className="bg-slate-900 border-2 border-purple-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+      <div id="section-monitoring-precadres" className="bg-slate-900 border-2 border-purple-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
         {/* Entête Précadres */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -884,7 +1007,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       </div>
 
       {/* ── 6. FOCUS : MOUSTIQUAIRES (PORTE-FENÊTRE, FENÊTRE, DOUBLE VANTAUX, FIXE) ── */}
-      <div className="bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+      <div id="section-monitoring-moustiquaires" className="bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
         {/* Entête Moustiquaires */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -1082,8 +1205,8 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
         </div>
       </div>
 
-      {/* ── 6. VUE DIRECTE : CE QUI SE FAIT RÉELLEMENT DANS L'ATELIER (TABLEAU) ── */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+      {/* ── 7. VUE DIRECTE : CE QUI SE FAIT RÉELLEMENT DANS L'ATELIER (TABLEAU) ── */}
+      <div id="section-commandes-atelier" className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">

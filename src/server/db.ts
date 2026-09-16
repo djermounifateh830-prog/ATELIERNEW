@@ -31,14 +31,23 @@ class AtelierDatabase {
   constructor() {
     // Initialisation de la connexion SQLite
     this.db = new DatabaseSync(DB_PATH);
-    // Activer le mode WAL (Write-Ahead Logging) pour des performances et une concurrence optimales
+    // Activer le mode WAL avec checkpointing automatique et synchronisation fiable
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+    this.db.exec('PRAGMA wal_autocheckpoint = 20;');
     this.initTables();
     this.cleanCorruptedDesignations();
     this.seedIfEmpty();
     this.rebuildReservationsIfEmpty();
     this.reparerFamillesOF();
+    this.checkpointWal();
+  }
+
+  checkpointWal() {
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(PASSIVE);');
+    } catch {}
   }
 
   private cleanCorruptedDesignations() {
@@ -331,6 +340,50 @@ class AtelierDatabase {
           );
         }
       } catch {}
+    }
+
+    // Auto-consolidation : S'assurer que tous les Donneurs d'Ordre présents dans l'historique des dossiers sont codifiés
+    try {
+      const distinctDonneurs = this.db.prepare("SELECT DISTINCT donneur_ordre FROM dossiers WHERE donneur_ordre IS NOT NULL AND trim(donneur_ordre) != ''").all() as any[];
+      for (const d of distinctDonneurs) {
+        const nom = String(d.donneur_ordre).trim();
+        if (!nom) continue;
+        const exists = this.db.prepare("SELECT count(*) as c FROM client_codifications WHERE lower(trim(nom)) = lower(?)").get(nom) as any;
+        if (exists?.c === 0) {
+          const id = 'codif-' + nom.toUpperCase().replace(/[^A-Z0-9]/g, '-');
+          const code = nom.toUpperCase().replace(/\s+/g, '-');
+          let prefix = nom.substring(0, 2).toUpperCase() + '-';
+          let type = 'AUTRE';
+          const nomUp = nom.toUpperCase();
+          if (nomUp.includes('SOMODAL') || nomUp.includes('SOMADAL')) {
+            type = 'SOMADAL';
+            prefix = nomUp.includes('ORAN') ? 'SO-' : nomUp.includes('CONST') ? 'SC-' : 'SA-';
+          } else if (nomUp.includes('CRISTAL')) {
+            type = 'CRISTAL';
+            prefix = nomUp.includes('ORAN') ? 'O-' : nomUp.includes('CONST') ? 'D-' : 'A-';
+          } else if (nomUp.includes('ATELIER')) {
+            type = 'ATELIER';
+            prefix = nomUp.includes('ORAN') ? 'AO-' : nomUp.includes('CONST') ? 'Y-' : 'AA-';
+          }
+          this.upsertClientCodification({
+            id,
+            code,
+            nom,
+            prefixeCommande: prefix,
+            type: type as any,
+            badgeColor: type === 'CRISTAL' ? 'text-purple-300' : type === 'SOMADAL' ? 'text-sky-300' : 'text-amber-300',
+            badgeBg: type === 'CRISTAL' ? 'bg-purple-500/20 border-purple-500/30' : type === 'SOMADAL' ? 'bg-sky-500/20 border-sky-500/30' : 'bg-amber-500/20 border-amber-500/30',
+            actif: true,
+            ordre: 99,
+            peintureParDefaut: false,
+            montageSousFaceParDefaut: true,
+            avecPlaqueParDefaut: false
+          });
+          console.log(`📦 [SQLite] Auto-consolidation du client existant "${nom}" dans les codifications.`);
+        }
+      }
+    } catch (e) {
+      console.warn('[AtelierDB] Note auto-consolidation donneurs:', e);
     }
 
     // Vérifier si la base a déjà été initialisée
@@ -868,6 +921,7 @@ class AtelierDatabase {
         );
       }
       this.db.exec('COMMIT');
+      this.checkpointWal();
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
@@ -885,10 +939,12 @@ class AtelierDatabase {
       d.id, d.donneurOrdre, d.nomClientFinal, d.dateCommande,
       d.refCommande, d.statut, JSON.stringify(d)
     );
+    this.checkpointWal();
   }
 
   deleteDossier(id: string) {
     this.db.prepare('DELETE FROM dossiers WHERE id = ?').run(id);
+    this.checkpointWal();
   }
 
   // ==========================================
@@ -1925,6 +1981,7 @@ class AtelierDatabase {
         );
       }
       this.db.exec('COMMIT');
+      this.checkpointWal();
     } catch (e) {
       this.db.exec('ROLLBACK');
       throw e;
@@ -1947,10 +2004,12 @@ class AtelierDatabase {
       c.montageSousFaceParDefaut !== false ? 1 : 0,
       c.avecPlaqueParDefaut ? 1 : 0
     );
+    this.checkpointWal();
   }
 
   deleteClientCodification(id: string) {
     this.db.prepare('DELETE FROM client_codifications WHERE id = ?').run(id);
+    this.checkpointWal();
   }
 
   // ==========================================

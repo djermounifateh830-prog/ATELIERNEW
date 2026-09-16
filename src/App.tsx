@@ -139,6 +139,8 @@ export default function App() {
             chutesMaille={chutesMaille}
             mapping={mapping}
             dossiers={dossiers}
+            suivisOF={suivisOF}
+            clientCodifications={clientCodifications}
             onDossiersUpdated={loadData}
             onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
             selectedDossierToLoad={selectedDossierToLoad}

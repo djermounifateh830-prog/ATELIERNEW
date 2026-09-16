@@ -345,6 +345,32 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                     )}
                   </div>
 
+                  {/* Délais calculés par commande / famille pour ce dossier */}
+                  {(() => {
+                    const datesCommandes = dossier.datesLivraisonCommandes;
+                    if (datesCommandes && Object.keys(datesCommandes).length > 1) {
+                      return (
+                        <div className="pt-1.5 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                          <span className="text-slate-400">Échéances par commande :</span>
+                          {Object.entries(datesCommandes).map(([fam, info]) => (
+                            <span
+                              key={fam}
+                              className="bg-slate-900 text-slate-300 border border-slate-700 px-1.5 py-0.5 rounded flex items-center gap-1"
+                              title={`${fam}: ${info.nbPieces} pcs, délai: ${info.delaiJours}j`}
+                            >
+                              <span className="font-bold text-slate-200">
+                                {fam === 'CAISSON' ? 'Caisson' : fam === 'PRECADRE' ? 'Précadre' : fam === 'TABLIER' ? 'Volet' : 'Moust.'}
+                              </span>
+                              {info.numCommande && <span className="text-slate-400">({info.numCommande})</span>}
+                              : <span className="text-sky-300 font-bold">{info.dateLivraison}</span>
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
                   {/* Mise en avant des repères trouvés lors d'une recherche par repère */}
                   {searchTerm && (() => {
                     const term = searchTerm.toLowerCase().trim();

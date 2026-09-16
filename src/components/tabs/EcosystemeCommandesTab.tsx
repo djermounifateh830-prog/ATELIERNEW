@@ -125,6 +125,8 @@ interface EcosystemeCommandesTabProps {
   chutesMaille: ChuteMaille[];
   mapping: MappingChutes;
   dossiers?: DossierCommandeGlobal[];
+  suivisOF?: SuiviOF[];
+  clientCodifications?: ClientCodification[];
   onDossiersUpdated?: () => void;
   onNavigateToTab: (tabId: string, initialData?: any) => void;
   selectedDossierToLoad?: DossierCommandeGlobal | null;
@@ -137,6 +139,8 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   chutesMaille = [],
   mapping = {},
   dossiers = [],
+  suivisOF: suivisOFProp = [],
+  clientCodifications: clientCodificationsProp,
   onDossiersUpdated,
   onNavigateToTab,
   selectedDossierToLoad,
@@ -157,8 +161,17 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   // =========================================================================
   // GESTION DYNAMIQUE DES CODIFICATIONS CLIENTS & PRÉFIXES D'AGENCE
   // =========================================================================
-  const [clientCodifications, setClientCodifications] = useState<ClientCodification[]>(INITIAL_CLIENT_CODIFICATIONS);
+  const [clientCodifications, setClientCodifications] = useState<ClientCodification[]>(() => {
+    if (clientCodificationsProp && clientCodificationsProp.length > 0) return clientCodificationsProp;
+    return INITIAL_CLIENT_CODIFICATIONS;
+  });
   const [modalCodificationOpen, setModalCodificationOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (clientCodificationsProp && clientCodificationsProp.length > 0) {
+      setClientCodifications(clientCodificationsProp);
+    }
+  }, [clientCodificationsProp]);
 
   useEffect(() => {
     const loadCodifs = async () => {
@@ -177,6 +190,7 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   const handleSaveCodifications = async (updated: ClientCodification[]) => {
     setClientCodifications(updated);
     await StorageService.saveClientCodifications(updated);
+    if (onDossiersUpdated) onDossiersUpdated();
     showFlashNotification('✓ Codifications clients sauvegardées avec succès !', 'success');
   };
 
@@ -190,6 +204,7 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
     }
     setClientCodifications(updated);
     await StorageService.upsertClientCodification(codif);
+    if (onDossiersUpdated) onDossiersUpdated();
     showFlashNotification(`✓ Codification "${codif.nom}" mise à jour !`, 'success');
   };
 
@@ -197,6 +212,7 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
     const updated = clientCodifications.filter(c => c.id !== id);
     setClientCodifications(updated);
     await StorageService.deleteClientCodification(id);
+    if (onDossiersUpdated) onDossiersUpdated();
     showFlashNotification('✓ Codification supprimée.', 'warn');
   };
 
@@ -265,6 +281,19 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
 
     return Array.from(map.values()).sort((a, b) => b.nb - a.nb || a.nom.localeCompare(b.nom));
   }, [dossiers]);
+
+  // Sécurité anti-perte absolue : Donneurs d'ordre trouvés dans les dossiers existants mais pas encore codifiés
+  const clientsDossiersNonCodifies = useMemo(() => {
+    const codifies = new Set(clientCodifications.map(c => c.nom.trim().toUpperCase()));
+    const nonCodifies = new Set<string>();
+    (dossiers || []).forEach(d => {
+      const nom = (d.donneurOrdre || '').trim();
+      if (nom && !codifies.has(nom.toUpperCase())) {
+        nonCodifies.add(nom);
+      }
+    });
+    return Array.from(nonCodifies).sort();
+  }, [dossiers, clientCodifications]);
 
   // Filtrer les suggestions selon la saisie en cours (ne pas afficher tant que l'utilisateur n'a pas commencé à saisir)
   const suggestionsClientsFiltrees = useMemo(() => {
@@ -1650,7 +1679,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [inputRepere, setInputRepere] = useState<string>('');
 
   // Délais de production & suivi des interruptions/pauses
-  const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
+  const [localSuivisOF, setLocalSuivisOF] = useState<SuiviOF[]>([]);
+  const suivisOF = (suivisOFProp && suivisOFProp.length > 0) ? suivisOFProp : localSuivisOF;
   const [dateLivraisonPrevisionnelle, setDateLivraisonPrevisionnelle] = useState<string>('');
   const [dateLivraisonPrevisionnelleISO, setDateLivraisonPrevisionnelleISO] = useState<string>('');
   const [delaiFixeManuellement, setDelaiFixeManuellement] = useState<boolean>(false);
@@ -1665,7 +1695,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // Charger les OFs pour les calculs de files d'attente
   useEffect(() => {
     StorageService.getSuivisOF().then(ofs => {
-      if (Array.isArray(ofs)) setSuivisOF(ofs);
+      if (Array.isArray(ofs)) setLocalSuivisOF(ofs);
     }).catch(() => {});
   }, [dossiers]);
 
@@ -4006,6 +4036,31 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         }
       }
 
+      // Construction de la cartographie des délais propres à chaque commande / famille
+      const datesCommandesToSave: Partial<Record<FamilleProduit, {
+        dateLivraison: string;
+        dateLivraisonISO: string;
+        delaiJours: number;
+        numCommande?: string;
+        nbPieces: number;
+        chargeFileAttente?: number;
+      }>> = {};
+
+      if (estimationLivraisonLive.detailsParFamille) {
+        Object.entries(estimationLivraisonLive.detailsParFamille).forEach(([fam, det]) => {
+          const famKey = fam as FamilleProduit;
+          const numCmd = famKey === 'CAISSON' ? numCommandeCaisson : famKey === 'PRECADRE' ? numCommandePrecadre : famKey === 'TABLIER' ? numCommandeTablier : numCommandeMoustiquaire;
+          datesCommandesToSave[famKey] = {
+            dateLivraison: det.dateLivraisonFormattee,
+            dateLivraisonISO: DelaisProductionService.toISODateString(det.dateLivraisonPrevue),
+            delaiJours: det.joursOuvresRequis,
+            numCommande: numCmd ? numCmd.trim() : undefined,
+            nbPieces: det.piecesCommande,
+            chargeFileAttente: det.piecesEnFileAttente
+          };
+        });
+      }
+
       if (editingDossierId) {
         // MISE À JOUR D'UN DOSSIER EXISTANT DANS SQLITE
         const updatedDossiers: DossierCommandeGlobal[] = dossiers.map(d => {
@@ -4034,6 +4089,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
               dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
               delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
+              datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : d.datesLivraisonCommandes,
               estPrioritaire: estPrioritaire,
               motifPriorite: estPrioritaire ? motifPriorite : undefined,
               estEnPause: estEnPause,
@@ -4071,6 +4127,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
           dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
           delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
+          datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : undefined,
           estPrioritaire: estPrioritaire,
           motifPriorite: estPrioritaire ? motifPriorite : undefined,
           estEnPause: estEnPause,
@@ -4273,14 +4330,24 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 <Building2 className="w-3.5 h-3.5" />
                 <span>Mon Client *</span>
               </span>
-              {(() => {
-                const currentCodif = clientCodifications.find(c => c.nom === monClient);
-                return currentCodif?.prefixeCommande ? (
-                  <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
-                    {currentCodif.prefixeCommande}
-                  </span>
-                ) : null;
-              })()}
+              <div className="flex items-center gap-1.5">
+                {(() => {
+                  const currentCodif = clientCodifications.find(c => c.nom === monClient);
+                  return currentCodif?.prefixeCommande ? (
+                    <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30">
+                      {currentCodif.prefixeCommande}
+                    </span>
+                  ) : null;
+                })()}
+                <button
+                  type="button"
+                  onClick={() => setModalCodificationOpen(true)}
+                  className="text-[10px] text-sky-400 hover:text-sky-300 underline font-medium cursor-pointer"
+                  title="Gérer les agences et leurs préfixes de commande"
+                >
+                  Gérer
+                </button>
+              </div>
             </label>
             <select
               value={monClient}
@@ -4303,6 +4370,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   {d.nom} ({d.prefixeCommande})
                 </option>
               ))}
+              {clientsDossiersNonCodifies.length > 0 && (
+                <optgroup label="Agences identifiées dans l'historique">
+                  {clientsDossiersNonCodifies.map(nom => (
+                    <option key={`hist-${nom}`} value={nom}>
+                      {nom} (Historique)
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -4645,6 +4721,87 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             </div>
           </div>
         )}
+
+        {/* BANDEAU DE SYNTHÈSE DES DÉLAIS CALCULÉS PAR COMMANDE ET PAR FAMILLE */}
+        {estimationLivraisonLive.hasPieces && Object.keys(estimationLivraisonLive.detailsParFamille).length > 0 && (
+          <div className="mt-3 bg-slate-950/90 p-3 rounded-xl border border-sky-500/30 shadow-lg space-y-2 animate-fade-in">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-bold text-slate-100">
+                  Délais par commande (selon la charge de travail spécifique de chaque famille) :
+                </span>
+              </div>
+              <div className="text-[11px] text-amber-300 font-bold bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-500/40 flex items-center gap-1.5">
+                <span>📅 Date globale du dossier (échéance la plus longue) :</span>
+                <span className="font-mono text-white text-xs underline decoration-amber-400 font-black">
+                  {delaiFixeManuellement && dateLivraisonPrevisionnelle
+                    ? dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')
+                    : estimationLivraisonLive.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')}
+                </span>
+                {estimationLivraisonLive.familleGoulot && !delaiFixeManuellement && (
+                  <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                    Goulot : {estimationLivraisonLive.familleGoulot}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80">
+              {(['CAISSON', 'PRECADRE', 'TABLIER', 'MOUSTIQUAIRE'] as FamilleProduit[]).map(fam => {
+                const det = estimationLivraisonLive.detailsParFamille[fam];
+                const isGoulot = fam === estimationLivraisonLive.familleGoulot;
+                const numCmd = fam === 'CAISSON' ? numCommandeCaisson : fam === 'PRECADRE' ? numCommandePrecadre : fam === 'TABLIER' ? numCommandeTablier : numCommandeMoustiquaire;
+                const nbLignes = fam === 'CAISSON' ? lignesCaissons.length : fam === 'PRECADRE' ? lignesPrecadres.length : fam === 'TABLIER' ? lignesTabliers.length : lignesMoustiquaires.length;
+
+                if (!det && nbLignes === 0) return null;
+
+                return (
+                  <div
+                    key={fam}
+                    className={`p-2.5 rounded-lg border text-xs flex flex-col justify-between gap-1 transition ${
+                      isGoulot
+                        ? 'bg-amber-950/30 border-amber-500/60 ring-1 ring-amber-500/30'
+                        : 'bg-slate-900/80 border-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-bold text-slate-200 flex items-center gap-1">
+                        {fam === 'CAISSON' && '📦 Caisson'}
+                        {fam === 'PRECADRE' && '🚪 Précadre'}
+                        {fam === 'TABLIER' && '🪟 Volet/Tablier'}
+                        {fam === 'MOUSTIQUAIRE' && '🦟 Moustiquaire'}
+                      </span>
+                      {isGoulot ? (
+                        <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                          Dossier Max
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-slate-400 font-mono">
+                          {det?.joursOuvresRequis || 0}j ouvrés
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline justify-between mt-1">
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {numCmd ? `N° ${numCmd}` : 'Sans N°'}
+                      </span>
+                      <span className="font-mono font-bold text-emerald-300 text-xs">
+                        {det ? det.dateLivraisonFormattee : '—'}
+                      </span>
+                    </div>
+
+                    <div className="text-[9px] text-slate-500 flex justify-between items-center border-t border-slate-800/60 pt-1 mt-0.5">
+                      <span>{det?.piecesCommande || 0} pcs commande</span>
+                      <span>{det?.piecesEnFileAttente || 0} pcs en file</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -4670,6 +4827,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }`}>
               {lignesCaissons.length}
             </span>
+            {estimationLivraisonLive.detailsParFamille['CAISSON'] && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40" title="Délai calculé pour la commande Caisson">
+                🕒 {estimationLivraisonLive.detailsParFamille['CAISSON'].dateLivraisonFormattee}
+              </span>
+            )}
             {numCommandeCaisson && extraireNumeroSansPrefixe(numCommandeCaisson, clientCodifications) ? (
               <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3 text-emerald-400" />
@@ -4699,6 +4861,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }`}>
               {lignesTabliers.length}
             </span>
+            {estimationLivraisonLive.detailsParFamille['TABLIER'] && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950/80 text-sky-300 border border-sky-500/40" title="Délai calculé pour la commande Tablier">
+                🕒 {estimationLivraisonLive.detailsParFamille['TABLIER'].dateLivraisonFormattee}
+              </span>
+            )}
             {numCommandeTablier && extraireNumeroSansPrefixe(numCommandeTablier, clientCodifications) ? (
               <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3 text-sky-400" />
@@ -4728,6 +4895,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }`}>
               {lignesPrecadres.length}
             </span>
+            {estimationLivraisonLive.detailsParFamille['PRECADRE'] && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40" title="Délai calculé pour la commande Précadre">
+                🕒 {estimationLivraisonLive.detailsParFamille['PRECADRE'].dateLivraisonFormattee}
+              </span>
+            )}
             {numCommandePrecadre && extraireNumeroSansPrefixe(numCommandePrecadre, clientCodifications) ? (
               <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3 text-purple-400" />
@@ -4757,6 +4929,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }`}>
               {lignesMoustiquaires.length}
             </span>
+            {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'] && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-500/40" title="Délai calculé pour la commande Moustiquaire">
+                🕒 {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'].dateLivraisonFormattee}
+              </span>
+            )}
             {numCommandeMoustiquaire && extraireNumeroSansPrefixe(numCommandeMoustiquaire, clientCodifications) ? (
               <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3 text-amber-400" />
@@ -4872,11 +5049,32 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               )}
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
-              <span>Client :</span>
-              <strong className="text-slate-100 font-bold">{clientDeMonClient || 'Non spécifié'}</strong>
-              <span className="text-slate-600">|</span>
-              <span className="text-sky-300 font-semibold">{monClient}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Délai calculé pour la commande active */}
+              {(() => {
+                const det = estimationLivraisonLive.detailsParFamille[familleArticle];
+                if (det) {
+                  return (
+                    <div
+                      className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-sky-500/40 text-xs shadow-inner"
+                      title={`Calculé d'après la charge atelier : ${det.piecesCommande} pcs dans cette commande + ${det.piecesEnFileAttente} pcs en file d'attente`}
+                    >
+                      <Clock className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span className="text-slate-300">Délai {det.libelleFamille} :</span>
+                      <span className="font-mono font-bold text-emerald-300">{det.dateLivraisonFormattee}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">({det.joursOuvresRequis}j ouvrés)</span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+                <span>Client :</span>
+                <strong className="text-slate-100 font-bold">{clientDeMonClient || 'Non spécifié'}</strong>
+                <span className="text-slate-600">|</span>
+                <span className="text-sky-300 font-semibold">{monClient || 'Sans agence'}</span>
+              </div>
             </div>
           </div>
 

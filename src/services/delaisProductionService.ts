@@ -539,6 +539,7 @@ export class DelaisProductionService {
     if (dossier.statut === 'LIVRE' && dossier.dateLivraison) {
       const dLivre = this.parseDateString(dossier.dateLivraison);
       return {
+        hasPieces: true,
         dateMaximale: dLivre,
         dateLivraisonFormattee: `LIVRÉ LE : ${dossier.dateLivraison}`,
         dateLivraisonISO: this.toISODateString(dLivre),
@@ -593,6 +594,7 @@ export class DelaisProductionService {
       }
 
       return {
+        hasPieces: true,
         dateMaximale: dateLiv,
         dateLivraisonFormattee: texteAffiche,
         dateLivraisonISO: this.toISODateString(dateLiv),
@@ -607,8 +609,10 @@ export class DelaisProductionService {
 
     const detailsParFamille: Record<string, EstimationDelaiDetail> = {};
     let dateMax = new Date(dateDepart);
-    let joursMax = 1;
+    let joursMax = 0;
     let auMoinsUneFamille = false;
+    let familleGoulot: FamilleProduit | undefined = undefined;
+    let maxTime = -1;
 
     const famillesToCheck: FamilleProduit[] = ['CAISSON', 'PRECADRE', 'MOUSTIQUAIRE', 'TABLIER'];
 
@@ -638,10 +642,10 @@ export class DelaisProductionService {
         piecesEnFile += this.compterPiecesOF(o);
       });
 
-      // 2. D'après les autres dossiers en cours antérieurs si pas encore d'OF (en excluant les suspendus)
+      // 2. D'après les autres dossiers en attente ou en cours antérieurs si pas encore d'OF (en excluant les suspendus)
       tousDossiers.forEach(d => {
         if (d.id === dossier.id) return;
-        if (d.statut !== 'EN_COURS' || d.estEnPause) return;
+        if ((d.statut !== 'EN_COURS' && d.statut !== 'EN_ATTENTE') || d.estEnPause) return;
         // Éviter double compte si un OF existe déjà pour ce dossier
         const hasOF = suivisOF.some(o => o.numCommande === d.refCommande);
         if (!hasOF) {
@@ -655,9 +659,11 @@ export class DelaisProductionService {
       const joursRequis = totalChargePieces / cap + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
       const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursRequis, params.joursOuvres);
 
-      if (dateEstimee.getTime() > dateMax.getTime()) {
+      if (dateEstimee.getTime() > maxTime) {
+        maxTime = dateEstimee.getTime();
         dateMax = dateEstimee;
         joursMax = Math.max(1, Math.ceil(joursRequis));
+        familleGoulot = fam;
       }
 
       detailsParFamille[fam] = {
@@ -673,9 +679,15 @@ export class DelaisProductionService {
     });
 
     if (!auMoinsUneFamille) {
-      // Dossier sans pièces configurées : délai standard de 1 jour ouvré
-      dateMax = this.ajouterJoursOuvres(dateDepart, 1 + joursInterruptionDossier, params.joursOuvres);
-      joursMax = 1 + joursInterruptionDossier;
+      // Dossier sans pièces configurées : ne pas inventer une fausse date avant saisie
+      return {
+        hasPieces: false,
+        dateMaximale: dateDepart,
+        dateLivraisonFormattee: 'En attente de saisie des pièces',
+        dateLivraisonISO: '',
+        joursOuvresMax: 0,
+        detailsParFamille: {}
+      };
     }
 
     const texteDateDossier = this.formaterDateLivraison(dateMax);
@@ -684,10 +696,12 @@ export class DelaisProductionService {
       : texteDateDossier;
 
     return {
+      hasPieces: true,
       dateMaximale: dateMax,
       dateLivraisonFormattee: texteFinalDossier,
       dateLivraisonISO: this.toISODateString(dateMax),
       joursOuvresMax: joursMax,
+      familleGoulot,
       detailsParFamille
     };
   }
