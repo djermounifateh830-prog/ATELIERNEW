@@ -30,23 +30,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>(getInitialTab);
   const [selectedDossierToLoad, setSelectedDossierToLoad] = useState<DossierCommandeGlobal | null>(null);
 
-  const handleSetActiveTab = useCallback((tabId: string) => {
-    setActiveTab(tabId);
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', tabId);
-      window.history.pushState({ tab: tabId }, '', url.toString());
-    } catch (e) {}
-  }, []);
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setActiveTab(getInitialTab());
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
   // Application Data States (Pure SQLite — Source Unique de Vérité)
   const [articles, setArticles] = useState<Article[]>([]);
   const [chutesBarres, setChutesBarres] = useState<Record<string, ChuteItem[]>>({});
@@ -77,6 +60,25 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  }, []);
+
+  const handleSetActiveTab = useCallback((tabId: string) => {
+    setActiveTab(tabId);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tabId);
+      window.history.pushState({ tab: tabId }, '', url.toString());
+    } catch (e) {}
+    // Synchroniser silencieusement les données pour assurer la cohérence multi-modules (OFs, stocks, dossiers)
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTab(getInitialTab());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   useEffect(() => {

@@ -1690,7 +1690,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // Délais de production & suivi des interruptions/pauses
   const [localSuivisOF, setLocalSuivisOF] = useState<SuiviOF[]>([]);
-  const suivisOF = (suivisOFProp && suivisOFProp.length > 0) ? suivisOFProp : localSuivisOF;
+  const suivisOF = useMemo(() => {
+    if (localSuivisOF.length > 0 && (!suivisOFProp || localSuivisOF.length >= (suivisOFProp?.length || 0))) {
+      return localSuivisOF;
+    }
+    return (suivisOFProp && suivisOFProp.length > 0) ? suivisOFProp : localSuivisOF;
+  }, [suivisOFProp, localSuivisOF]);
+
   const [dateLivraisonPrevisionnelle, setDateLivraisonPrevisionnelle] = useState<string>('');
   const [dateLivraisonPrevisionnelleISO, setDateLivraisonPrevisionnelleISO] = useState<string>('');
   const [delaiFixeManuellement, setDelaiFixeManuellement] = useState<boolean>(false);
@@ -1706,11 +1712,24 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [isSavingDossier, setIsSavingDossier] = useState<boolean>(false);
 
   // Charger les OFs pour les calculs de files d'attente
-  useEffect(() => {
-    StorageService.getSuivisOF().then(ofs => {
+  const refreshSuivisOF = useCallback(async () => {
+    try {
+      const ofs = await StorageService.getSuivisOF();
       if (Array.isArray(ofs)) setLocalSuivisOF(ofs);
-    }).catch(() => {});
-  }, [dossiers]);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    refreshSuivisOF();
+  }, [refreshSuivisOF, dossiers]);
+
+  const ouvrirValidationDelaiModal = useCallback(async (statut?: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS') => {
+    if (statut) {
+      setStatutCiblePourEnregistrement(statut);
+    }
+    await refreshSuivisOF();
+    setShowValidationDelaiModal(true);
+  }, [refreshSuivisOF]);
 
   // Dossier virtuel pour le calcul en direct de l'estimation de livraison
   const dossierActuelVirtuel: DossierCommandeGlobal = useMemo(() => {
@@ -4047,7 +4066,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }
 
     setStatutCiblePourEnregistrement(statutCible);
-    setShowValidationDelaiModal(true);
+    ouvrirValidationDelaiModal(statutCible);
   };
 
   // Enregistrer ou Mettre à Jour le dossier complet dans l'historique SQLite avec les délais confirmés
@@ -4783,7 +4802,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   )}
                   <button
                     type="button"
-                    onClick={() => setShowValidationDelaiModal(true)}
+                    onClick={() => ouvrirValidationDelaiModal()}
                     className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-[11px] transition cursor-pointer flex items-center gap-1 shadow"
                     title="Ouvrir l'analyse détaillée des volumes par famille et files d'attente atelier"
                   >
@@ -4924,7 +4943,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
                     <div className="text-[10px] text-slate-400 border-t border-slate-800/80 pt-1 mt-0.5 space-y-0.5">
                       <div className="flex justify-between items-center text-[9px]">
-                        <span className="text-slate-400">{det?.piecesCommande || 0} cmd + {det?.piecesEnFileAttente || 0} file</span>
+                        <span className="text-slate-400">
+                          {det?.piecesCommande || 0} cmd + {det?.piecesEnFileAttente || 0} file
+                          {(det?.nbOfsEnCours || 0) > 0 ? ` (${det?.nbOfsEnCours} OF)` : ''}
+                        </span>
                         <span className="font-bold text-amber-300 font-mono">= {(det?.piecesCommande || 0) + (det?.piecesEnFileAttente || 0)} pcs</span>
                       </div>
                       <div className="flex justify-between items-center text-[9px] text-slate-400">

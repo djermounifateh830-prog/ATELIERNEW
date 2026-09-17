@@ -584,6 +584,14 @@ export interface ParametresProductionAtelier {
   familles: Record<FamilleProduit, ParametresFamilleProduction>;
 }
 
+export interface DetailOFEnCours {
+  codeOF: string;
+  numCommande: string;
+  nomClient: string;
+  nbPieces: number;
+  statut: string;
+}
+
 export interface EstimationDelaiDetail {
   famille: FamilleProduit;
   libelleFamille: string;
@@ -594,6 +602,8 @@ export interface EstimationDelaiDetail {
   dateLivraisonPrevue: Date;
   dateLivraisonFormattee: string;     // ex: "MERCREDI 16/09"
   capaciteJournaliere?: number;
+  nbOfsEnCours?: number;
+  ofsDetails?: DetailOFEnCours[];
 }
 
 export interface EstimationLivraisonDossier {

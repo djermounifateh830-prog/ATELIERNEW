@@ -56,6 +56,11 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
   const [motifPriorite, setMotifPriorite] = useState<string>(initialMotifPriorite);
   const [dateSelectionneeISO, setDateSelectionneeISO] = useState<string>('');
   const [modeDate, setModeDate] = useState<'AUTO' | 'MANUEL'>('AUTO');
+  const [expandedFamilles, setExpandedFamilles] = useState<Record<string, boolean>>({});
+
+  const toggleFamilleExpanded = (fam: string) => {
+    setExpandedFamilles(prev => ({ ...prev, [fam]: !prev[fam] }));
+  };
 
   const paramsProd = DelaisProductionService.getParametres();
   const dateSystemeStr = new Date().toLocaleDateString('fr-FR', {
@@ -78,12 +83,15 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
     } else if (estimationGlobale.dateLivraisonISO) {
       setDateSelectionneeISO(estimationGlobale.dateLivraisonISO);
       setModeDate('AUTO');
+    } else if (estimationGlobale.dateMaximale) {
+      setDateSelectionneeISO(DelaisProductionService.toISODateString(estimationGlobale.dateMaximale));
+      setModeDate('AUTO');
     } else {
       const auj = DelaisProductionService.toISODateString(new Date());
       setDateSelectionneeISO(auj);
       setModeDate('AUTO');
     }
-  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale.dateLivraisonISO]);
+  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale.dateLivraisonISO, estimationGlobale.dateMaximale]);
 
   // Synchronisation dynamique si en mode AUTO
   useEffect(() => {
@@ -216,9 +224,25 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
               </span>
             </div>
 
+            {!estimationGlobale.hasPieces && (
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <span className="font-bold text-amber-300 block">
+                    Nouvelle commande en cours de création (aucune pièce configurée) :
+                  </span>
+                  <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                    L'atelier compte actuellement des ordres de fabrication (OF) et commandes en cours dans sa file de production (détail ci-dessous).
+                    La date indiquée correspond à la <strong>disponibilité au plus tôt de l'atelier</strong>.
+                    Dès que vous ajouterez vos caissons ou tabliers, leur quantité s'ajoutera automatiquement à la file d'attente existante.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {detailsArray.length === 0 ? (
               <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400 text-center italic">
-                Aucune pièce configurée dans cette commande pour le moment.
+                Chargement des files de production atelier...
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -239,40 +263,88 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
                       const style = getFamilleStyle(det.famille);
                       const isGoulot = estimationGlobale.familleGoulot === det.famille && detailsArray.length > 1;
                       const cap = paramsProd.familles[det.famille]?.capaciteJournalierePieces || 120;
+                      const isExpanded = !!expandedFamilles[det.famille];
 
                       return (
-                        <tr key={det.famille} className={`hover:bg-slate-900/50 transition ${isGoulot ? 'bg-amber-500/5' : ''}`}>
-                          <td className="py-2.5 pr-2 font-sans font-bold">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${style.bg} ${style.text} border ${style.border}`}>
-                                {style.label}
-                              </span>
-                              {isGoulot && (
-                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-black border border-amber-500/40" title="Cette famille impose la date de livraison la plus éloignée pour l'ensemble du dossier">
-                                  Goulot
+                        <React.Fragment key={det.famille}>
+                          <tr className={`hover:bg-slate-900/50 transition ${isGoulot ? 'bg-amber-500/5' : ''}`}>
+                            <td className="py-2.5 pr-2 font-sans font-bold">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${style.bg} ${style.text} border ${style.border}`}>
+                                  {style.label}
                                 </span>
+                                {isGoulot && (
+                                  <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-black border border-amber-500/40" title="Cette famille impose la date de livraison la plus éloignée pour l'ensemble du dossier">
+                                    Goulot
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2.5 text-center font-bold">
+                              {det.piecesCommande > 0 ? (
+                                <span className="text-emerald-300">{det.piecesCommande} pcs</span>
+                              ) : (
+                                <span className="text-slate-400">0 pc</span>
                               )}
-                            </div>
-                          </td>
-                          <td className="py-2.5 text-center text-white font-bold">
-                            {det.piecesCommande} pcs
-                          </td>
-                          <td className="py-2.5 text-center text-slate-400">
-                            +{det.piecesEnFileAttente} pcs
-                          </td>
-                          <td className="py-2.5 text-center font-bold text-cyan-300">
-                            = {det.totalPiecesCharge} pcs
-                          </td>
-                          <td className="py-2.5 text-center text-slate-300">
-                            {cap} / j
-                          </td>
-                          <td className="py-2.5 text-center font-bold text-amber-300">
-                            {det.joursOuvresRequis}j ouvré(s)
-                          </td>
-                          <td className="py-2.5 text-right font-bold text-emerald-300">
-                            {det.dateLivraisonFormattee}
-                          </td>
-                        </tr>
+                            </td>
+                            <td className="py-2.5 text-center text-slate-300">
+                              <div className="flex items-center justify-center gap-1">
+                                <span>+{det.piecesEnFileAttente} pcs</span>
+                                {det.ofsDetails && det.ofsDetails.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleFamilleExpanded(det.famille)}
+                                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[9px] font-bold border border-slate-700 transition cursor-pointer"
+                                    title="Cliquer pour afficher les OFs composant cette charge"
+                                  >
+                                    {isExpanded ? '▲ Masquer' : `▼ ${det.nbOfsEnCours} OF(s)`}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-2.5 text-center font-bold text-cyan-300">
+                              = {det.totalPiecesCharge} pcs
+                            </td>
+                            <td className="py-2.5 text-center text-slate-300">
+                              {cap} / j
+                            </td>
+                            <td className="py-2.5 text-center font-bold text-amber-300">
+                              {det.joursOuvresRequis}j ouvré(s)
+                            </td>
+                            <td className="py-2.5 text-right font-bold text-emerald-300">
+                              {det.dateLivraisonFormattee}
+                            </td>
+                          </tr>
+
+                          {/* Tiroir détaillé des OFs en cours pour cette famille */}
+                          {isExpanded && det.ofsDetails && det.ofsDetails.length > 0 && (
+                            <tr className="bg-slate-950/80">
+                              <td colSpan={7} className="p-2.5">
+                                <div className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 space-y-1.5">
+                                  <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center justify-between">
+                                    <span>Ordres de Fabrication en cours pour {style.label} :</span>
+                                    <span className="text-slate-400 font-mono">{det.ofsDetails.length} ordre(s) actif(s) • Total {det.piecesEnFileAttente} pièces</span>
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                                    {det.ofsDetails.map((ofItem, idx) => (
+                                      <div key={idx} className="bg-slate-950 px-2 py-1 rounded border border-slate-800 flex items-center justify-between text-[10px] font-mono">
+                                        <span className="text-slate-200 font-bold truncate max-w-[150px]">
+                                          {ofItem.codeOF} <span className="text-slate-400 font-normal">({ofItem.numCommande})</span>
+                                        </span>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          <span className="text-slate-400 truncate max-w-[90px]">{ofItem.nomClient}</span>
+                                          <span className="text-amber-300 font-bold px-1 rounded bg-amber-500/10 border border-amber-500/30">
+                                            {ofItem.nbPieces} pc{ofItem.nbPieces > 1 ? 's' : ''}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -294,7 +366,7 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-amber-400" />
-                <span>Date de Livraison Retenue :</span>
+                <span>{estimationGlobale.hasPieces ? 'Date de Livraison Retenue :' : 'Disponibilité Atelier au plus tôt :'}</span>
               </label>
               {modeDate === 'MANUEL' && (
                 <button
@@ -325,7 +397,7 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
               </div>
               {modeDate === 'AUTO' && (
                 <span className="text-[10px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
-                  ✓ Calculé automatiquement par charge cumulée
+                  {estimationGlobale.hasPieces ? '✓ Calculé automatiquement par charge cumulée' : '✓ Disponibilité atelier estimée selon file de production'}
                 </span>
               )}
             </div>
