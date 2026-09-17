@@ -96,6 +96,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     return `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
   });
   const [isConfirming, setIsConfirming] = useState<boolean>(false);
+  const [isClotureSuccess, setIsClotureSuccess] = useState<boolean>(false);
 
   const [editingNonInventorieIdx, setEditingNonInventorieIdx] = useState<number | null>(null);
   const [nonInventorieTempLg, setNonInventorieTempLg] = useState<string>('');
@@ -700,15 +701,16 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         lignesRetour: lignes,
         remarqueGlobale
       }, mouvements);
+      setIsClotureSuccess(true);
+      setTimeout(() => {
+        onCloture();
+        onClose();
+      }, 1200);
     } catch (error: any) {
       setIsConfirming(false);
       alert(`Impossible de clôturer l'OF : ${error.message}`);
       return;
     }
-
-    setIsConfirming(false);
-    onCloture();
-    onClose();
   };
 
   // Découpage des numéros de commande pour affichage des badges
@@ -1832,23 +1834,30 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
             >
               Annuler
             </button>
-            <button
-              type="button"
-              onClick={handleConfirmerRetour}
-              disabled={isConfirming || stats.nbAnomaliesFatales > 0}
-              className={`px-5 py-2.5 text-white text-xs font-black rounded-xl flex items-center gap-2 transition shadow-lg cursor-pointer ${
-                stats.nbAnomaliesFatales > 0
-                  ? 'bg-rose-700 opacity-60 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 shadow-emerald-500/20'
-              }`}
-            >
-              {isConfirming ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4" />
-              )}
-              <span>Valider les Mesures &amp; Clôturer l'OF</span>
-            </button>
+            {isClotureSuccess ? (
+              <div className="px-5 py-2.5 bg-emerald-500 text-slate-950 text-xs font-black rounded-xl flex items-center gap-2 shadow-lg">
+                <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                <span>OF Clôturé avec succès ! Fermeture...</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConfirmerRetour}
+                disabled={isConfirming || stats.nbAnomaliesFatales > 0}
+                className={`px-5 py-2.5 text-white text-xs font-black rounded-xl flex items-center gap-2 transition shadow-lg cursor-pointer ${
+                  stats.nbAnomaliesFatales > 0
+                    ? 'bg-rose-700 opacity-60 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 shadow-emerald-500/20'
+                }`}
+              >
+                {isConfirming ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
+                <span>Valider les Mesures &amp; Clôturer l'OF</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

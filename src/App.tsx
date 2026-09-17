@@ -12,7 +12,9 @@ import { HistoriqueTab } from './components/tabs/HistoriqueTab';
 import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
 import { ClotureCockpitTab } from './components/tabs/ClotureCockpitTab';
 import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
+import { SecurityLockOverlay } from './components/common/SecurityLockOverlay';
 import { StorageService } from './services/storage';
+import { userService } from './services/userService';
 import { realtimeSync } from './services/realtimeSync';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
 
@@ -30,6 +32,7 @@ const getInitialTab = (): string => {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>(getInitialTab);
   const [selectedDossierToLoad, setSelectedDossierToLoad] = useState<DossierCommandeGlobal | null>(null);
+  const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => userService.isSessionLocked());
 
   // Application Data States (Pure SQLite — Source Unique de Vérité)
   const [articles, setArticles] = useState<Article[]>([]);
@@ -94,6 +97,23 @@ export default function App() {
     });
     return unsubscribe;
   }, [loadData]);
+
+  // Surveillance du verrouillage de session et des autorisations d'onglets
+  useEffect(() => {
+    const unsub = userService.onOperatorChange((op) => {
+      setIsSessionLocked(userService.isSessionLocked());
+      // Vérifier si l'onglet actif est toujours autorisé pour l'opérateur
+      if (!userService.hasTabAccess(activeTab, op)) {
+        // Rediriger vers le premier onglet autorisé
+        const authorized = ['monitoring', 'ecosysteme', 'encours', 'historique', 'stock', 'devis', 'documentation']
+          .find(tabId => userService.hasTabAccess(tabId, op));
+        if (authorized) {
+          handleSetActiveTab(authorized);
+        }
+      }
+    });
+    return unsub;
+  }, [activeTab, handleSetActiveTab]);
 
   const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal) => {
     setSelectedDossierToLoad(dossier);
@@ -254,6 +274,12 @@ export default function App() {
           <span>3M Atelier — Système d'Optimisation de Découpe & Gestion de Stock (SQLite 3m_atelier.db)</span>
         </div>
       </footer>
+
+      {/* Écran de Sécurité / Verrouillage par Code PIN */}
+      <SecurityLockOverlay
+        isOpen={isSessionLocked}
+        onUnlock={() => setIsSessionLocked(false)}
+      />
     </div>
   );
 }

@@ -736,7 +736,33 @@ class AtelierDatabase {
         reserve: usedReserve // Quantité préaffectée / réservée sur un OF en cours
       });
     }
-    return map;
+
+    // Consolider pour garantir 1 seule ligne par longueur au sein de chaque famille
+    const consolidatedMap: Record<string, ChuteItem[]> = {};
+    for (const [sheet, items] of Object.entries(map)) {
+      const byLg = new Map<number, ChuteItem>();
+      for (const item of items) {
+        const lg = Math.round(Number(item.longueur) * 10) / 10;
+        if (lg <= 0) continue;
+        if (byLg.has(lg)) {
+          const ex = byLg.get(lg)!;
+          ex.quantite = (ex.quantite || 0) + (item.quantite || 0);
+          ex.quantitePhysique = (ex.quantitePhysique || 0) + (item.quantitePhysique || 0);
+          ex.reserve = (ex.reserve || 0) + (item.reserve || 0);
+        } else {
+          byLg.set(lg, {
+            ...item,
+            longueur: lg,
+            quantite: item.quantite || 0,
+            quantitePhysique: item.quantitePhysique || 0,
+            reserve: item.reserve || 0
+          });
+        }
+      }
+      consolidatedMap[sheet] = Array.from(byLg.values()).sort((a, b) => b.longueur - a.longueur);
+    }
+
+    return consolidatedMap;
   }
 
   saveChutesBarres(chutesMap: Record<string, ChuteItem[]>, replaceEntireDb: boolean = false) {
@@ -767,25 +793,41 @@ class AtelierDatabase {
         const safeSheet = cleanSheet.replace(/[^a-zA-Z0-9]/g, '_');
 
         if (Array.isArray(items)) {
-          for (const item of items) {
-            let chuteId = item.id ? String(item.id).trim() : '';
-            // Si pas d'ID, ou si l'ID a déjà été utilisé dans cette sauvegarde, générer un ID unique garanti
-            if (!chuteId || usedIds.has(chuteId)) {
-              chuteId = `c-${safeSheet}-${timestamp}-${counter++}-${Math.random().toString(36).substring(2, 7)}`;
-            }
-            usedIds.add(chuteId);
+          // Consolidation des chutes : aucune mesure en doublon, cumul de la quantité totale par longueur
+          const consolidatedByLg = new Map<number, { id: string; longueur: number; quantite: number }>();
 
-            // Toujours persister le stock physique réel
+          for (const item of items) {
+            const lg = Math.round((Number(item.longueur) || 0) * 10) / 10;
+            if (lg <= 0) continue;
+
             const rawQte = (item as any).quantitePhysique ?? item.quantite;
             const qteVal = Math.max(0, Math.round(Number(rawQte) || 0));
-            if (qteVal > 0) {
-              stmt.run(
-                chuteId,
-                cleanSheet,
-                Number(item.longueur) || 0,
-                qteVal
-              );
+            if (qteVal <= 0) continue;
+
+            if (consolidatedByLg.has(lg)) {
+              const existing = consolidatedByLg.get(lg)!;
+              existing.quantite += qteVal;
+            } else {
+              let chuteId = item.id ? String(item.id).trim() : '';
+              if (!chuteId || usedIds.has(chuteId)) {
+                chuteId = `c-${safeSheet}-${timestamp}-${counter++}-${Math.random().toString(36).substring(2, 7)}`;
+              }
+              usedIds.add(chuteId);
+              consolidatedByLg.set(lg, {
+                id: chuteId,
+                longueur: lg,
+                quantite: qteVal
+              });
             }
+          }
+
+          for (const c of consolidatedByLg.values()) {
+            stmt.run(
+              c.id,
+              cleanSheet,
+              c.longueur,
+              c.quantite
+            );
           }
         }
       }
@@ -870,7 +912,7 @@ class AtelierDatabase {
     }
 
     const rows = this.db.prepare('SELECT * FROM chutes_maille ORDER BY dimension_fixe DESC').all() as any[];
-    return rows.map(r => {
+    const rawList: ChuteMaille[] = rows.map(r => {
       const physicalPlis = Number(r.plis) || 0;
       let reservedPlis = 0;
       if (r.id && resMap.has(`id_${r.id}`)) {
@@ -891,6 +933,28 @@ class AtelierDatabase {
         plisReserve: reservedPlis
       };
     });
+
+    // Consolidation des chutes maille : 1 seule entrée par dimension fixe avec cumul des plis
+    const byDim = new Map<number, ChuteMaille>();
+    for (const item of rawList) {
+      const dim = Math.round(Number(item.dimension_fixe) * 10) / 10;
+      if (dim <= 0) continue;
+      if (byDim.has(dim)) {
+        const ex = byDim.get(dim)!;
+        ex.plis = (ex.plis || 0) + (item.plis || 0);
+        ex.plisPhysique = (ex.plisPhysique || 0) + (item.plisPhysique || 0);
+        ex.plisReserve = (ex.plisReserve || 0) + (item.plisReserve || 0);
+      } else {
+        byDim.set(dim, {
+          ...item,
+          dimension_fixe: dim,
+          plis: item.plis || 0,
+          plisPhysique: item.plisPhysique || 0,
+          plisReserve: item.plisReserve || 0
+        });
+      }
+    }
+    return Array.from(byDim.values()).sort((a, b) => b.dimension_fixe - a.dimension_fixe);
   }
 
   saveChutesMaille(mailleList: ChuteMaille[]) {
@@ -905,23 +969,38 @@ class AtelierDatabase {
       const usedMailleIds = new Set<string>();
       const timestamp = Date.now();
 
+      // Consolidation : aucune dimension en doublon, cumul des plis
+      const consolidatedMaille = new Map<number, { id: string; dimension_fixe: number; plis: number }>();
+
       for (const m of mailleList) {
-        let mailleId = m.id ? String(m.id).trim() : '';
-        if (!mailleId || usedMailleIds.has(mailleId)) {
-          mailleId = `m-${timestamp}-${counter++}-${Math.random().toString(36).substring(2, 7)}`;
-        }
-        usedMailleIds.add(mailleId);
+        const dim = Math.round((Number(m.dimension_fixe) || 0) * 10) / 10;
+        if (dim <= 0) continue;
 
         const rawPlis = (m as any).plisPhysique ?? m.plis;
         const plisVal = Math.max(0, Math.round(Number(rawPlis) || 0));
-        if (plisVal > 0) {
-          stmt.run(
-            mailleId,
-            Number(m.dimension_fixe) || 0,
-            plisVal
-          );
+        if (plisVal <= 0) continue;
+
+        if (consolidatedMaille.has(dim)) {
+          const ex = consolidatedMaille.get(dim)!;
+          ex.plis += plisVal;
+        } else {
+          let mailleId = m.id ? String(m.id).trim() : '';
+          if (!mailleId || usedMailleIds.has(mailleId)) {
+            mailleId = `m-${timestamp}-${counter++}-${Math.random().toString(36).substring(2, 7)}`;
+          }
+          usedMailleIds.add(mailleId);
+          consolidatedMaille.set(dim, {
+            id: mailleId,
+            dimension_fixe: dim,
+            plis: plisVal
+          });
         }
       }
+
+      for (const m of consolidatedMaille.values()) {
+        stmt.run(m.id, m.dimension_fixe, m.plis);
+      }
+
       this.db.exec('COMMIT');
     } catch (e) {
       this.db.exec('ROLLBACK');

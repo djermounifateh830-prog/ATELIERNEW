@@ -17,7 +17,9 @@ import {
   ChevronUp,
   Search,
   Archive,
-  ArrowRight
+  ArrowRight,
+  PackageCheck,
+  X
 } from 'lucide-react';
 import { Article, ChuteItem, SuiviOF } from '../../../types';
 import {
@@ -27,6 +29,7 @@ import {
   ConcordanceOFService
 } from '../../../services/concordanceOFService';
 import { ChuteRackPickerModal } from './ChuteRackPickerModal';
+import { ClotureSuccessModal } from '../../common/ClotureSuccessModal';
 import { StorageService } from '../../../services/storage';
 
 interface CockpitEclairViewProps {
@@ -38,6 +41,8 @@ interface CockpitEclairViewProps {
   onBilanChange: (newBilan: BilanCockpitOF) => void;
   onRefreshData: () => void;
   onClotureSuccess?: () => void;
+  onCloseOF?: () => void;
+  onNavigateToTab?: (tabId: string) => void;
 }
 
 export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
@@ -48,9 +53,13 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
   mapping,
   onBilanChange,
   onRefreshData,
-  onClotureSuccess
+  onClotureSuccess,
+  onCloseOF,
+  onNavigateToTab
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isClotureTerminee, setIsClotureTerminee] = useState(suivi.statut === 'CLOTURE');
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [remarqueGenerale, setRemarqueGenerale] = useState(suivi.remarqueGlobale || '');
 
@@ -118,8 +127,19 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
     });
   };
 
+  // Fermeture définitive de l'OF et retour à la liste
+  const handleFermerOF = () => {
+    setShowSuccessModal(false);
+    if (onCloseOF) {
+      onCloseOF();
+    } else if (onClotureSuccess) {
+      onClotureSuccess();
+    }
+  };
+
   // Exécution de la clôture
   const handleValiderCloture = async () => {
+    if (isSubmitting || isClotureTerminee || suivi.statut === 'CLOTURE') return;
     setIsSubmitting(true);
     try {
       const todayStr = new Date().toLocaleDateString('fr-FR');
@@ -140,11 +160,12 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
 
       await StorageService.closeOF(finalSuivi, mouvements);
 
+      // Verrouiller immédiatement et définitivement le bouton
+      setIsClotureTerminee(true);
+      // Déclencher l'affichage de la modale de succès éclatante
+      setShowSuccessModal(true);
       setSuccessMessage(`OF ${bilan.codeOF || suivi.numCommande} clôturé avec succès ! Stocks et chutes actualisés.`);
       onRefreshData();
-      if (onClotureSuccess) {
-        setTimeout(() => onClotureSuccess(), 1200);
-      }
     } catch (err: any) {
       alert(`Erreur lors de la clôture de l'OF : ${err?.message || 'Erreur inconnue'}`);
     } finally {
@@ -181,8 +202,33 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Banner de succès */}
-      {successMessage && (
+      {/* Alerte si l'OF est déjà clôturé */}
+      {(isClotureTerminee || suivi.statut === 'CLOTURE') && (
+        <div className="p-4 bg-emerald-950/90 border-2 border-emerald-500 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-emerald-200 shadow-xl">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+            <div>
+              <p className="font-black text-sm text-white">
+                Ordre de Fabrication {bilan.codeOF} Déjà Clôturé
+              </p>
+              <p className="text-xs text-emerald-300">
+                Clôturé le {suivi.dateRetour || 'ce jour'} • Stocks de profilés débités et chutes archivées.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleFermerOF}
+            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-md cursor-pointer transition"
+          >
+            <PackageCheck className="w-4 h-4" />
+            <span>Fermer cet OF</span>
+          </button>
+        </div>
+      )}
+
+      {/* Banner de succès temporaire */}
+      {successMessage && !showSuccessModal && (
         <div className="p-4 bg-emerald-950/90 border border-emerald-500 rounded-2xl flex items-center justify-between text-emerald-200 shadow-xl">
           <div className="flex items-center gap-3">
             <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
@@ -224,8 +270,19 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
           </div>
         </div>
 
-        {/* Badges synthétiques du bilan en pièces */}
+        {/* Actions et Badges synthétiques */}
         <div className="flex flex-wrap items-center gap-2">
+          {onCloseOF && (
+            <button
+              type="button"
+              onClick={handleFermerOF}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+              title="Fermer cet Ordre de Fabrication"
+            >
+              <X className="w-3.5 h-3.5 text-slate-400" />
+              <span>Fermer l'OF</span>
+            </button>
+          )}
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-950/70 border border-emerald-800/60 text-emerald-300 text-xs font-bold" title="Barres neuves 6m consommées">
             <Box className="w-3.5 h-3.5 text-emerald-400" />
             <span>{totauxPieces.totalBarres} barre(s) 6m</span>
@@ -898,10 +955,25 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
-            {bilan.estConformeAuPlan ? (
+            {isClotureTerminee || suivi.statut === 'CLOTURE' ? (
+              <div className="flex items-center gap-2.5">
+                <div className="px-4 py-2.5 bg-emerald-950/90 border border-emerald-500/80 text-emerald-400 font-bold rounded-xl text-xs flex items-center gap-2 shadow-inner">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>OF Clôturé avec succès</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleFermerOF}
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-emerald-950/40 flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <PackageCheck className="w-4 h-4" />
+                  <span>Fermer cet OF</span>
+                </button>
+              </div>
+            ) : bilan.estConformeAuPlan ? (
               <button
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isClotureTerminee}
                 onClick={handleValiderCloture}
                 className="px-6 py-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-950/50 flex items-center gap-2 transition transform active:scale-98 cursor-pointer disabled:opacity-50"
               >
@@ -920,7 +992,7 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
             ) : (
               <button
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isClotureTerminee}
                 onClick={handleValiderCloture}
                 className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-amber-950/50 flex items-center gap-2 transition transform active:scale-98 cursor-pointer disabled:opacity-50"
               >
@@ -940,6 +1012,23 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modale d'annonce de Clôture avec Succès et Fermeture Immédiate */}
+      <ClotureSuccessModal
+        isOpen={showSuccessModal}
+        codeOF={bilan.codeOF}
+        numCommande={bilan.numCommande}
+        nomClient={bilan.nomClient}
+        titreSection={bilan.titreSection}
+        stats={{
+          barresNeuves: totauxPieces.totalBarres,
+          chutesDebitees: totauxPieces.totalChutesDebitees,
+          chutesGenerees: totauxPieces.totalChutesARanger,
+          accessoires: totauxPieces.totalAccessoires
+        }}
+        onFermerOF={handleFermerOF}
+        onAllerAuxOrdresEnCours={onNavigateToTab ? () => onNavigateToTab('encours') : undefined}
+      />
 
       {/* Modal choix autre chute de rack */}
       {pickerProfileIdx !== null && currentPickerProfile && (

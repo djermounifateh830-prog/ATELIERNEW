@@ -638,9 +638,28 @@ export interface InfoStatutDelai {
 }
 
 // =========================================================================
-// PROFILS ET RÔLES UTILISATEURS (OPÉRATEURS)
+// PROFILS ET RÔLES UTILISATEURS (OPÉRATEURS & PERMISSIONS)
 // =========================================================================
 export type UserRole = 'RESPONSABLE' | 'ATELIER' | 'COMMERCIAL';
+
+export interface UserPermissions {
+  // Onglets autorisés
+  tabMonitoring: boolean;       // 📊 Monitoring Atelier
+  tabEcosysteme: boolean;       // 📁 Écosystème & Commandes
+  tabEncours: boolean;          // 📋 Ordres en Cours (OF)
+  tabHistorique: boolean;       // 📜 Historique Commandes
+  tabStock: boolean;            // 📦 Gestion Stock & Chutes
+  tabDevis: boolean;            // 💰 Devis & Coûts
+  tabDocumentation: boolean;    // 📘 Règles Métier
+  
+  // Actions opérationnelles sensibles
+  canCloseOF: boolean;          // Clôture des OFs
+  canCancelOF: boolean;         // Annulation / réouverture d'OF
+  canModifyStock: boolean;      // Mouvements de stock & inventaire
+  canManageChutes: boolean;     // Créer / supprimer familles et chutes
+  canImportExport: boolean;     // Import / Export Excel
+  canManageUsers: boolean;      // Gestion des utilisateurs et sécurité
+}
 
 export interface UserProfile {
   id: string;
@@ -650,6 +669,8 @@ export interface UserProfile {
   avatarColor: string;
   poste: string;
   derniereActivite?: string;
+  pinCode?: string;             // Code secret PIN à 4 chiffres (ex: '1234')
+  permissions?: UserPermissions;// Permissions paramétrables par checkboxes
 }
 
 // =========================================================================

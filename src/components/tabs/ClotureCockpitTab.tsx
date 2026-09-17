@@ -69,12 +69,29 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
       setClotureMode(savedMode);
     }
     const savedOf = localStorage.getItem('3m_cockpit_selected_of');
-    if (savedOf && suivisOF.some(o => o.id === savedOf)) {
+    if (savedOf && ofsActifs.some(o => o.id === savedOf)) {
       setSelectedOFId(savedOf);
+    } else if (selectedOFId && !ofsActifs.some(o => o.id === selectedOFId)) {
+      // L'OF sélectionné n'est plus actif (il a été clôturé !) -> on le ferme !
+      localStorage.removeItem('3m_cockpit_selected_of');
+      setSelectedOFId(ofsActifs[0]?.id || '');
     } else if (!selectedOFId && ofsActifs.length > 0) {
       setSelectedOFId(ofsActifs[0].id);
     }
   }, [suivisOF, ofsActifs, selectedOFId]);
+
+  // Fonction explicite de fermeture d'OF (vider le cockpit ou passer au suivant)
+  const handleCloseOF = (ofIdToClose?: string) => {
+    const targetId = ofIdToClose || selectedOFId;
+    localStorage.removeItem('3m_cockpit_selected_of');
+    const remaining = ofsActifs.filter(o => o.id !== targetId);
+    if (remaining.length > 0) {
+      setSelectedOFId(remaining[0].id);
+      localStorage.setItem('3m_cockpit_selected_of', remaining[0].id);
+    } else {
+      setSelectedOFId('');
+    }
+  };
 
   const currentOF = useMemo(() => {
     return suivisOF.find(o => o.id === selectedOFId);
@@ -417,14 +434,9 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
                   mapping={mapping}
                   onBilanChange={setBilanCockpit}
                   onRefreshData={onRefreshData}
-                  onClotureSuccess={() => {
-                    const remaining = ofsActifs.filter(o => o.id !== currentOF.id);
-                    if (remaining.length > 0) {
-                      setSelectedOFId(remaining[0].id);
-                    } else {
-                      setSelectedOFId('');
-                    }
-                  }}
+                  onClotureSuccess={() => handleCloseOF(currentOF.id)}
+                  onCloseOF={() => handleCloseOF(currentOF.id)}
+                  onNavigateToTab={onNavigateToTab}
                 />
               ) : (
                 <div className="p-8 text-center text-slate-400">
@@ -441,14 +453,9 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
                 chutesBarres={chutesBarres}
                 mapping={mapping}
                 onRefreshData={onRefreshData}
-                onClotureSuccess={() => {
-                  const remaining = ofsActifs.filter(o => o.id !== currentOF.id);
-                  if (remaining.length > 0) {
-                    setSelectedOFId(remaining[0].id);
-                  } else {
-                    setSelectedOFId('');
-                  }
-                }}
+                onClotureSuccess={() => handleCloseOF(currentOF.id)}
+                onCloseOF={() => handleCloseOF(currentOF.id)}
+                onNavigateToTab={onNavigateToTab}
               />
             )}
           </div>

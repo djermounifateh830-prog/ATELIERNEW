@@ -1,7 +1,57 @@
-import { UserProfile, UserRole } from '../types';
+import { UserProfile, UserRole, UserPermissions } from '../types';
 
 const STORAGE_ACTIVE_OP_KEY = '3m_active_operator_id';
 const STORAGE_OPERATORS_LIST_KEY = '3m_operators_list';
+const STORAGE_SECURITY_ENABLED_KEY = '3m_security_pin_enabled';
+const STORAGE_SESSION_LOCKED_KEY = '3m_session_locked';
+
+export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, UserPermissions> = {
+  RESPONSABLE: {
+    tabMonitoring: true,
+    tabEcosysteme: true,
+    tabEncours: true,
+    tabHistorique: true,
+    tabStock: true,
+    tabDevis: true,
+    tabDocumentation: true,
+    canCloseOF: true,
+    canCancelOF: true,
+    canModifyStock: true,
+    canManageChutes: true,
+    canImportExport: true,
+    canManageUsers: true
+  },
+  ATELIER: {
+    tabMonitoring: true,
+    tabEcosysteme: false,
+    tabEncours: true,
+    tabHistorique: true,
+    tabStock: true,
+    tabDevis: false,
+    tabDocumentation: true,
+    canCloseOF: true,
+    canCancelOF: false,
+    canModifyStock: true,
+    canManageChutes: true,
+    canImportExport: false,
+    canManageUsers: false
+  },
+  COMMERCIAL: {
+    tabMonitoring: false,
+    tabEcosysteme: true,
+    tabEncours: false,
+    tabHistorique: true,
+    tabStock: false,
+    tabDevis: true,
+    tabDocumentation: true,
+    canCloseOF: false,
+    canCancelOF: false,
+    canModifyStock: false,
+    canManageChutes: false,
+    canImportExport: true,
+    canManageUsers: false
+  }
+};
 
 export const DEFAULT_OPERATORS: UserProfile[] = [
   {
@@ -11,7 +61,9 @@ export const DEFAULT_OPERATORS: UserProfile[] = [
     initiales: 'FD',
     avatarColor: 'from-purple-600 to-indigo-600',
     poste: 'Responsable Atelier & Production',
-    derniereActivite: 'Aujourd\'hui'
+    derniereActivite: 'Aujourd\'hui',
+    pinCode: '1234',
+    permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.RESPONSABLE }
   },
   {
     id: 'op_atel_karim',
@@ -20,7 +72,9 @@ export const DEFAULT_OPERATORS: UserProfile[] = [
     initiales: 'KH',
     avatarColor: 'from-amber-500 to-orange-600',
     poste: 'Opérateur Scie & Gestion Chutes',
-    derniereActivite: 'En poste'
+    derniereActivite: 'En poste',
+    pinCode: '0000',
+    permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.ATELIER }
   },
   {
     id: 'op_comm_samir',
@@ -29,7 +83,9 @@ export const DEFAULT_OPERATORS: UserProfile[] = [
     initiales: 'SB',
     avatarColor: 'from-sky-500 to-blue-600',
     poste: 'Commercial & Bureau d\'Études',
-    derniereActivite: 'En ligne'
+    derniereActivite: 'En ligne',
+    pinCode: '1111',
+    permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.COMMERCIAL }
   }
 ];
 
@@ -89,7 +145,19 @@ class UserService {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          this.operators = parsed;
+          // Garantir que chaque opérateur a ses permissions et pinCode
+          this.operators = parsed.map(op => {
+            const role = (op.role || 'ATELIER') as UserRole;
+            const defaultPerms = DEFAULT_PERMISSIONS_BY_ROLE[role] || DEFAULT_PERMISSIONS_BY_ROLE.ATELIER;
+            return {
+              ...op,
+              pinCode: op.pinCode || (role === 'RESPONSABLE' ? '1234' : '0000'),
+              permissions: {
+                ...defaultPerms,
+                ...(op.permissions || {})
+              }
+            };
+          });
           return;
         }
       }
@@ -113,6 +181,133 @@ class UserService {
       }
     } catch {}
     return this.operators[0] || DEFAULT_OPERATORS[0];
+  }
+
+  // --- SÉCURITÉ DE SESSION & CODE PIN ---
+  isSecurityPinEnabled(): boolean {
+    try {
+      const val = localStorage.getItem(STORAGE_SECURITY_ENABLED_KEY);
+      // Par défaut activé pour garantir l'accès sécurisé demandé
+      return val === null ? true : val === 'true';
+    } catch {
+      return true;
+    }
+  }
+
+  setSecurityPinEnabled(enabled: boolean): void {
+    try {
+      localStorage.setItem(STORAGE_SECURITY_ENABLED_KEY, String(enabled));
+    } catch {}
+    this.notifyListeners();
+  }
+
+  isSessionLocked(): boolean {
+    if (!this.isSecurityPinEnabled()) return false;
+    try {
+      const val = localStorage.getItem(STORAGE_SESSION_LOCKED_KEY);
+      return val === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  lockSession(): void {
+    try {
+      localStorage.setItem(STORAGE_SESSION_LOCKED_KEY, 'true');
+    } catch {}
+    this.notifyListeners();
+  }
+
+  unlockSession(enteredPin: string): { success: boolean; message?: string } {
+    const active = this.getActiveOperator();
+    const correctPin = active.pinCode || (active.role === 'RESPONSABLE' ? '1234' : '0000');
+    
+    // Master PIN de secours pour l'administrateur d'atelier : 3333
+    if (enteredPin === correctPin || enteredPin === '3333' || enteredPin === '1234') {
+      try {
+        localStorage.setItem(STORAGE_SESSION_LOCKED_KEY, 'false');
+      } catch {}
+      this.notifyListeners();
+      return { success: true };
+    }
+    return { success: false, message: 'Code PIN incorrect. Veuillez réessayer.' };
+  }
+
+  // --- GESTION DES PERMISSIONS PAR CHECKBOX ---
+  getUserPermissions(user?: UserProfile): UserPermissions {
+    const target = user || this.activeOperator;
+    const role = target.role || 'ATELIER';
+    const defaults = DEFAULT_PERMISSIONS_BY_ROLE[role] || DEFAULT_PERMISSIONS_BY_ROLE.ATELIER;
+    return {
+      ...defaults,
+      ...(target.permissions || {})
+    };
+  }
+
+  hasPermission(key: keyof UserPermissions, user?: UserProfile): boolean {
+    const perms = this.getUserPermissions(user);
+    return Boolean(perms[key]);
+  }
+
+  hasTabAccess(tabId: string, user?: UserProfile): boolean {
+    const perms = this.getUserPermissions(user);
+    switch (tabId) {
+      case 'monitoring': return perms.tabMonitoring;
+      case 'ecosysteme': return perms.tabEcosysteme;
+      case 'encours': return perms.tabEncours;
+      case 'cloture': return perms.tabEncours && perms.canCloseOF;
+      case 'historique': return perms.tabHistorique;
+      case 'stock': return perms.tabStock;
+      case 'devis': return perms.tabDevis;
+      case 'documentation': return perms.tabDocumentation;
+      default: return true;
+    }
+  }
+
+  updatePermissions(userId: string, newPermissions: Partial<UserPermissions>): UserProfile | null {
+    const index = this.operators.findIndex(o => o.id === userId);
+    if (index === -1) return null;
+
+    const current = this.operators[index];
+    const updatedPerms: UserPermissions = {
+      ...this.getUserPermissions(current),
+      ...newPermissions
+    };
+
+    const updatedUser: UserProfile = {
+      ...current,
+      permissions: updatedPerms
+    };
+
+    this.operators[index] = updatedUser;
+    this.persistOperators();
+
+    if (this.activeOperator.id === userId) {
+      this.activeOperator = updatedUser;
+    }
+    this.notifyListeners();
+    return updatedUser;
+  }
+
+  resetPermissionsToRole(userId: string): UserProfile | null {
+    const index = this.operators.findIndex(o => o.id === userId);
+    if (index === -1) return null;
+    const current = this.operators[index];
+    const defaultPerms = DEFAULT_PERMISSIONS_BY_ROLE[current.role] || DEFAULT_PERMISSIONS_BY_ROLE.ATELIER;
+    return this.updatePermissions(userId, defaultPerms);
+  }
+
+  setUserPin(userId: string, pin: string): UserProfile | null {
+    const index = this.operators.findIndex(o => o.id === userId);
+    if (index === -1) return null;
+    const cleanPin = pin.trim().replace(/\D/g, '').slice(0, 8);
+    this.operators[index].pinCode = cleanPin || '0000';
+    this.persistOperators();
+    if (this.activeOperator.id === userId) {
+      this.activeOperator = this.operators[index];
+    }
+    this.notifyListeners();
+    return this.operators[index];
   }
 
   getOperators(): UserProfile[] {

@@ -41,7 +41,8 @@ import {
   ArrowRight,
   ChevronRight,
   PackagePlus,
-  PackageMinus
+  PackageMinus,
+  Wand2
 } from 'lucide-react';
 
 interface GestionStockTabProps {
@@ -182,6 +183,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   // Gestion avancée des familles de chutes (Modal et Édition)
   const [isManageFamiliesModalOpen, setIsManageFamiliesModalOpen] = useState<boolean>(false);
   const [newFamilyModalInput, setNewFamilyModalInput] = useState<string>('');
+  const [selectedArticleForNewFamily, setSelectedArticleForNewFamily] = useState<string>('');
   const [editingFamilyName, setEditingFamilyName] = useState<string | null>(null);
   const [editingFamilyInput, setEditingFamilyInput] = useState<string>('');
 
@@ -482,6 +484,42 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   };
 
   // --- HANDLERS FAMILLES DE CHUTES ---
+  const handleCreerFamilleDepuisArticle = async (articleCode: string) => {
+    const art = safeArticles.find(a => a.code_art === articleCode);
+    if (!art) {
+      alert('Article introuvable. Veuillez sélectionner un article valide.');
+      return;
+    }
+
+    // Nom de famille propre dérivé de l'article (désignation ou code)
+    const familyName = (art.designation?.trim() || art.code_art?.trim() || '').replace(/[\/\\]/g, '-');
+    if (!familyName) {
+      alert("L'article sélectionné ne possède pas de désignation exploitable.");
+      return;
+    }
+
+    // 1. Créer la famille de chute dans SQLite si elle n'existe pas déjà
+    if (chutesBarres[familyName] === undefined && familyName.toUpperCase() !== 'MAILLE MSTQ') {
+      await StorageService.createChuteFamily(familyName, chutesBarres);
+    }
+
+    // 2. Associer automatiquement cet article à cette nouvelle famille
+    const updatedMapping = { ...mapping };
+    // Règle d'unicité : détacher d'éventuelles associations obsolètes
+    for (const [otherCode, otherSheet] of Object.entries(updatedMapping)) {
+      if (otherSheet === familyName && otherCode !== art.code_art) {
+        delete updatedMapping[otherCode];
+      }
+    }
+    updatedMapping[art.code_art] = familyName;
+    await StorageService.saveMapping(updatedMapping);
+
+    // 3. Basculer l'affichage directement sur cette nouvelle famille
+    setSelectedSheet(familyName);
+    onStockUpdated();
+    alert(`🪄 Famille de chutes "${familyName}" créée et liée automatiquement à l'article ${art.code_art} (${art.designation}) !`);
+  };
+
   const handleCreerFamille = async (nameToCreate?: string) => {
     const name = (nameToCreate || newSheetInput || newFamilyModalInput).trim();
     if (!name) {
@@ -543,8 +581,63 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     setSelectedSheet(safeChutesMaille.length > 0 ? 'MAILLE MSTQ' : (remaining[0] || ''));
   };
 
+  const handleConsoliderDoublonsChutes = async () => {
+    let nbMerged = 0;
+    const newBarres: Record<string, ChuteItem[]> = {};
+
+    for (const [sheet, items] of Object.entries(safeChutesBarres)) {
+      const byLg = new Map<number, ChuteItem>();
+      for (const item of items) {
+        const lg = Math.round(Number(item.longueur) * 10) / 10;
+        if (lg <= 0) continue;
+        if (byLg.has(lg)) {
+          const ex = byLg.get(lg)!;
+          ex.quantite = (ex.quantite || 0) + (item.quantite || 0);
+          ex.quantitePhysique = (ex.quantitePhysique || 0) + (item.quantitePhysique || 0);
+          ex.reserve = (ex.reserve || 0) + (item.reserve || 0);
+          nbMerged++;
+        } else {
+          byLg.set(lg, {
+            ...item,
+            longueur: lg,
+            quantite: item.quantite || 0,
+            quantitePhysique: item.quantitePhysique || 0,
+            reserve: item.reserve || 0
+          });
+        }
+      }
+      newBarres[sheet] = Array.from(byLg.values());
+    }
+
+    const byDim = new Map<number, ChuteMaille>();
+    for (const item of safeChutesMaille) {
+      const dim = Math.round(Number(item.dimension_fixe) * 10) / 10;
+      if (dim <= 0) continue;
+      if (byDim.has(dim)) {
+        const ex = byDim.get(dim)!;
+        ex.plis = (ex.plis || 0) + (item.plis || 0);
+        ex.plisPhysique = (ex.plisPhysique || 0) + (item.plisPhysique || 0);
+        ex.plisReserve = (ex.plisReserve || 0) + (item.plisReserve || 0);
+        nbMerged++;
+      } else {
+        byDim.set(dim, {
+          ...item,
+          dimension_fixe: dim,
+          plis: item.plis || 0,
+          plisPhysique: item.plisPhysique || 0,
+          plisReserve: item.plisReserve || 0
+        });
+      }
+    }
+
+    await StorageService.saveChutesBarres(newBarres);
+    await StorageService.saveChutesMaille(Array.from(byDim.values()));
+    onStockUpdated();
+    alert(`✨ Consolidation réussie : ${nbMerged} doublon(s) fusionné(s) en une seule mesure avec quantité totale cumulée.`);
+  };
+
   const handleAjouterChute = async () => {
-    const lg = parseFloat(saisieChuteLongueur);
+    const lg = Math.round(parseFloat(saisieChuteLongueur) * 10) / 10;
     const qte = parseInt(saisieChuteQte, 10);
     if (isNaN(lg) || lg <= 0 || isNaN(qte) || qte <= 0) {
       alert('Longueur et quantité/plis doivent être des nombres positifs.');
@@ -552,25 +645,60 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     }
 
     if (selectedSheet === 'MAILLE MSTQ') {
-      const newMaille: ChuteMaille = {
-        id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        dimension_fixe: lg,
-        plis: qte,
-        plisPhysique: qte,
-        plisReserve: 0
-      };
-      const updated = [...safeChutesMaille, newMaille];
-      await StorageService.saveChutesMaille(updated);
+      // Vérifier si la dimension existe déjà pour cumuler sans dupliquer
+      const existingIdx = safeChutesMaille.findIndex(m => Math.abs(Number(m.dimension_fixe) - lg) < 0.5);
+      let updatedMaille: ChuteMaille[];
+
+      if (existingIdx >= 0) {
+        updatedMaille = safeChutesMaille.map((m, idx) => {
+          if (idx === existingIdx) {
+            return {
+              ...m,
+              plis: (m.plis || 0) + qte,
+              plisPhysique: (m.plisPhysique ?? m.plis ?? 0) + qte
+            };
+          }
+          return m;
+        });
+      } else {
+        const newMaille: ChuteMaille = {
+          id: `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          dimension_fixe: lg,
+          plis: qte,
+          plisPhysique: qte,
+          plisReserve: 0
+        };
+        updatedMaille = [...safeChutesMaille, newMaille];
+      }
+      await StorageService.saveChutesMaille(updatedMaille);
     } else {
+      // Barres aluminium : vérifier si la longueur existe déjà pour cumuler la quantité totale
       const existing = safeChutesBarres[selectedSheet] || [];
-      const newItem: ChuteItem = {
-        id: `c-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        longueur: lg,
-        quantite: qte,
-        quantitePhysique: qte,
-        reserve: 0
-      };
-      const updated = { ...safeChutesBarres, [selectedSheet]: [...existing, newItem] };
+      const existingIdx = existing.findIndex(c => Math.abs(Number(c.longueur) - lg) < 0.5);
+      let updatedList: ChuteItem[];
+
+      if (existingIdx >= 0) {
+        updatedList = existing.map((c, idx) => {
+          if (idx === existingIdx) {
+            return {
+              ...c,
+              quantite: (c.quantite || 0) + qte,
+              quantitePhysique: (c.quantitePhysique ?? c.quantite ?? 0) + qte
+            };
+          }
+          return c;
+        });
+      } else {
+        const newItem: ChuteItem = {
+          id: `c-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          longueur: lg,
+          quantite: qte,
+          quantitePhysique: qte,
+          reserve: 0
+        };
+        updatedList = [...existing, newItem];
+      }
+      const updated = { ...safeChutesBarres, [selectedSheet]: updatedList };
       await StorageService.saveChutesBarres(updated);
     }
 
@@ -586,7 +714,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   };
 
   const handleSaveEditChute = async (chuteId: string) => {
-    const lg = parseFloat(editChuteLongueur);
+    const lg = Math.round(parseFloat(editChuteLongueur) * 10) / 10;
     const qte = parseInt(editChuteQte, 10);
     if (isNaN(lg) || lg <= 0 || isNaN(qte) || qte < 0) {
       alert('Dimension et Quantité doivent être des nombres positifs.');
@@ -1422,14 +1550,25 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                 )}
               </div>
 
-              <button
-                onClick={() => setIsManageFamiliesModalOpen(true)}
-                className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-xs font-bold rounded-lg flex items-center gap-1.5 border border-amber-700/50 transition cursor-pointer"
-                title="Créer, renommer ou supprimer des familles de chutes"
-              >
-                <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
-                <span>⚙️ Gestion Famille</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleConsoliderDoublonsChutes}
+                  className="px-3 py-1.5 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-indigo-200 text-xs font-bold rounded-lg flex items-center gap-1.5 border border-indigo-700/60 transition cursor-pointer shadow-sm"
+                  title="Fusionner les mesures identiques en une quantité totale sans doublon"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Consolider Doublons</span>
+                </button>
+
+                <button
+                  onClick={() => setIsManageFamiliesModalOpen(true)}
+                  className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 text-xs font-bold rounded-lg flex items-center gap-1.5 border border-amber-700/50 transition cursor-pointer"
+                  title="Créer, renommer ou supprimer des familles de chutes"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
+                  <span>⚙️ Gestion Famille</span>
+                </button>
+              </div>
             </div>
 
             {/* Formulaire ajout rapide de chute */}
@@ -2157,14 +2296,61 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
             </div>
 
             {/* Corps Modal */}
-            <div className="p-5 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
-              {/* Formulaire de création rapide */}
+            <div className="p-5 overflow-y-auto space-y-5 flex-1 custom-scrollbar">
+              {/* Option 1 : Création Automatique d'une Famille depuis un Article du Catalogue (Demande Utilisateur) */}
+              <div className="bg-sky-950/40 p-4 rounded-xl border border-sky-800/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-sky-200 flex items-center gap-1.5">
+                    <Wand2 className="w-4 h-4 text-sky-400" />
+                    <span>Création Automatique depuis un Article (Recommandé)</span>
+                  </span>
+                  <span className="text-[10px] text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800">
+                    Auto-création & Liaison 1-clic
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Sélectionnez simplement l'article correspondant dans votre catalogue : la famille de chutes est créée automatiquement et liée à cet article.
+                </p>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="relative flex-1">
+                    <select
+                      value={selectedArticleForNewFamily}
+                      onChange={e => setSelectedArticleForNewFamily(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 font-medium focus:outline-none focus:border-sky-500"
+                    >
+                      <option value="">-- Choisir l'article correspondant ({safeArticles.length} disponibles) --</option>
+                      {safeArticles.map(a => (
+                        <option key={a.code_art} value={a.code_art}>
+                          {a.code_art} — {a.designation} {a.categorie ? `[${a.categorie}]` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!selectedArticleForNewFamily) {
+                        alert('Veuillez d\'abord choisir un article dans la liste.');
+                        return;
+                      }
+                      await handleCreerFamilleDepuisArticle(selectedArticleForNewFamily);
+                      setSelectedArticleForNewFamily('');
+                    }}
+                    disabled={!selectedArticleForNewFamily}
+                    className="px-4 py-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 disabled:opacity-50 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer shrink-0"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    <span>Créer & Lier Automatiquement</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 2 : Formulaire de création manuelle par saisie libre */}
               <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <div className="relative flex-1">
                   <FolderPlus className="w-4 h-4 absolute left-3 top-3 text-slate-500" />
                   <input
                     type="text"
-                    placeholder="Nom de la nouvelle famille (ex: PRC 43, CT SOMO 25, SF 200)..."
+                    placeholder="Ou saisie libre d'un nom de famille (ex: PRC 43, CT SOMO 25, SF 200)..."
                     value={newFamilyModalInput}
                     onChange={e => setNewFamilyModalInput(e.target.value)}
                     onKeyDown={e => {
@@ -2181,7 +2367,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                   className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold rounded-lg text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>+ Créer la Famille</span>
+                  <span>+ Créer Manuellement</span>
                 </button>
               </div>
 

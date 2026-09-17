@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Scissors,
   Layers,
@@ -16,15 +16,17 @@ import {
   History,
   Terminal,
   ClipboardCheck,
-  Activity
+  Activity,
+  Lock
 } from 'lucide-react';
 import { StorageService } from '../services/storage';
+import { userService } from '../services/userService';
 import { SystemLogsModal } from './common/SystemLogsModal';
 import { ParametresProductionModal } from './common/ParametresProductionModal';
 import { OperatorBadge } from './common/OperatorBadge';
 import { OperatorModal } from './common/OperatorModal';
 import { RealtimeIndicator } from './common/RealtimeIndicator';
-import { Article, ChuteItem, ChuteMaille, SuiviOF, DossierCommandeGlobal } from '../types';
+import { Article, ChuteItem, ChuteMaille, SuiviOF, DossierCommandeGlobal, UserProfile } from '../types';
 
 interface HeaderProps {
   activeTab: string;
@@ -54,8 +56,16 @@ export const Header: React.FC<HeaderProps> = ({
   const [isLogsModalOpen, setIsLogsModalOpen] = useState<boolean>(false);
   const [isProdParamsModalOpen, setIsProdParamsModalOpen] = useState<boolean>(false);
   const [isOperatorModalOpen, setIsOperatorModalOpen] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile>(userService.getActiveOperator());
   const articlesFileInputRef = useRef<HTMLInputElement>(null);
   const chutesFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const unsub = userService.onOperatorChange(op => {
+      setCurrentUser(op);
+    });
+    return unsub;
+  }, []);
 
   const handleExportArticles = () => {
     StorageService.exportArticlesExcel(articles);
@@ -103,7 +113,7 @@ export const Header: React.FC<HeaderProps> = ({
   const dossiersActifsCount = (dossiers || []).filter(d => d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE').length;
   const totalActifsAtelier = Math.max(activeOfCount, dossiersActifsCount);
 
-  const tabs = [
+  const allTabs = [
     {
       id: 'monitoring',
       label: '📊 Monitoring Atelier',
@@ -124,6 +134,10 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'devis', label: '💰 Devis & Coûts', icon: Calculator },
     { id: 'documentation', label: '📘 Règles Métier', icon: HelpCircle }
   ];
+
+  // Filtrage selon les autorisations paramétrables via checkboxes de l'utilisateur actif
+  const authorizedTabs = allTabs.filter(tab => userService.hasTabAccess(tab.id, currentUser));
+  const tabsToRender = authorizedTabs.length > 0 ? authorizedTabs : allTabs;
 
   return (
     <header className="bg-slate-900 text-white shadow-xl border-b border-slate-800">
@@ -161,6 +175,18 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Badge de l'Opérateur Connecté (Rôle & Profil) */}
           <OperatorBadge onClick={() => setIsOperatorModalOpen(true)} />
+
+          {/* Bouton Verrouiller Session Rapide */}
+          <button
+            onClick={() => {
+              userService.lockSession();
+            }}
+            title="Verrouiller l'accès à l'application par Code PIN"
+            className="p-1.5 text-xs text-slate-300 hover:text-amber-400 bg-slate-800/80 hover:bg-slate-800 rounded-lg border border-slate-700/60 transition cursor-pointer flex items-center gap-1 shadow"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span className="hidden md:inline text-[11px] font-medium">Verrouiller</span>
+          </button>
 
           <button
             onClick={() => setIsProdParamsModalOpen(true)}
@@ -213,7 +239,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Navigation Tabs (Full Screen Width) */}
       <div className="w-full px-2 sm:px-3 lg:px-4">
         <nav className="flex space-x-1 sm:space-x-2 overflow-x-auto py-2 scrollbar-none">
-          {tabs.map(tab => {
+          {tabsToRender.map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
