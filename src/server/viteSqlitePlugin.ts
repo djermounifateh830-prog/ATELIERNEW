@@ -2,6 +2,48 @@ import type { Plugin, ViteDevServer } from 'vite';
 import { atelierDb } from './db';
 import fs from 'fs';
 
+// Ensemble des clients connectés au flux temps réel SSE (Server-Sent Events)
+const sseClients = new Set<any>();
+let heartbeatTimer: NodeJS.Timeout | null = null;
+
+function ensureHeartbeat() {
+  if (!heartbeatTimer && sseClients.size > 0) {
+    heartbeatTimer = setInterval(() => {
+      if (sseClients.size === 0) {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        return;
+      }
+      for (const client of sseClients) {
+        try {
+          client.write(': ping\n\n');
+        } catch {
+          sseClients.delete(client);
+        }
+      }
+    }, 20000);
+    // unref() empêche ce timer d'empêcher le process Node de se terminer proprement lors du build Vite
+    if (heartbeatTimer.unref) {
+      heartbeatTimer.unref();
+    }
+  }
+}
+
+// Diffuseur d'événements temps réel à tous les clients connectés (écrans d'atelier, bureau d'études, etc.)
+export function broadcastEvent(event: { type: string; target?: string; timestamp?: number; [key: string]: any }) {
+  const payload = JSON.stringify({
+    ...event,
+    timestamp: event.timestamp || Date.now()
+  });
+  for (const client of sseClients) {
+    try {
+      client.write(`data: ${payload}\n\n`);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
 // Helper pour lire le corps JSON d'une requête HTTP native Node
 function parseBody(req: any): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -45,6 +87,30 @@ export function sqlitePlugin(): Plugin {
       }
 
       try {
+        // --- 0. FLUX TEMPS RÉEL (SSE - SERVER-SENT EVENTS) ---
+        if (url === '/api/events' && method === 'GET') {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now(), message: 'Flux temps réel 3M Atelier connecté' })}\n\n`);
+          sseClients.add(res);
+          ensureHeartbeat();
+          req.on('close', () => {
+            sseClients.delete(res);
+          });
+          return;
+        }
+
+        if (url === '/api/events/broadcast' && method === 'POST') {
+          const body = await parseBody(req);
+          broadcastEvent(body || { type: 'data_changed', target: 'all', timestamp: Date.now() });
+          return sendJson(res, { success: true, clientsCount: sseClients.size });
+        }
+
         // --- 1. TOUTES LES DONNÉES EN 1 APPEL RAPIDE ---
         if (url === '/api/data' && method === 'GET') {
           return sendJson(res, { success: true, data: atelierDb.getAllData() });
@@ -54,6 +120,7 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/sync/initial' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.fullSyncFromFrontend(body);
+          broadcastEvent({ type: 'sync_initial', target: 'all' });
           return sendJson(res, { success: true, message: 'Données synchronisées avec succès dans SQLite' });
         }
 
@@ -64,16 +131,19 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/articles' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveArticles(Array.isArray(body) ? body : body.articles || []);
+          broadcastEvent({ type: 'articles_updated', target: 'articles' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/articles' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertArticle(body);
+          broadcastEvent({ type: 'articles_updated', target: 'articles' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/articles/') && method === 'DELETE') {
           const code = decodeURIComponent(url.replace('/api/articles/', ''));
           atelierDb.deleteArticle(code);
+          broadcastEvent({ type: 'articles_updated', target: 'articles' });
           return sendJson(res, { success: true });
         }
 
@@ -81,11 +151,13 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/chutes/barres' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveChutesBarres(body);
+          broadcastEvent({ type: 'chutes_updated', target: 'chutes' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/chutes/maille' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveChutesMaille(Array.isArray(body) ? body : []);
+          broadcastEvent({ type: 'chutes_updated', target: 'chutes' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/chutes/create-family' && method === 'POST') {
@@ -94,16 +166,19 @@ export function sqlitePlugin(): Plugin {
             return sendJson(res, { error: 'Nom de famille requis' }, 400);
           }
           atelierDb.createChuteFamily(body.name);
+          broadcastEvent({ type: 'chutes_updated', target: 'chutes' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/chutes/rename-sheet' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.renameChuteSheet(body.oldName, body.newName);
+          broadcastEvent({ type: 'chutes_updated', target: 'chutes' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/chutes/sheet/') && method === 'DELETE') {
           const sheetName = decodeURIComponent(url.replace('/api/chutes/sheet/', ''));
           atelierDb.deleteChuteSheet(sheetName);
+          broadcastEvent({ type: 'chutes_updated', target: 'chutes' });
           return sendJson(res, { success: true });
         }
 
@@ -114,6 +189,7 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/mapping' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveMapping(body);
+          broadcastEvent({ type: 'mapping_updated', target: 'mapping' });
           return sendJson(res, { success: true });
         }
 
@@ -124,6 +200,7 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/settings/production' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveParametresProduction(body);
+          broadcastEvent({ type: 'settings_updated', target: 'settings' });
           return sendJson(res, { success: true });
         }
 
@@ -134,22 +211,26 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/dossiers' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveDossiers(Array.isArray(body) ? body : []);
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/dossiers' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertDossier(body);
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/dossiers/') && method === 'DELETE') {
           const id = decodeURIComponent(url.replace('/api/dossiers/', ''));
           atelierDb.deleteDossier(id);
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
 
         // --- 7. SUIVIS OF ---
         if (url === '/api/of/reparer-familles' && method === 'POST') {
           const resReparation = atelierDb.reparerFamillesOF();
+          broadcastEvent({ type: 'of_updated', target: 'of' });
           return sendJson(res, { success: true, repares: resReparation.repares, data: atelierDb.getSuivisOF() });
         }
         if (url === '/api/of' && method === 'GET') {
@@ -158,11 +239,13 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/of' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveSuivisOF(Array.isArray(body) ? body : []);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/of' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertSuiviOF(body);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/of/close' && method === 'POST') {
@@ -171,21 +254,28 @@ export function sqlitePlugin(): Plugin {
             return sendJson(res, { error: 'Données de clôture OF invalides' }, 400);
           }
           atelierDb.closeOF(body.suivi, body.mouvements);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/of/') && url.endsWith('/rollback-cloture') && method === 'POST') {
           const id = decodeURIComponent(url.replace('/api/of/', '').replace('/rollback-cloture', ''));
           atelierDb.rollbackClotureOF(id);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/of/') && url.endsWith('/annuler') && method === 'POST') {
           const id = decodeURIComponent(url.replace('/api/of/', '').replace('/annuler', ''));
           atelierDb.annulerOF(id);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/of/') && method === 'DELETE') {
           const id = decodeURIComponent(url.replace('/api/of/', ''));
           atelierDb.deleteSuiviOF(id);
+          broadcastEvent({ type: 'of_updated', target: 'of' });
           return sendJson(res, { success: true });
         }
 
@@ -200,6 +290,7 @@ export function sqlitePlugin(): Plugin {
           } else {
             atelierDb.addMouvement(body);
           }
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
 
@@ -210,16 +301,19 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/codifications' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveClientCodifications(Array.isArray(body) ? body : []);
+          broadcastEvent({ type: 'codifications_updated', target: 'codifications' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/codifications' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertClientCodification(body);
+          broadcastEvent({ type: 'codifications_updated', target: 'codifications' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/codifications/') && method === 'DELETE') {
           const id = decodeURIComponent(url.replace('/api/codifications/', ''));
           atelierDb.deleteClientCodification(id);
+          broadcastEvent({ type: 'codifications_updated', target: 'codifications' });
           return sendJson(res, { success: true });
         }
 
@@ -230,16 +324,19 @@ export function sqlitePlugin(): Plugin {
         if (url === '/api/fiches-transfert' && method === 'POST') {
           const body = await parseBody(req);
           atelierDb.saveFichesTransfert(Array.isArray(body) ? body : []);
+          broadcastEvent({ type: 'fiches_updated', target: 'fiches' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/fiches-transfert' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertFicheTransfert(body);
+          broadcastEvent({ type: 'fiches_updated', target: 'fiches' });
           return sendJson(res, { success: true });
         }
         if (url.startsWith('/api/fiches-transfert/') && method === 'DELETE') {
           const id = decodeURIComponent(url.replace('/api/fiches-transfert/', ''));
           atelierDb.deleteFicheTransfert(id);
+          broadcastEvent({ type: 'fiches_updated', target: 'fiches' });
           return sendJson(res, { success: true });
         }
 
@@ -260,6 +357,7 @@ export function sqlitePlugin(): Plugin {
         // --- 12. VIDER COMPLÈTEMENT LA BASE SQLITE ---
         if (url === '/api/db/wipe' && method === 'POST') {
           atelierDb.wipeAllData();
+          broadcastEvent({ type: 'database_wiped', target: 'all' });
           return sendJson(res, { success: true, message: 'Base de données SQLite vidée avec succès' });
         }
 

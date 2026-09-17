@@ -637,5 +637,30 @@ export interface InfoStatutDelai {
   dateLivraisonDate?: Date;
 }
 
+// =========================================================================
+// PROFILS ET RÔLES UTILISATEURS (OPÉRATEURS)
+// =========================================================================
+export type UserRole = 'RESPONSABLE' | 'ATELIER' | 'COMMERCIAL';
 
+export interface UserProfile {
+  id: string;
+  nom: string;
+  role: UserRole;
+  initiales: string;
+  avatarColor: string;
+  poste: string;
+  derniereActivite?: string;
+}
 
+// =========================================================================
+// SYNCHRONISATION EN TEMPS RÉEL ET RAFRAÎCHISSEMENT AUTOMATIQUE
+// =========================================================================
+export type AutoRefreshInterval = 'sse' | '15' | '30' | '60' | 'off';
+
+export interface RealtimeStatus {
+  mode: AutoRefreshInterval;
+  connected: boolean;
+  lastSyncTime: Date | null;
+  syncCount: number;
+  lastEventTarget?: string;
+}

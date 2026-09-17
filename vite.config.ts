@@ -1,12 +1,19 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
-import {sqlitePlugin} from './src/server/viteSqlitePlugin';
+import { defineConfig } from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(async ({ command }) => {
+  const plugins: any[] = [react(), tailwindcss()];
+
+  // Charger le plugin serveur SQLite uniquement pour les serveurs dev & preview, pas pour le build statique
+  if (command !== 'build') {
+    const { sqlitePlugin } = await import('./src/server/viteSqlitePlugin');
+    plugins.push(sqlitePlugin());
+  }
+
   return {
-    plugins: [react(), tailwindcss(), sqlitePlugin()],
+    plugins,
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

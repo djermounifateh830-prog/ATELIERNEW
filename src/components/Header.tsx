@@ -21,6 +21,9 @@ import {
 import { StorageService } from '../services/storage';
 import { SystemLogsModal } from './common/SystemLogsModal';
 import { ParametresProductionModal } from './common/ParametresProductionModal';
+import { OperatorBadge } from './common/OperatorBadge';
+import { OperatorModal } from './common/OperatorModal';
+import { RealtimeIndicator } from './common/RealtimeIndicator';
 import { Article, ChuteItem, ChuteMaille, SuiviOF, DossierCommandeGlobal } from '../types';
 
 interface HeaderProps {
@@ -50,6 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isLogsModalOpen, setIsLogsModalOpen] = useState<boolean>(false);
   const [isProdParamsModalOpen, setIsProdParamsModalOpen] = useState<boolean>(false);
+  const [isOperatorModalOpen, setIsOperatorModalOpen] = useState<boolean>(false);
   const articlesFileInputRef = useRef<HTMLInputElement>(null);
   const chutesFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -150,15 +154,22 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons & Badges */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Indicateur et Contrôle Temps Réel (SSE / Polling) */}
+          <RealtimeIndicator onRefreshTriggered={onRefreshData} />
+
+          {/* Badge de l'Opérateur Connecté (Rôle & Profil) */}
+          <OperatorBadge onClick={() => setIsOperatorModalOpen(true)} />
+
           <button
             onClick={() => setIsProdParamsModalOpen(true)}
             title="Configurer les cadences de fabrication par famille et les jours ouvrés de travail"
             className="px-3 py-1.5 text-xs font-semibold text-sky-300 hover:text-sky-200 bg-sky-950/40 hover:bg-sky-900/60 rounded-lg transition border border-sky-500/40 flex items-center gap-1.5 cursor-pointer shadow"
           >
             <Sliders className="w-3.5 h-3.5 text-sky-400" />
-            <span>⚙️ Paramètres Délais &amp; Cadences</span>
+            <span className="hidden sm:inline">⚙️ Délais &amp; Cadences</span>
+            <span className="sm:hidden">⚙️ Cadences</span>
           </button>
           <button
             onClick={() => setIsLogsModalOpen(true)}
@@ -166,10 +177,17 @@ export const Header: React.FC<HeaderProps> = ({
             className="px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 rounded-lg transition border border-amber-500/40 flex items-center gap-1.5 cursor-pointer shadow"
           >
             <Terminal className="w-3.5 h-3.5 text-amber-400" />
-            <span>📜 Logs &amp; Traçabilité</span>
+            <span className="hidden sm:inline">📜 Logs &amp; Traçabilité</span>
+            <span className="sm:hidden">📜 Logs</span>
           </button>
         </div>
       </div>
+
+      {/* Profils & Opérateurs Modal */}
+      <OperatorModal
+        isOpen={isOperatorModalOpen}
+        onClose={() => setIsOperatorModalOpen(false)}
+      />
 
       {/* Paramètres Délais & Cadences Modal */}
       <ParametresProductionModal

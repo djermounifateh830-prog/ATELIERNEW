@@ -13,6 +13,7 @@ import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
 import { ClotureCockpitTab } from './components/tabs/ClotureCockpitTab';
 import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
 import { StorageService } from './services/storage';
+import { realtimeSync } from './services/realtimeSync';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
 
 const getInitialTab = (): string => {
@@ -83,6 +84,15 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Synchronisation temps réel automatique (SSE & Polling configurables multi-écrans)
+  useEffect(() => {
+    const unsubscribe = realtimeSync.onSync(() => {
+      // Rechargement transparent en arrière-plan sans flash
+      loadData();
+    });
+    return unsubscribe;
   }, [loadData]);
 
   const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal) => {
