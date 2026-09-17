@@ -145,7 +145,16 @@ export class StorageService {
 
   static downloadSqliteDb(): void {
     logger.action('SQLite', 'Téléchargement de la base SQLite 3m_atelier.db demandé par l\'utilisateur.');
-    window.open('/api/db/download', '_blank');
+    try {
+      const link = document.createElement('a');
+      link.href = '/api/db/download';
+      link.setAttribute('download', '3m_atelier.db');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch {
+      window.open('/api/db/download', '_blank');
+    }
   }
 
   // =========================================================================

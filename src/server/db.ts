@@ -29,13 +29,36 @@ class AtelierDatabase {
   private db: DatabaseSync;
 
   constructor() {
-    // Initialisation de la connexion SQLite
-    this.db = new DatabaseSync(DB_PATH);
-    // Activer le mode WAL avec checkpointing automatique et synchronisation fiable
-    this.db.exec('PRAGMA journal_mode = WAL;');
-    this.db.exec('PRAGMA foreign_keys = ON;');
-    this.db.exec('PRAGMA synchronous = NORMAL;');
-    this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+    // Initialisation sécurisée de la connexion SQLite avec auto-guérison
+    try {
+      this.db = new DatabaseSync(DB_PATH);
+      this.db.exec('PRAGMA journal_mode = WAL;');
+      this.db.exec('PRAGMA foreign_keys = ON;');
+      this.db.exec('PRAGMA synchronous = NORMAL;');
+      this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+      const check = this.db.prepare('PRAGMA quick_check;').all() as any[];
+      if (check.some((r: any) => r.quick_check && r.quick_check !== 'ok')) {
+        throw new Error('SQLite quick_check failed');
+      }
+    } catch (err) {
+      console.warn('⚠️ [SQLite] Anomalie intégrité fichier détectée, régénération automatique...', err);
+      try {
+        if (fs.existsSync(DB_PATH)) {
+          fs.renameSync(DB_PATH, `${DB_PATH}.corrupted.${Date.now()}`);
+        }
+        if (fs.existsSync(`${DB_PATH}-wal`)) {
+          try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
+        }
+        if (fs.existsSync(`${DB_PATH}-shm`)) {
+          try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
+        }
+      } catch {}
+      this.db = new DatabaseSync(DB_PATH);
+      this.db.exec('PRAGMA journal_mode = WAL;');
+      this.db.exec('PRAGMA foreign_keys = ON;');
+      this.db.exec('PRAGMA synchronous = NORMAL;');
+      this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+    }
     this.initTables();
     this.cleanCorruptedDesignations();
     this.seedIfEmpty();
