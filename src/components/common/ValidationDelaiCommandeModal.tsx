@@ -1,0 +1,467 @@
+import React, { useState, useEffect } from 'react';
+import {
+  X,
+  Calendar,
+  Clock,
+  Zap,
+  Check,
+  AlertTriangle,
+  Layers,
+  ArrowRight,
+  TrendingUp,
+  Save,
+  ShieldCheck,
+  RefreshCw
+} from 'lucide-react';
+import { FamilleProduit, EstimationLivraisonDossier, EstimationDelaiDetail } from '../../types';
+import { DelaisProductionService } from '../../services/delaisProductionService';
+
+interface ValidationDelaiCommandeModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirmSave: (
+    dateFinaleISO: string,
+    dateFinaleTexte: string,
+    estPrioritaire: boolean,
+    motifPriorite?: string
+  ) => Promise<void> | void;
+  refCommande: string;
+  nomClient: string;
+  donneurOrdre?: string;
+  dateCommande: string;
+  estimationGlobale: EstimationLivraisonDossier;
+  isSaving?: boolean;
+  isUpdate?: boolean;
+  initialEstPrioritaire?: boolean;
+  initialMotifPriorite?: string;
+  initialDateLivraisonISO?: string;
+}
+
+export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModalProps> = ({
+  isOpen,
+  onClose,
+  onConfirmSave,
+  refCommande,
+  nomClient,
+  donneurOrdre,
+  dateCommande,
+  estimationGlobale,
+  isSaving = false,
+  isUpdate = false,
+  initialEstPrioritaire = false,
+  initialMotifPriorite = '',
+  initialDateLivraisonISO = ''
+}) => {
+  const [estPrioritaire, setEstPrioritaire] = useState<boolean>(initialEstPrioritaire);
+  const [motifPriorite, setMotifPriorite] = useState<string>(initialMotifPriorite);
+  const [dateSelectionneeISO, setDateSelectionneeISO] = useState<string>('');
+  const [modeDate, setModeDate] = useState<'AUTO' | 'MANUEL'>('AUTO');
+
+  const paramsProd = DelaisProductionService.getParametres();
+  const dateSystemeStr = new Date().toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  });
+
+  // Initialisation à l'ouverture
+  useEffect(() => {
+    if (!isOpen) return;
+
+    setEstPrioritaire(initialEstPrioritaire);
+    setMotifPriorite(initialMotifPriorite);
+
+    if (initialDateLivraisonISO) {
+      setDateSelectionneeISO(initialDateLivraisonISO);
+      setModeDate('MANUEL');
+    } else if (estimationGlobale.dateLivraisonISO) {
+      setDateSelectionneeISO(estimationGlobale.dateLivraisonISO);
+      setModeDate('AUTO');
+    } else {
+      const auj = DelaisProductionService.toISODateString(new Date());
+      setDateSelectionneeISO(auj);
+      setModeDate('AUTO');
+    }
+  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale]);
+
+  if (!isOpen) return null;
+
+  // Calcul du libellé formaté de la date sélectionnée
+  const getDateAfficheeFormatee = (iso: string): string => {
+    if (!iso) return 'Non définie';
+    const parts = iso.split('-');
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      if (!isNaN(d.getTime())) {
+        return DelaisProductionService.formaterDateLivraison(d);
+      }
+    }
+    return iso;
+  };
+
+  const appliquerRaccourci = (joursAjoutes: number) => {
+    setModeDate('MANUEL');
+    if (joursAjoutes === 0) {
+      const auj = new Date();
+      setDateSelectionneeISO(DelaisProductionService.toISODateString(auj));
+      setEstPrioritaire(true);
+      return;
+    }
+    const params = DelaisProductionService.getParametres();
+    const dRef = DelaisProductionService.parseDateString(dateCommande) || new Date();
+    const cible = DelaisProductionService.ajouterJoursOuvres(dRef, joursAjoutes, params.joursOuvres);
+    setDateSelectionneeISO(DelaisProductionService.toISODateString(cible));
+  };
+
+  const resetToAuto = () => {
+    setModeDate('AUTO');
+    setEstPrioritaire(false);
+    if (estimationGlobale.dateLivraisonISO) {
+      setDateSelectionneeISO(estimationGlobale.dateLivraisonISO);
+    }
+  };
+
+  const handleValider = async () => {
+    const txtFormatte = getDateAfficheeFormatee(dateSelectionneeISO);
+    const dateFinaleTexte = estPrioritaire
+      ? `⚡ PRIORITAIRE : ${txtFormatte.replace(/^LIVRAISON\s*:\s*/i, '')}`
+      : txtFormatte;
+
+    await onConfirmSave(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite);
+  };
+
+  const detailsArray: EstimationDelaiDetail[] = Object.values(estimationGlobale.detailsParFamille || {});
+
+  // Icône et couleur par famille
+  const getFamilleStyle = (fam: FamilleProduit) => {
+    switch (fam) {
+      case 'CAISSON':
+        return { label: 'Caissons & Sous-Faces', bg: 'bg-emerald-500/15', text: 'text-emerald-300', border: 'border-emerald-500/30' };
+      case 'TABLIER':
+        return { label: 'Volets & Tabliers', bg: 'bg-sky-500/15', text: 'text-sky-300', border: 'border-sky-500/30' };
+      case 'PRECADRE':
+        return { label: 'Précadres', bg: 'bg-purple-500/15', text: 'text-purple-300', border: 'border-purple-500/30' };
+      case 'MOUSTIQUAIRE':
+        return { label: 'Moustiquaires', bg: 'bg-amber-500/15', text: 'text-amber-300', border: 'border-amber-500/30' };
+      default:
+        return { label: fam, bg: 'bg-slate-800', text: 'text-slate-300', border: 'border-slate-700' };
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/80">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-black text-white flex items-center gap-2">
+                <span>Validation Délai de Fabrication &amp; Livraison</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
+                  {isUpdate ? 'Mise à jour' : 'Nouvelle commande'}
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 font-mono">
+                Commande <span className="text-amber-300 font-bold">{refCommande}</span> • Client : <span className="text-slate-200 font-semibold">{nomClient}</span>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Corps défilable */}
+        <div className="p-5 overflow-y-auto space-y-4">
+          {/* Bannière Date Système */}
+          <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-slate-300 font-mono">
+              <Calendar className="w-4 h-4 text-purple-400 shrink-0" />
+              <span>Aujourd'hui (Système atelier) :</span>
+              <strong className="text-purple-300 capitalize">{dateSystemeStr}</strong>
+            </div>
+            <div className="text-[11px] text-slate-400 font-mono">
+              Date d'émission commande : <strong className="text-slate-200">{dateCommande}</strong>
+            </div>
+          </div>
+
+          {/* TABLEAU DE CALCUL DE VOLUME PAR FAMILLE */}
+          <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">
+                  Analyse de Charge par Famille de Produit
+                </h3>
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                Volume commande + Charge en cours atelier
+              </span>
+            </div>
+
+            {detailsArray.length === 0 ? (
+              <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400 text-center italic">
+                Aucune pièce configurée dans cette commande pour le moment.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400">
+                      <th className="pb-2">Famille</th>
+                      <th className="pb-2 text-center">Volume Commande</th>
+                      <th className="pb-2 text-center">En cours Atelier</th>
+                      <th className="pb-2 text-center">Total Cumulé</th>
+                      <th className="pb-2 text-center">Cadence / Jour</th>
+                      <th className="pb-2 text-center">Délai Requis</th>
+                      <th className="pb-2 text-right">Date Prévue</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                    {detailsArray.map((det) => {
+                      const style = getFamilleStyle(det.famille);
+                      const isGoulot = estimationGlobale.familleGoulot === det.famille && detailsArray.length > 1;
+                      const cap = paramsProd.familles[det.famille]?.capaciteJournalierePieces || 120;
+
+                      return (
+                        <tr key={det.famille} className={`hover:bg-slate-900/50 transition ${isGoulot ? 'bg-amber-500/5' : ''}`}>
+                          <td className="py-2.5 pr-2 font-sans font-bold">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${style.bg} ${style.text} border ${style.border}`}>
+                                {style.label}
+                              </span>
+                              {isGoulot && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-black border border-amber-500/40" title="Cette famille impose la date de livraison la plus éloignée pour l'ensemble du dossier">
+                                  Goulot
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 text-center text-white font-bold">
+                            {det.piecesCommande} pcs
+                          </td>
+                          <td className="py-2.5 text-center text-slate-400">
+                            +{det.piecesEnFileAttente} pcs
+                          </td>
+                          <td className="py-2.5 text-center font-bold text-cyan-300">
+                            = {det.totalPiecesCharge} pcs
+                          </td>
+                          <td className="py-2.5 text-center text-slate-300">
+                            {cap} / j
+                          </td>
+                          <td className="py-2.5 text-center font-bold text-amber-300">
+                            {det.joursOuvresRequis}j ouvré(s)
+                          </td>
+                          <td className="py-2.5 text-right font-bold text-emerald-300">
+                            {det.dateLivraisonFormattee}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Explication pédagogique */}
+            <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2 leading-relaxed">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <span>
+                Le délai prévisionnel additionne le volume de cette commande avec les ordres déjà en cours de fabrication à l'atelier pour la même famille, garantissant une date de livraison réaliste et fiable.
+              </span>
+            </div>
+          </div>
+
+          {/* SÉLECTION / AJUSTEMENT DE LA DATE FINALE */}
+          <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-3.5 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-amber-400" />
+                <span>Date de Livraison Retenue :</span>
+              </label>
+              {modeDate === 'MANUEL' && (
+                <button
+                  type="button"
+                  onClick={resetToAuto}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 font-bold transition"
+                  title="Revenir au calcul automatique basé sur la charge"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>↺ Revenir au calcul auto ({estimationGlobale.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')})</span>
+                </button>
+              )}
+            </div>
+
+            {/* Input Date */}
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="date"
+                value={dateSelectionneeISO}
+                onChange={(e) => {
+                  setDateSelectionneeISO(e.target.value);
+                  setModeDate('MANUEL');
+                }}
+                className="bg-slate-900 border border-amber-500/50 rounded-xl px-3 py-2 text-sm text-amber-200 font-mono font-bold focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+              />
+              <div className="text-xs font-mono font-bold px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200">
+                {getDateAfficheeFormatee(dateSelectionneeISO)}
+              </div>
+              {modeDate === 'AUTO' && (
+                <span className="text-[10px] px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
+                  ✓ Calculé automatiquement par charge cumulée
+                </span>
+              )}
+            </div>
+
+            {/* Raccourcis Rapides */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                Raccourcis Délais Ouvrés :
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => appliquerRaccourci(0)}
+                  className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 rounded-lg font-bold text-xs flex items-center gap-1 transition"
+                  title="Livraison demandée pour aujourd'hui (urgentissime)"
+                >
+                  <Zap className="w-3 h-3 fill-rose-400" />
+                  <span>Aujourd'hui (Urgent)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => appliquerRaccourci(1)}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg font-medium text-xs transition"
+                >
+                  +1j Ouvré
+                </button>
+                <button
+                  type="button"
+                  onClick={() => appliquerRaccourci(2)}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg font-medium text-xs transition"
+                >
+                  +2j Ouvrés
+                </button>
+                <button
+                  type="button"
+                  onClick={() => appliquerRaccourci(3)}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg font-medium text-xs transition"
+                >
+                  +3j Ouvrés
+                </button>
+                <button
+                  type="button"
+                  onClick={() => appliquerRaccourci(5)}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg font-medium text-xs transition"
+                >
+                  +5j (1 Semaine)
+                </button>
+              </div>
+            </div>
+
+            {/* Commande Prioritaire */}
+            <div className={`p-3 rounded-xl border transition ${
+              estPrioritaire
+                ? 'bg-rose-950/30 border-rose-500/50'
+                : 'bg-slate-900/50 border-slate-800'
+            }`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Zap className={`w-4 h-4 ${estPrioritaire ? 'fill-rose-400 text-rose-400' : 'text-slate-400'}`} />
+                  <div>
+                    <span className="text-xs font-bold text-white block">
+                      Commande Prioritaire / Urgente
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Passe en tête de file atelier et neutralise le temps d'attente des commandes antérieures.
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={estPrioritaire}
+                  onClick={() => {
+                    const nextPrio = !estPrioritaire;
+                    setEstPrioritaire(nextPrio);
+                    if (nextPrio && modeDate === 'AUTO') {
+                      appliquerRaccourci(1);
+                    }
+                  }}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                    estPrioritaire ? 'bg-rose-600' : 'bg-slate-700'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                      estPrioritaire ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {estPrioritaire && (
+                <div className="mt-2.5 pt-2 border-t border-rose-500/20">
+                  <input
+                    type="text"
+                    value={motifPriorite}
+                    onChange={(e) => setMotifPriorite(e.target.value)}
+                    placeholder="Motif de la priorité (ex: Chantier urgent, dépannage express...)"
+                    className="w-full bg-slate-900 border border-rose-500/40 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-hidden"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer avec Boutons d'Action */}
+        <div className="flex items-center justify-between px-5 py-4 border-t border-slate-800 bg-slate-950/80">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSaving}
+            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
+          >
+            Annuler
+          </button>
+
+          <button
+            type="button"
+            onClick={handleValider}
+            disabled={isSaving || !dateSelectionneeISO}
+            className={`px-5 py-2.5 rounded-xl text-white text-xs font-black flex items-center gap-2 shadow-lg transition active:scale-95 ${
+              estPrioritaire
+                ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/30'
+                : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+            } disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
+          >
+            {isSaving ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Enregistrement en cours...</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                <span>
+                  {isUpdate ? 'Valider et Mettre à jour' : 'Valider le Délai et Enregistrer'}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

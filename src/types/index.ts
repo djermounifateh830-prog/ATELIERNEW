@@ -264,6 +264,7 @@ export interface DossierCommandeGlobal {
   articlesPrecadres: CommandePrecadre[];
   notes?: string;
   statut: StatutDossier;
+  commandesConfirmees?: string[]; // Références des commandes confirmées individuellement au sein du dossier
   ficheTransfertId?: string; // ID de la fiche de transfert associée lors de la livraison
   dateLivraison?: string;    // Date de remise au transporteur
   dateLivraisonPrevisionnelle?: string; // Date prévisionnelle calculée (ex: "LIVRAISON : MERCREDI 16/09")
@@ -471,6 +472,8 @@ export interface SuiviOF {
   /** Snapshot du plan d'optimisation au moment de l'émission (référence) */
   totalBarresNeuvesPrevu: number;
   totalChutesUtiliseesPrevu: number;
+  /** Volume exact de pièces à fabriquer pour cet OF (sert au calcul de charge par famille) */
+  nombrePieces?: number;
   /** Réservations de stock verrouillées pour cet OF (empêche toute double-affectation) */
   chutesReservees?: ChuteReserveeOF[];
   barresReservees?: BarreReserveeOF[];
@@ -590,6 +593,7 @@ export interface EstimationDelaiDetail {
   joursOuvresRequis: number;
   dateLivraisonPrevue: Date;
   dateLivraisonFormattee: string;     // ex: "MERCREDI 16/09"
+  capaciteJournaliere?: number;
 }
 
 export interface EstimationLivraisonDossier {

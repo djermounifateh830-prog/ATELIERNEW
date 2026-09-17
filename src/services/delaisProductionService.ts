@@ -145,14 +145,20 @@ export class DelaisProductionService {
   static ajouterJoursOuvres(dateDepart: Date, joursRequis: number, joursOuvres: number[]): Date {
     const activeJours = joursOuvres && joursOuvres.length > 0 ? joursOuvres : [0, 1, 2, 3, 4];
     const d = new Date(dateDepart);
+    if (isNaN(d.getTime())) return new Date();
 
-    // Ajuster si la date de départ est sur un jour non ouvré
+    // Si aucun jour ouvré n'est requis (ex: livraison demandée AUJOURD'HUI / délai 0j)
+    if (joursRequis <= 0) {
+      return d;
+    }
+
+    // Si la date de départ est sur un jour de repos, la fabrication démarre le prochain jour ouvré
     while (!activeJours.includes(d.getDay())) {
       d.setDate(d.getDate() + 1);
     }
 
-    // Nombre de jours entiers de fabrication (minimum 1 jour d'atelier pour préparer et fabriquer)
-    const joursEntiers = Math.max(1, Math.ceil(joursRequis));
+    // Nombre de jours entiers de travail
+    const joursEntiers = Math.ceil(joursRequis);
 
     for (let i = 0; i < joursEntiers; i++) {
       d.setDate(d.getDate() + 1);
@@ -165,20 +171,38 @@ export class DelaisProductionService {
   }
 
   /**
-   * Parse une date au format DD/MM/YYYY
+   * Parse une date au format DD/MM/YYYY ou YYYY-MM-DD (ISO)
    */
   static parseDateString(str?: string): Date {
     if (!str) return new Date();
     try {
-      const parts = str.split('/');
-      if (parts.length === 3) {
-        const j = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10) - 1;
-        const a = parseInt(parts[2], 10);
-        if (!isNaN(j) && !isNaN(m) && !isNaN(a)) {
-          return new Date(a, m, j);
+      const clean = str.trim();
+      // Format ISO "YYYY-MM-DD"
+      if (clean.includes('-')) {
+        const parts = clean.split('-');
+        if (parts.length === 3) {
+          const a = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          const j = parseInt(parts[2], 10);
+          if (!isNaN(j) && !isNaN(m) && !isNaN(a)) {
+            return new Date(a, m, j);
+          }
         }
       }
+      // Format FR "DD/MM/YYYY"
+      if (clean.includes('/')) {
+        const parts = clean.split('/');
+        if (parts.length === 3) {
+          const j = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          const a = parseInt(parts[2], 10);
+          if (!isNaN(j) && !isNaN(m) && !isNaN(a)) {
+            return new Date(a, m, j);
+          }
+        }
+      }
+      const direct = new Date(clean);
+      if (!isNaN(direct.getTime())) return direct;
     } catch {}
     return new Date();
   }
@@ -381,21 +405,42 @@ export class DelaisProductionService {
   static compterPiecesOF(of: SuiviOF): number {
     // Si déjà compté ou enregistré dans l'OF
     if ((of as any).nombrePieces && (of as any).nombrePieces > 0) {
-      return (of as any).nombrePieces;
+      return Number((of as any).nombrePieces);
+    }
+    if ((of as any).totalPieces && (of as any).totalPieces > 0) {
+      return Number((of as any).totalPieces);
     }
     // D'après les lignes de retour
     if (of.lignesRetour && of.lignesRetour.length > 0) {
-      // Compter les pièces réelles découpées mentionnées
       let count = 0;
       of.lignesRetour.forEach(lr => {
         if (lr.repere) {
           const reps = lr.repere.split(',').filter(Boolean);
           count += reps.length || 1;
+        } else if (lr.piecesInfoStr) {
+          const parts = lr.piecesInfoStr.split('+').filter(Boolean);
+          count += parts.length || 1;
         } else {
           count += 1;
         }
       });
       if (count > 0) return count;
+    }
+    // D'après les sections si attachées
+    if (Array.isArray((of as any).sections) && (of as any).sections.length > 0) {
+      let countSec = 0;
+      (of as any).sections.forEach((sec: any) => {
+        if (sec?.resultat?.barres_neuves) {
+          sec.resultat.barres_neuves.forEach((b: any) => {
+            countSec += Array.isArray(b?.pieces) ? b.pieces.length : 1;
+          });
+        }
+      });
+      if (countSec > 0) return countSec;
+    }
+    // D'après le nombre de barres neuves prévues (estimation moyenne de 3 pièces par barre)
+    if (of.totalBarresNeuvesPrevu && of.totalBarresNeuvesPrevu > 0) {
+      return Math.max(1, of.totalBarresNeuvesPrevu * 3);
     }
     // Fallback minimal de 1 pièce
     return 1;
@@ -434,7 +479,7 @@ export class DelaisProductionService {
     if (targetOF.dateLivraisonPrevisionnelle) {
       let dateLiv: Date | null = null;
       if (targetOF.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(targetOF.dateLivraisonPrevisionnelleISO);
+        const d = this.parseDateString(targetOF.dateLivraisonPrevisionnelleISO);
         if (!isNaN(d.getTime())) dateLiv = d;
       }
       if (!dateLiv) {
@@ -453,7 +498,6 @@ export class DelaisProductionService {
         dateLiv = this.ajouterJoursOuvres(dateLiv, joursInterruptionOF, paramsProd.joursOuvres);
       }
 
-      const prefix = targetOF.estPrioritaire ? '⚡ ' : '';
       let texteAffiche = targetOF.dateLivraisonPrevisionnelle.startsWith('⚡') || targetOF.dateLivraisonPrevisionnelle.includes('PRIORITAIRE')
         ? targetOF.dateLivraisonPrevisionnelle
         : targetOF.estPrioritaire
@@ -490,7 +534,7 @@ export class DelaisProductionService {
         // Ne considérer que les OFs encore en cours de fabrication
         if (of.id === targetOF.id) return;
         if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
-        // 💡 Les OFs mis en pause (rupture...) ne bloquent pas les machines pour les autres commandes actives
+        // Les OFs mis en pause (rupture...) ne bloquent pas les machines pour les autres commandes actives
         if (of.estEnPause) return;
 
         const ofFam = (of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille;
@@ -505,11 +549,14 @@ export class DelaisProductionService {
     }
 
     const piecesTarget = this.compterPiecesOF(targetOF);
-    const totalPieces = piecesEnFileAttente + piecesTarget;
     const capaciteJour = configFam.capaciteJournalierePieces || 120;
-    const joursRequis = totalPieces / capaciteJour + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
 
-    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, targetOF.estPrioritaire ? Math.min(1, joursRequis) : joursRequis, params.joursOuvres);
+    // Calcul du délai requis en jours ouvrés basé sur le volume et la cadence journalière de la famille
+    const totalChargePieces = targetOF.estPrioritaire ? piecesTarget : (piecesEnFileAttente + piecesTarget);
+    const joursProduction = Math.max(1, Math.ceil(totalChargePieces / capaciteJour));
+    const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
+
+    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursRequis, params.joursOuvres);
     const texteDate = this.formaterDateLivraison(dateLivraison);
     let texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
     if (estEnPauseOF) {
@@ -520,13 +567,13 @@ export class DelaisProductionService {
       dateLivraison,
       texteFormatte: texteFinal,
       dateLivraisonISO: this.toISODateString(dateLivraison),
-      joursOuvresRequis: targetOF.estPrioritaire ? 1 : Math.max(1, Math.ceil(joursRequis))
+      joursOuvresRequis: targetOF.estPrioritaire ? Math.max(1, Math.ceil(piecesTarget / capaciteJour)) : joursRequis
     };
   }
 
   /**
    * Calcul complet de la date prévisionnelle de livraison d'un Dossier Commande
-   * - Prend en compte la file d'attente FIFO de chaque famille active
+   * - Prend en compte la cadence journalière et la charge de chaque famille active
    * - La date globale de livraison du dossier est le goulot d'étranglement (la date max de toutes les familles)
    */
   static estimerDelaiDossier(
@@ -558,11 +605,90 @@ export class DelaisProductionService {
       joursInterruptionDossier = Math.max(joursInterruptionDossier, diffJours);
     }
 
-    // Si une date personnalisée ou prioritaire a été définie pour ce dossier
+    const params = paramsCustom || this.getParametres();
+    const dateDepart = this.parseDateString(dossier.dateCommande);
+    const piecesParFamille = this.compterPiecesDossierParFamille(dossier);
+
+    const detailsParFamille: Record<string, EstimationDelaiDetail> = {};
+    let dateMax = new Date(dateDepart);
+    let joursMax = 0;
+    let auMoinsUneFamille = false;
+    let familleGoulot: FamilleProduit | undefined = undefined;
+    let maxTime = -1;
+
+    const famillesToCheck: FamilleProduit[] = ['CAISSON', 'PRECADRE', 'MOUSTIQUAIRE', 'TABLIER'];
+
+    famillesToCheck.forEach(fam => {
+      const nbPieces = piecesParFamille[fam] || 0;
+      if (nbPieces <= 0) return;
+
+      auMoinsUneFamille = true;
+      const configFam = params.familles[fam] || PARAMETRES_PRODUCTION_DEFAUT.familles[fam];
+
+      // Calculer le volume des travaux en cours de cette famille
+      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
+      let piecesEnFile = 0;
+      if (!dossier.estPrioritaire) {
+        const ofsEnCours = suivisOF.filter(o =>
+          (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE') &&
+          !o.estEnPause &&
+          (o.famille === fam || (fam === 'CAISSON' && (o.famille as string) === 'SOUS_FACE'))
+        );
+
+        ofsEnCours.forEach(o => {
+          // Exclure les OFs qui appartiennent déjà à ce même dossier
+          const cmdDossier = (dossier.refCommande || '').toLowerCase().trim();
+          const cmdOF = (o.numCommande || '').toLowerCase().trim();
+          if (cmdDossier && cmdOF && (cmdDossier.includes(cmdOF) || cmdOF.includes(cmdDossier))) {
+            return;
+          }
+          piecesEnFile += this.compterPiecesOF(o);
+        });
+
+        // 2. D'après les autres dossiers en attente ou en cours antérieurs si pas encore d'OF (en excluant les suspendus)
+        tousDossiers.forEach(d => {
+          if (d.id === dossier.id) return;
+          if ((d.statut !== 'EN_COURS' && d.statut !== 'EN_ATTENTE') || d.estEnPause) return;
+          // Éviter double compte si un OF existe déjà pour ce dossier
+          const hasOF = suivisOF.some(o => o.numCommande === d.refCommande);
+          if (!hasOF) {
+            const countD = this.compterPiecesDossierParFamille(d);
+            piecesEnFile += countD[fam] || 0;
+          }
+        });
+      }
+
+      const totalChargePieces = dossier.estPrioritaire ? nbPieces : (piecesEnFile + nbPieces);
+      const cap = configFam.capaciteJournalierePieces || 120;
+      const joursProduction = Math.max(1, Math.ceil(totalChargePieces / cap));
+      const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+      const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursRequis, params.joursOuvres);
+
+      if (dateEstimee.getTime() > maxTime) {
+        maxTime = dateEstimee.getTime();
+        dateMax = dateEstimee;
+        joursMax = joursRequis;
+        familleGoulot = fam;
+      }
+
+      detailsParFamille[fam] = {
+        famille: fam,
+        libelleFamille: configFam.libelle,
+        piecesCommande: nbPieces,
+        piecesEnFileAttente: piecesEnFile,
+        totalPiecesCharge: totalChargePieces,
+        joursOuvresRequis: joursRequis,
+        dateLivraisonPrevue: dateEstimee,
+        dateLivraisonFormattee: this.formaterDateLivraison(dateEstimee).replace('LIVRAISON : ', ''),
+        capaciteJournaliere: cap
+      };
+    });
+
+    // Si une date personnalisée ou prioritaire a été manuellement fixée pour ce dossier
     if (dossier.dateLivraisonPrevisionnelle) {
       let dateLiv: Date | null = null;
       if (dossier.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(dossier.dateLivraisonPrevisionnelleISO);
+        const d = this.parseDateString(dossier.dateLivraisonPrevisionnelleISO);
         if (!isNaN(d.getTime())) dateLiv = d;
       }
       if (!dateLiv) {
@@ -594,89 +720,15 @@ export class DelaisProductionService {
       }
 
       return {
-        hasPieces: true,
+        hasPieces: auMoinsUneFamille,
         dateMaximale: dateLiv,
         dateLivraisonFormattee: texteAffiche,
         dateLivraisonISO: this.toISODateString(dateLiv),
         joursOuvresMax: (dossier.delaiPrevisionnelJours || (dossier.estPrioritaire ? 1 : 2)) + joursInterruptionDossier,
-        detailsParFamille: {}
+        familleGoulot,
+        detailsParFamille
       };
     }
-
-    const params = paramsCustom || this.getParametres();
-    const dateDepart = this.parseDateString(dossier.dateCommande);
-    const piecesParFamille = this.compterPiecesDossierParFamille(dossier);
-
-    const detailsParFamille: Record<string, EstimationDelaiDetail> = {};
-    let dateMax = new Date(dateDepart);
-    let joursMax = 0;
-    let auMoinsUneFamille = false;
-    let familleGoulot: FamilleProduit | undefined = undefined;
-    let maxTime = -1;
-
-    const famillesToCheck: FamilleProduit[] = ['CAISSON', 'PRECADRE', 'MOUSTIQUAIRE', 'TABLIER'];
-
-    famillesToCheck.forEach(fam => {
-      const nbPieces = piecesParFamille[fam] || 0;
-      if (nbPieces <= 0) return;
-
-      auMoinsUneFamille = true;
-      const configFam = params.familles[fam] || PARAMETRES_PRODUCTION_DEFAUT.familles[fam];
-
-      // Calculer le volume des travaux en cours de cette famille
-      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
-      let piecesEnFile = 0;
-      const ofsEnCours = suivisOF.filter(o =>
-        (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE') &&
-        !o.estEnPause &&
-        (o.famille === fam || (fam === 'CAISSON' && (o.famille as string) === 'SOUS_FACE'))
-      );
-
-      ofsEnCours.forEach(o => {
-        // Exclure les OFs qui appartiennent déjà à ce même dossier
-        const cmdDossier = (dossier.refCommande || '').toLowerCase().trim();
-        const cmdOF = (o.numCommande || '').toLowerCase().trim();
-        if (cmdDossier && cmdOF && (cmdDossier.includes(cmdOF) || cmdOF.includes(cmdDossier))) {
-          return;
-        }
-        piecesEnFile += this.compterPiecesOF(o);
-      });
-
-      // 2. D'après les autres dossiers en attente ou en cours antérieurs si pas encore d'OF (en excluant les suspendus)
-      tousDossiers.forEach(d => {
-        if (d.id === dossier.id) return;
-        if ((d.statut !== 'EN_COURS' && d.statut !== 'EN_ATTENTE') || d.estEnPause) return;
-        // Éviter double compte si un OF existe déjà pour ce dossier
-        const hasOF = suivisOF.some(o => o.numCommande === d.refCommande);
-        if (!hasOF) {
-          const countD = this.compterPiecesDossierParFamille(d);
-          piecesEnFile += countD[fam] || 0;
-        }
-      });
-
-      const totalChargePieces = piecesEnFile + nbPieces;
-      const cap = configFam.capaciteJournalierePieces || 120;
-      const joursRequis = totalChargePieces / cap + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
-      const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursRequis, params.joursOuvres);
-
-      if (dateEstimee.getTime() > maxTime) {
-        maxTime = dateEstimee.getTime();
-        dateMax = dateEstimee;
-        joursMax = Math.max(1, Math.ceil(joursRequis));
-        familleGoulot = fam;
-      }
-
-      detailsParFamille[fam] = {
-        famille: fam,
-        libelleFamille: configFam.libelle,
-        piecesCommande: nbPieces,
-        piecesEnFileAttente: piecesEnFile,
-        totalPiecesCharge: totalChargePieces,
-        joursOuvresRequis: Math.max(1, Math.ceil(joursRequis)),
-        dateLivraisonPrevue: dateEstimee,
-        dateLivraisonFormattee: this.formaterDateLivraison(dateEstimee).replace('LIVRAISON : ', '')
-      };
-    });
 
     if (!auMoinsUneFamille) {
       // Dossier sans pièces configurées : ne pas inventer une fausse date avant saisie

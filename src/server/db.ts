@@ -314,6 +314,113 @@ class AtelierDatabase {
     } catch (e) {
       console.warn('[AtelierDB] Note migration numero_emission:', e);
     }
+
+    // Création des vues SQL pour afficher directement toutes les lignes de commande dans n'importe quel visualiseur SQLite
+    try {
+      this.db.exec(`
+        DROP VIEW IF EXISTS v_lignes_commandes_caissons;
+        CREATE VIEW v_lignes_commandes_caissons AS
+        SELECT 
+          d.id AS dossier_id,
+          COALESCE(json_extract(d.json_data, '$.numCommandeCaisson'), d.ref_commande) AS ref_commande,
+          d.donneur_ordre,
+          d.nom_client_final,
+          d.date_commande,
+          d.statut AS statut_dossier,
+          json_extract(c.value, '$.id') AS ligne_id,
+          json_extract(c.value, '$.repere') AS repere,
+          'CAISSON' AS famille,
+          json_extract(c.value, '$.longueur') AS longueur_mm,
+          NULL AS hauteur_mm,
+          json_extract(c.value, '$.quantite') AS quantite,
+          json_extract(c.value, '$.articleCode') AS article_code,
+          json_extract(c.value, '$.articleDesignation') AS designation_caisson,
+          json_extract(c.value, '$.sfArticleDesignation') AS designation_sous_face,
+          json_extract(c.value, '$.typeCaisson') AS type_caisson,
+          json_extract(c.value, '$.montageSousFace') AS montage_sous_face,
+          json_extract(c.value, '$.avecPeinture') AS avec_peinture
+        FROM dossiers d, json_each(CASE WHEN json_valid(d.json_data) AND json_type(d.json_data, '$.articlesCaissons') = 'array' THEN json_extract(d.json_data, '$.articlesCaissons') ELSE '[]' END) c;
+
+        DROP VIEW IF EXISTS v_lignes_commandes_tabliers;
+        CREATE VIEW v_lignes_commandes_tabliers AS
+        SELECT 
+          d.id AS dossier_id,
+          COALESCE(json_extract(d.json_data, '$.numCommandeTablier'), d.ref_commande) AS ref_commande,
+          d.donneur_ordre,
+          d.nom_client_final,
+          d.date_commande,
+          d.statut AS statut_dossier,
+          json_extract(t.value, '$.id') AS ligne_id,
+          json_extract(t.value, '$.repere') AS repere,
+          'TABLIER' AS famille,
+          json_extract(t.value, '$.largeur') AS longueur_mm,
+          json_extract(t.value, '$.hauteur') AS hauteur_mm,
+          json_extract(t.value, '$.hauteur_lame_tablier') AS hauteur_lame,
+          json_extract(t.value, '$.quantite') AS quantite,
+          json_extract(t.value, '$.articleCode') AS article_code,
+          json_extract(t.value, '$.articleDesignation') AS designation_lame,
+          json_extract(t.value, '$.lfArticleDesignation') AS designation_lame_finale,
+          json_extract(t.value, '$.typeFabrication') AS type_fabrication,
+          json_extract(t.value, '$.avecLameFinale') AS avec_lame_finale,
+          json_extract(t.value, '$.avecCoulisses') AS avec_coulisses
+        FROM dossiers d, json_each(CASE WHEN json_valid(d.json_data) AND json_type(d.json_data, '$.articlesTabliers') = 'array' THEN json_extract(d.json_data, '$.articlesTabliers') ELSE '[]' END) t;
+
+        DROP VIEW IF EXISTS v_lignes_commandes_moustiquaires;
+        CREATE VIEW v_lignes_commandes_moustiquaires AS
+        SELECT 
+          d.id AS dossier_id,
+          COALESCE(json_extract(d.json_data, '$.numCommandeMoustiquaire'), d.ref_commande) AS ref_commande,
+          d.donneur_ordre,
+          d.nom_client_final,
+          d.date_commande,
+          d.statut AS statut_dossier,
+          json_extract(m.value, '$.id') AS ligne_id,
+          json_extract(m.value, '$.repere') AS repere,
+          'MOUSTIQUAIRE' AS famille,
+          json_extract(m.value, '$.largeur') AS longueur_mm,
+          json_extract(m.value, '$.hauteur') AS hauteur_mm,
+          json_extract(m.value, '$.quantite') AS quantite,
+          json_extract(m.value, '$.modele') AS modele,
+          json_extract(m.value, '$.typeOuverture') AS type_ouverture,
+          json_extract(m.value, '$.typeFabrication') AS type_fabrication,
+          json_extract(m.value, '$.articleDesignationCadre') AS designation_cadre,
+          json_extract(m.value, '$.articleDesignationMaille') AS designation_maille
+        FROM dossiers d, json_each(CASE WHEN json_valid(d.json_data) AND json_type(d.json_data, '$.articlesMoustiquaires') = 'array' THEN json_extract(d.json_data, '$.articlesMoustiquaires') ELSE '[]' END) m;
+
+        DROP VIEW IF EXISTS v_lignes_commandes_precadres;
+        CREATE VIEW v_lignes_commandes_precadres AS
+        SELECT 
+          d.id AS dossier_id,
+          COALESCE(json_extract(d.json_data, '$.numCommandePrecadre'), d.ref_commande) AS ref_commande,
+          d.donneur_ordre,
+          d.nom_client_final,
+          d.date_commande,
+          d.statut AS statut_dossier,
+          json_extract(p.value, '$.id') AS ligne_id,
+          json_extract(p.value, '$.repere') AS repere,
+          'PRECADRE' AS famille,
+          json_extract(p.value, '$.largeur') AS longueur_mm,
+          json_extract(p.value, '$.hauteur') AS hauteur_mm,
+          json_extract(p.value, '$.quantite') AS quantite,
+          json_extract(p.value, '$.articleCode') AS article_code,
+          json_extract(p.value, '$.articleDesignation') AS designation_precadre,
+          json_extract(p.value, '$.figure') AS figure,
+          json_extract(p.value, '$.modeDebordement') AS mode_debordement
+        FROM dossiers d, json_each(CASE WHEN json_valid(d.json_data) AND json_type(d.json_data, '$.articlesPrecadres') = 'array' THEN json_extract(d.json_data, '$.articlesPrecadres') ELSE '[]' END) p;
+
+        DROP VIEW IF EXISTS v_toutes_les_lignes_commandes;
+        CREATE VIEW v_toutes_les_lignes_commandes AS
+        SELECT dossier_id, ref_commande, donneur_ordre, nom_client_final, date_commande, statut_dossier, ligne_id, repere, famille, longueur_mm AS dimension_L, hauteur_mm AS dimension_H, quantite, designation_caisson AS designation_principale FROM v_lignes_commandes_caissons
+        UNION ALL
+        SELECT dossier_id, ref_commande, donneur_ordre, nom_client_final, date_commande, statut_dossier, ligne_id, repere, famille, longueur_mm AS dimension_L, hauteur_mm AS dimension_H, quantite, designation_lame AS designation_principale FROM v_lignes_commandes_tabliers
+        UNION ALL
+        SELECT dossier_id, ref_commande, donneur_ordre, nom_client_final, date_commande, statut_dossier, ligne_id, repere, famille, longueur_mm AS dimension_L, hauteur_mm AS dimension_H, quantite, designation_cadre AS designation_principale FROM v_lignes_commandes_moustiquaires
+        UNION ALL
+        SELECT dossier_id, ref_commande, donneur_ordre, nom_client_final, date_commande, statut_dossier, ligne_id, repere, famille, longueur_mm AS dimension_L, hauteur_mm AS dimension_H, quantite, designation_precadre AS designation_principale FROM v_lignes_commandes_precadres;
+      `);
+    } catch (e) {
+      console.warn('[AtelierDB] Note creation vues lignes commandes:', e);
+    }
   }
 
   private seedIfEmpty() {

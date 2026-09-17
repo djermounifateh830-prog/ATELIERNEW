@@ -48,6 +48,7 @@ import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { SelecteurMode } from '../common/SelecteurMode';
 import { ClientCodificationModal } from '../common/ClientCodificationModal';
 import { ParametresMailleModal } from '../common/ParametresMailleModal';
+import { ValidationDelaiCommandeModal } from '../common/ValidationDelaiCommandeModal';
 import {
   Building2,
   Building,
@@ -90,7 +91,8 @@ import {
   ChevronDown,
   Lock,
   History,
-  Pause
+  Pause,
+  TrendingUp
 } from 'lucide-react';
 
 export interface SectionMultiArticleCaisson {
@@ -602,11 +604,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // OPTIMISATION STRICTE PAR CODE ARTICLE : CAISSONS TUNNEL (CT) & SOUS-FACES (SF)
   const handleOptimiserCaissonsEtSousFaces = (cibleRef?: string | string[]) => {
-    if (!isCommandeEnregistree) {
-      showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
-      return;
-    }
-
     let sourceLines = lignesCaissons;
     if (cibleRef) {
       const allowedRefs = Array.isArray(cibleRef) ? cibleRef : [cibleRef];
@@ -1082,11 +1079,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // --- B. TABLIER / VOLET ROULANT ---
   // OPTIMISATION STRICTE DU TABLIER, DE LA LAME FINALE ET DES COULISSES
   const handleOptimiserTabliersEtVolets = () => {
-    if (!isCommandeEnregistree) {
-      showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
-      return;
-    }
-
     if (lignesTabliers.length === 0) {
       showFlashNotification('Veuillez saisir au moins une ligne de tablier avant de lancer la découpe.', 'warn');
       return;
@@ -1303,11 +1295,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // OPTIMISATION MOUSTIQUAIRE : Cadre Dormant + Coulisses + Barre Inférieure
   // =========================================================================
   const handleOptimiserMoustiquaires = () => {
-    if (!isCommandeEnregistree) {
-      showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
-      return;
-    }
-
     const safeArticlesList = articles || [];
     const mappingToUse: MappingChutes = mapping || {};
     const chutesBarresToUse: Record<string, ChuteItem[]> = chutesBarres || {};
@@ -1597,15 +1584,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   const listeCommandesFamilleActive = statsCommandesParFamille[familleArticle] || [];
 
-  // Liste structurée de toutes les commandes distinctes enregistrées dans le dossier en cours
+  // Liste structurée de toutes les commandes distinctes enregistrées ou en cours dans le dossier
   const commandesDossierEnCours = useMemo(() => {
-    if (!editingDossierId) {
-      return [];
-    }
-    const currentSavedDossier = (dossiers || []).find(d => d.id === editingDossierId);
-    if (!currentSavedDossier) {
-      return [];
-    }
+    const currentSavedDossier = editingDossierId ? (dossiers || []).find(d => d.id === editingDossierId) : null;
+    const commandesConfirmeesSet = new Set<string>(currentSavedDossier?.commandesConfirmees || []);
 
     const map = new Map<string, {
       ref: string;
@@ -1615,24 +1597,35 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       mstq: number;
       precadres: number;
       total: number;
+      estConfirmee: boolean;
     }>();
 
     const getOrCreate = (refRaw?: string) => {
       const ref = (refRaw || 'CMD').trim();
       if (!map.has(ref)) {
-        map.set(ref, { ref, caissons: 0, sousFaces: 0, tabliers: 0, mstq: 0, precadres: 0, total: 0 });
+        map.set(ref, {
+          ref,
+          caissons: 0,
+          sousFaces: 0,
+          tabliers: 0,
+          mstq: 0,
+          precadres: 0,
+          total: 0,
+          estConfirmee: commandesConfirmeesSet.has(ref)
+        });
       }
       return map.get(ref)!;
     };
 
-    (currentSavedDossier.articlesCaissons || []).forEach(c => {
-      const caissonRef = (c.refCommande || currentSavedDossier.numCommandeCaisson || currentSavedDossier.refCommande || 'CMD').trim();
+    // 1. Scanner les lignes actives (prioritaires si modifiées)
+    lignesCaissons.forEach(c => {
+      const caissonRef = (c.refCommande || numCommandeCaisson || currentSavedDossier?.numCommandeCaisson || currentSavedDossier?.refCommande || 'CMD').trim();
       const entry = getOrCreate(caissonRef);
       entry.caissons += c.quantite || 1;
       entry.total += c.quantite || 1;
 
       if (c.avecSousFace) {
-        const sfRef = (c.sfRefCommande || currentSavedDossier.numCommandeSousFace || caissonRef).trim();
+        const sfRef = (c.sfRefCommande || numCommandeSousFace || currentSavedDossier?.numCommandeSousFace || caissonRef).trim();
         if (sfRef && sfRef !== caissonRef) {
           const sfEntry = getOrCreate(sfRef);
           sfEntry.sousFaces += c.quantite || 1;
@@ -1643,26 +1636,43 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       }
     });
 
-    (currentSavedDossier.articlesTabliers || []).forEach(t => {
-      const entry = getOrCreate(t.refCommande || currentSavedDossier.numCommandeTablier || currentSavedDossier.refCommande);
+    lignesTabliers.forEach(t => {
+      const entry = getOrCreate(t.refCommande || numCommandeTablier || currentSavedDossier?.numCommandeTablier || currentSavedDossier?.refCommande);
       entry.tabliers += t.quantite || 1;
       entry.total += t.quantite || 1;
     });
 
-    (currentSavedDossier.articlesMoustiquaires || []).forEach(m => {
-      const entry = getOrCreate(m.refCommande || currentSavedDossier.numCommandeMoustiquaire || currentSavedDossier.refCommande);
+    lignesMoustiquaires.forEach(m => {
+      const entry = getOrCreate(m.refCommande || numCommandeMoustiquaire || currentSavedDossier?.numCommandeMoustiquaire || currentSavedDossier?.refCommande);
       entry.mstq += m.quantite || 1;
       entry.total += m.quantite || 1;
     });
 
-    (currentSavedDossier.articlesPrecadres || []).forEach(p => {
-      const entry = getOrCreate(p.refCommande || currentSavedDossier.numCommandePrecadre || currentSavedDossier.refCommande);
+    lignesPrecadres.forEach(p => {
+      const entry = getOrCreate(p.refCommande || numCommandePrecadre || currentSavedDossier?.numCommandePrecadre || currentSavedDossier?.refCommande);
       entry.precadres += p.quantite || 1;
       entry.total += p.quantite || 1;
     });
 
-    return Array.from(map.values());
-  }, [editingDossierId, dossiers]);
+    // 2. Si un dossier sauvegardé a des commandes non encore dans la map (ex: autres familles non chargées)
+    if (currentSavedDossier) {
+      (currentSavedDossier.articlesCaissons || []).forEach(c => {
+        const caissonRef = (c.refCommande || currentSavedDossier.numCommandeCaisson || currentSavedDossier.refCommande || 'CMD').trim();
+        getOrCreate(caissonRef);
+      });
+      (currentSavedDossier.articlesTabliers || []).forEach(t => {
+        getOrCreate(t.refCommande || currentSavedDossier.numCommandeTablier || currentSavedDossier.refCommande);
+      });
+      (currentSavedDossier.articlesMoustiquaires || []).forEach(m => {
+        getOrCreate(m.refCommande || currentSavedDossier.numCommandeMoustiquaire || currentSavedDossier.refCommande);
+      });
+      (currentSavedDossier.articlesPrecadres || []).forEach(p => {
+        getOrCreate(p.refCommande || currentSavedDossier.numCommandePrecadre || currentSavedDossier.refCommande);
+      });
+    }
+
+    return Array.from(map.values()).filter(c => c.ref && c.ref !== 'CMD');
+  }, [editingDossierId, dossiers, lignesCaissons, lignesTabliers, lignesMoustiquaires, lignesPrecadres, numCommandeCaisson, numCommandeSousFace, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre]);
 
   // Champs de saisie rapide de la prochaine ligne et références de focus intelligent
   const inputClientRef = useRef<HTMLInputElement>(null);
@@ -1691,6 +1701,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [datePause, setDatePause] = useState<string>('');
   const [dureePauseJours, setDureePauseJours] = useState<number>(0);
   const [afficherEditeurLivraison, setAfficherEditeurLivraison] = useState<boolean>(false);
+  const [showValidationDelaiModal, setShowValidationDelaiModal] = useState<boolean>(false);
+  const [statutCiblePourEnregistrement, setStatutCiblePourEnregistrement] = useState<'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS'>('EN_ATTENTE');
+  const [isSavingDossier, setIsSavingDossier] = useState<boolean>(false);
 
   // Charger les OFs pour les calculs de files d'attente
   useEffect(() => {
@@ -1752,14 +1765,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // Raccourcis pour fixer la livraison
   const appliquerRaccourciLivraison = (joursAjoutes: number) => {
-    const params = DelaisProductionService.getParametres();
-    const dRef = DelaisProductionService.parseDateString(dateCommande) || new Date();
-    const cible = DelaisProductionService.ajouterJoursOuvres(dRef, joursAjoutes, params.joursOuvres);
+    let cible: Date;
+    if (joursAjoutes === 0) {
+      cible = new Date();
+    } else {
+      const params = DelaisProductionService.getParametres();
+      const dRef = DelaisProductionService.parseDateString(dateCommande) || new Date();
+      cible = DelaisProductionService.ajouterJoursOuvres(dRef, joursAjoutes, params.joursOuvres);
+    }
     const iso = DelaisProductionService.toISODateString(cible);
     const formattee = DelaisProductionService.formaterDateLivraison(cible);
     setDateLivraisonPrevisionnelleISO(iso);
     setDateLivraisonPrevisionnelle(formattee);
     setDelaiFixeManuellement(true);
+    if (joursAjoutes === 0) {
+      setEstPrioritaire(true);
+    }
     showFlashNotification(`Délai de livraison fixé : ${formattee}`, 'info');
   };
 
@@ -2120,11 +2141,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // Optimisation Découpe Précadres
   const handleOptimiserPrecadres = () => {
-    if (!isCommandeEnregistree) {
-      showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
-      return;
-    }
-
     if (lignesPrecadres.length === 0) {
       showFlashNotification('Veuillez saisir au moins une ligne de précadre.', 'warn');
       return;
@@ -2420,11 +2436,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // de manière isolée et ordonnée pour éviter tout mélange de numéros ou d'articles.
   // =========================================================================
   const handleOptimiserMultiFamillesDossier = async (targetRefs?: string | string[]) => {
-    if (!isCommandeEnregistree) {
-      showFlashNotification('⚠️ La commande doit obligatoirement être enregistrée avant de pouvoir lancer l’optimisation. Veuillez cliquer sur "Enregistrer la Commande".', 'warn');
-      return;
-    }
-
     let allowedRefs: string[] = [];
     if (targetRefs) {
       allowedRefs = Array.isArray(targetRefs) ? targetRefs.map(r => r.trim()).filter(Boolean) : [targetRefs.trim()].filter(Boolean);
@@ -3982,8 +3993,72 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const totalLignesEnCours =
     lignesCaissons.length + lignesTabliers.length + lignesMoustiquaires.length + lignesPrecadres.length;
 
-  // Enregistrer ou Mettre à Jour le dossier complet dans l'historique
-  const handleEnregistrerDossier = async (statutCible: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' = 'EN_ATTENTE') => {
+  // Déclenché au clic sur "Enregistrer la Commande" : vérifie les données puis ouvre le modal de validation des délais
+  const handleEnregistrerDossier = (statutCible: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' = 'EN_ATTENTE') => {
+    const nomClientFinalPropre = clientDeMonClient.trim() || 'CLIENT';
+    if (!clientDeMonClient.trim()) {
+      setClientDeMonClient('CLIENT');
+    }
+
+    // Détection ou génération automatique d'une référence de commande valide avec préfixe
+    let refPrincipal = (
+      numCommandeCaisson.trim() ||
+      numCommandeSousFace.trim() ||
+      numCommandeTablier.trim() ||
+      numCommandeMoustiquaire.trim() ||
+      numCommandePrecadre.trim()
+    );
+
+    if (!refPrincipal) {
+      const genNum = `${currentPrefix}${Math.floor(100000 + Math.random() * 900000)}`;
+      refPrincipal = genNum;
+      if (familleArticle === 'CAISSON') setNumCommandeCaisson(genNum);
+      else if (familleArticle === 'TABLIER') setNumCommandeTablier(genNum);
+      else if (familleArticle === 'MOUSTIQUAIRE') setNumCommandeMoustiquaire(genNum);
+      else if (familleArticle === 'PRECADRE') setNumCommandePrecadre(genNum);
+    }
+
+    if (totalLignesEnCours === 0) {
+      showFlashNotification('⚠️ Veuillez saisir au moins une ligne dans la commande avant d\'enregistrer.', 'warn');
+      if (inputRepereRef.current) {
+        inputRepereRef.current.focus();
+      } else if (inputLRef.current) {
+        inputLRef.current.focus();
+      }
+      return;
+    }
+
+    // Vérification d'unicité absolue de tous les numéros de commande saisis
+    const numCmdsToCheck = [
+      numCommandeCaisson,
+      numCommandeSousFace,
+      numCommandeTablier,
+      numCommandeMoustiquaire,
+      numCommandePrecadre,
+      refPrincipal
+    ].filter(Boolean);
+
+    for (const num of numCmdsToCheck) {
+      const conflit = verifierUniciteNumeroCommande(num, editingDossierId);
+      if (conflit) {
+        showFlashNotification(`⛔ Impossible d'enregistrer : Le numéro de commande "${num}" existe déjà dans le dossier "${conflit.nomClientFinal}". Chaque commande doit obligatoirement avoir un numéro unique !`, 'warn');
+        return;
+      }
+    }
+
+    setStatutCiblePourEnregistrement(statutCible);
+    setShowValidationDelaiModal(true);
+  };
+
+  // Enregistrer ou Mettre à Jour le dossier complet dans l'historique SQLite avec les délais confirmés
+  const executerSauvegardeDossier = async (
+    statutCible: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' = 'EN_ATTENTE',
+    customDateISO?: string,
+    customDateTexte?: string,
+    customEstPrioritaire?: boolean,
+    customMotifPriorite?: string
+  ) => {
+    setIsSavingDossier(true);
     try {
       const nomClientFinalPropre = clientDeMonClient.trim() || 'CLIENT';
       if (!clientDeMonClient.trim()) {
@@ -4008,32 +4083,19 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         else if (familleArticle === 'PRECADRE') setNumCommandePrecadre(genNum);
       }
 
-      if (totalLignesEnCours === 0) {
-        showFlashNotification('⚠️ Veuillez saisir au moins une ligne dans la commande avant d\'enregistrer.', 'warn');
-        if (inputRepereRef.current) {
-          inputRepereRef.current.focus();
-        } else if (inputLRef.current) {
-          inputLRef.current.focus();
-        }
-        return;
+      const finaleEstPrioritaire = customEstPrioritaire !== undefined ? customEstPrioritaire : estPrioritaire;
+      const finaleMotifPriorite = customMotifPriorite !== undefined ? customMotifPriorite : motifPriorite;
+      const finaleDateISO = customDateISO || (delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO);
+      const finaleDateTexte = customDateTexte || (delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee);
+
+      if (customDateISO) {
+        setDateLivraisonPrevisionnelleISO(customDateISO);
+        setDateLivraisonPrevisionnelle(finaleDateTexte);
+        setDelaiFixeManuellement(true);
       }
-
-      // Vérification d'unicité absolue de tous les numéros de commande saisis
-      const numCmdsToCheck = [
-        numCommandeCaisson,
-        numCommandeSousFace,
-        numCommandeTablier,
-        numCommandeMoustiquaire,
-        numCommandePrecadre,
-        refPrincipal
-      ].filter(Boolean);
-
-      for (const num of numCmdsToCheck) {
-        const conflit = verifierUniciteNumeroCommande(num, editingDossierId);
-        if (conflit) {
-          showFlashNotification(`⛔ Impossible d'enregistrer : Le numéro de commande "${num}" existe déjà dans le dossier "${conflit.nomClientFinal}". Chaque commande doit obligatoirement avoir un numéro unique !`, 'warn');
-          return;
-        }
+      if (customEstPrioritaire !== undefined) {
+        setEstPrioritaire(customEstPrioritaire);
+        setMotifPriorite(finaleMotifPriorite || '');
       }
 
       // Construction de la cartographie des délais propres à chaque commande / famille
@@ -4086,12 +4148,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               articlesCaissons: [...lignesCaissons],
               articlesPrecadres: [...lignesPrecadres],
               statut: statutPreserve,
-              dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
-              dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
+              dateLivraisonPrevisionnelle: finaleDateTexte,
+              dateLivraisonPrevisionnelleISO: finaleDateISO,
               delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
               datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : d.datesLivraisonCommandes,
-              estPrioritaire: estPrioritaire,
-              motifPriorite: estPrioritaire ? motifPriorite : undefined,
+              estPrioritaire: finaleEstPrioritaire,
+              motifPriorite: finaleEstPrioritaire ? finaleMotifPriorite : undefined,
               estEnPause: estEnPause,
               motifPause: estEnPause ? motifPause : undefined,
               datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
@@ -4124,12 +4186,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           articlesPrecadres: [...lignesPrecadres],
           notes: `Commande enregistrée le ${dateCommande}`,
           statut: estEnPause ? 'EN_PAUSE' : statutCible,
-          dateLivraisonPrevisionnelle: delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle : estimationLivraisonLive.dateLivraisonFormattee,
-          dateLivraisonPrevisionnelleISO: delaiFixeManuellement && dateLivraisonPrevisionnelleISO ? dateLivraisonPrevisionnelleISO : estimationLivraisonLive.dateLivraisonISO,
+          dateLivraisonPrevisionnelle: finaleDateTexte,
+          dateLivraisonPrevisionnelleISO: finaleDateISO,
           delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
           datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : undefined,
-          estPrioritaire: estPrioritaire,
-          motifPriorite: estPrioritaire ? motifPriorite : undefined,
+          estPrioritaire: finaleEstPrioritaire,
+          motifPriorite: finaleEstPrioritaire ? finaleMotifPriorite : undefined,
           estEnPause: estEnPause,
           motifPause: estEnPause ? motifPause : undefined,
           datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
@@ -4143,10 +4205,60 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         if (onDossiersUpdated) onDossiersUpdated();
         showFlashNotification(`✓ Nouveau dossier ${refPrincipal} (${nomClientFinalPropre}) enregistré dans SQLite !`, 'success');
       }
+
+      setShowValidationDelaiModal(false);
     } catch (err: any) {
       console.error('Erreur enregistrement dossier:', err);
       showFlashNotification(`❌ Erreur enregistrement : ${err.message || String(err)}`, 'warn');
       alert(`Erreur lors de l'enregistrement de la commande : ${err.message || String(err)}`);
+    } finally {
+      setIsSavingDossier(false);
+    }
+  };
+
+  // CONFIRMATION INDIVIDUELLE D'UNE COMMANDE AU SEIN DU DOSSIER
+  // Permet de valider et émettre l'OF d'une commande prête SANS attendre le reste du dossier !
+  const handleConfirmerCommandeIndividuelle = async (cmdRef: string) => {
+    try {
+      const refNettoyee = (cmdRef || '').trim();
+      if (!refNettoyee) return;
+
+      showFlashNotification(`⏳ Confirmation et préparation de l'OF pour la commande N° ${refNettoyee}...`, 'info');
+
+      // 1. Sauvegarder l'état actuel du dossier sans blocage
+      await executerSauvegardeDossier('EN_COURS');
+
+      // 2. Marquer la commande comme confirmée individuellement dans le dossier
+      const freshDossiers = await StorageService.getDossiers();
+      const targetId = editingDossierId;
+      const updatedDossiers = freshDossiers.map(d => {
+        const matchesThisDossier = (targetId && d.id === targetId) ||
+          (d.refCommande || '').trim() === refNettoyee ||
+          (d.numCommandeCaisson || '').trim() === refNettoyee ||
+          (d.numCommandeTablier || '').trim() === refNettoyee ||
+          (d.numCommandeMoustiquaire || '').trim() === refNettoyee ||
+          (d.numCommandePrecadre || '').trim() === refNettoyee;
+
+        if (matchesThisDossier) {
+          const currentConfirmees = d.commandesConfirmees || [];
+          const nextConfirmees = Array.from(new Set([...currentConfirmees, refNettoyee]));
+          return {
+            ...d,
+            statut: (d.statut === 'FABRIQUE' || d.statut === 'CLOTURE' || d.statut === 'LIVRE') ? d.statut : ('EN_COURS' as const),
+            commandesConfirmees: nextConfirmees
+          };
+        }
+        return d;
+      });
+      await StorageService.saveDossiers(updatedDossiers);
+      if (onDossiersUpdated) onDossiersUpdated();
+
+      // 3. Déclencher immédiatement l'optimisation et la génération de l'OF pour cette commande spécifique
+      await handleOptimiserMultiFamillesDossier(refNettoyee);
+      showFlashNotification(`✓ Commande N° ${refNettoyee} confirmée avec succès ! Son Ordre de Fabrication est prêt pour l'atelier sans attendre le reste du dossier.`, 'success');
+    } catch (err: any) {
+      console.error('Erreur confirmation commande individuelle:', err);
+      showFlashNotification(`❌ Erreur lors de la confirmation : ${err.message || String(err)}`, 'warn');
     }
   };
 
@@ -4623,6 +4735,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
+                    onClick={() => appliquerRaccourciLivraison(0)}
+                    className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/50 text-rose-300 rounded font-bold text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
+                    title={`Livraison aujourd'hui (${new Date().toLocaleDateString('fr-FR')})`}
+                  >
+                    <Zap className="w-3 h-3 fill-rose-400" />
+                    <span>Aujourd'hui</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => appliquerRaccourciLivraison(1)}
                     className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
                   >
@@ -4660,6 +4781,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       <span>↺ Revenir au Calcul Auto</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => setShowValidationDelaiModal(true)}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-[11px] transition cursor-pointer flex items-center gap-1 shadow"
+                    title="Ouvrir l'analyse détaillée des volumes par famille et files d'attente atelier"
+                  >
+                    <TrendingUp className="w-3 h-3 stroke-[2.5]" />
+                    <span>Détail Charge & Délais</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -4792,9 +4922,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       </span>
                     </div>
 
-                    <div className="text-[9px] text-slate-500 flex justify-between items-center border-t border-slate-800/60 pt-1 mt-0.5">
-                      <span>{det?.piecesCommande || 0} pcs commande</span>
-                      <span>{det?.piecesEnFileAttente || 0} pcs en file</span>
+                    <div className="text-[10px] text-slate-400 border-t border-slate-800/80 pt-1 mt-0.5 space-y-0.5">
+                      <div className="flex justify-between items-center text-[9px]">
+                        <span className="text-slate-400">{det?.piecesCommande || 0} cmd + {det?.piecesEnFileAttente || 0} file</span>
+                        <span className="font-bold text-amber-300 font-mono">= {(det?.piecesCommande || 0) + (det?.piecesEnFileAttente || 0)} pcs</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[9px] text-slate-400">
+                        <span>Cadence : {det?.capaciteJournaliere || 20} pcs/j</span>
+                        <span className="font-mono text-sky-400 font-bold">{det?.joursOuvresRequis || 0}j ouvrés</span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -7546,48 +7682,40 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </table>
               </div>
 
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT OU VERROUILLAGE ENREGISTREMENT */}
+              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT & CONFIRMATION COMMANDE DIRECTE */}
               {lignesCaissons.length > 0 && (
-                !isCommandeEnregistree ? (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                      <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
-                        <span className="text-amber-300">🔒 Optimisation verrouillée :</span>
-                        <span className="text-slate-300">Enregistrez d'abord la commande pour débloquer l'optimisation.</span>
-                      </div>
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
+                      <span>Découpe Caissons &amp; Sous-Faces :</span>
+                      <span className="text-[10px] text-amber-300 font-mono bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30">
+                        {lignesCaissons.length} caisson(s) CT • {lignesCaissons.filter(c => c.avecSousFace).length} sous-face(s) SF
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>💾 Enregistrer la Commande</span>
-                    </button>
                   </div>
-                ) : (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                        <span>Optimisation de Découpe :</span>
-                        <span className="text-[10px] text-amber-300 font-mono bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30">
-                          {lignesCaissons.length} caisson(s) CT • {lignesCaissons.filter(c => c.avecSousFace).length} sous-face(s) SF
-                        </span>
-                      </div>
-                    </div>
 
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOptimiserCaissonsEtSousFaces()}
                       className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-emerald-500/20 transition active:scale-95 cursor-pointer"
+                      title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
                       <span>⚡ Optimiser Découpe CT &amp; SF</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>💾 Enregistrer</span>
+                    </button>
                   </div>
-                )
+                </div>
               )}
 
             </div>
@@ -7824,48 +7952,40 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </table>
               </div>
 
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT TABLIERS & VOLETS OU VERROUILLAGE */}
+              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT TABLIERS & VOLETS */}
               {lignesTabliers.length > 0 && (
-                !isCommandeEnregistree ? (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                      <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
-                        <span className="text-amber-300">🔒 Optimisation verrouillée :</span>
-                        <span className="text-slate-300">Enregistrez d'abord la commande pour débloquer l'optimisation.</span>
-                      </div>
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
+                      <span>Découpe Volets &amp; Tabliers :</span>
+                      <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
+                        {lignesTabliers.length} tablier(s) • {lignesTabliers.filter(t => t.avecLameFinale).length} lame(s) finale(s) • {lignesTabliers.filter(t => t.typeFabrication === 'VOLET_COMPLET').length * 2} coulisse(s)
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>💾 Enregistrer la Commande</span>
-                    </button>
                   </div>
-                ) : (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
-                      <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                        <span>Optimisation de Découpe Volets :</span>
-                        <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
-                          {lignesTabliers.length} tablier(s) • {lignesTabliers.filter(t => t.avecLameFinale).length} lame(s) finale(s) • {lignesTabliers.filter(t => t.typeFabrication === 'VOLET_COMPLET').length * 2} coulisse(s)
-                        </span>
-                      </div>
-                    </div>
 
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOptimiserTabliersEtVolets()}
                       className="px-4 py-2 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-sky-500/20 transition active:scale-95 cursor-pointer"
+                      title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
                       <span>⚡ Optimiser Découpe Tabliers &amp; Volets</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>💾 Enregistrer</span>
+                    </button>
                   </div>
-                )
+                </div>
               )}
             </div>
           )}
@@ -8124,57 +8244,49 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </table>
               </div>
 
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉCOUPE MOUSTIQUAIRES OU VERROUILLAGE */}
+              {/* BARRE D'ACTIONS : OPTIMISATION DÉCOUPE MOUSTIQUAIRES */}
               {lignesMoustiquaires.length > 0 && (
-                !isCommandeEnregistree ? (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                      <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
-                        <span className="text-amber-300">🔒 Optimisation verrouillée :</span>
-                        <span className="text-slate-300">Enregistrez d'abord la commande pour débloquer l'optimisation.</span>
-                      </div>
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
+                      <span>Découpe Moustiquaires :</span>
+                      <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
+                        {lignesMoustiquaires.length} moustiquaire(s)
+                        {lignesMoustiquaires.some(m => m.typeFabrication !== 'PROFILES_SEULS') && (
+                          <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length} maille(s)</>
+                        )}
+                        {lignesMoustiquaires.some(m => m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
+                          <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE').length} cadre(s)</>
+                        )}
+                        {lignesMoustiquaires.some(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
+                          <> • {lignesMoustiquaires.filter(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE').length} barre(s) inf.</>
+                        )}
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>💾 Enregistrer la Commande</span>
-                    </button>
                   </div>
-                ) : (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
-                      <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                        <span>Optimisation de Découpe Moustiquaires :</span>
-                        <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
-                          {lignesMoustiquaires.length} moustiquaire(s)
-                          {lignesMoustiquaires.some(m => m.typeFabrication !== 'PROFILES_SEULS') && (
-                            <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length} maille(s)</>
-                          )}
-                          {lignesMoustiquaires.some(m => m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
-                            <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE').length} cadre(s)</>
-                          )}
-                          {lignesMoustiquaires.some(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
-                            <> • {lignesMoustiquaires.filter(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE').length} barre(s) inf.</>
-                          )}
-                        </span>
-                      </div>
-                    </div>
 
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOptimiserMoustiquaires()}
                       className="px-4 py-2 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-sky-500/20 transition active:scale-95 cursor-pointer"
+                      title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
                       <span>⚡ Optimiser Découpe Moustiquaires (Maille &amp; Profilés)</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>💾 Enregistrer</span>
+                    </button>
                   </div>
-                )
+                </div>
               )}
 
               {/* MODAL RÉSULTATS OPTIMISATION MOUSTIQUAIRE COMPLÈTE (MAILLE + PROFILÉS ALU) */}
@@ -8709,48 +8821,40 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </table>
               </div>
 
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT PRÉCADRES OU VERROUILLAGE */}
+              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT PRÉCADRES */}
               {lignesPrecadres.length > 0 && (
-                !isCommandeEnregistree ? (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                      <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
-                        <span className="text-amber-300">🔒 Optimisation verrouillée :</span>
-                        <span className="text-slate-300">Enregistrez d'abord la commande pour débloquer l'optimisation.</span>
-                      </div>
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-purple-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse"></span>
+                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
+                      <span>Découpe Précadres :</span>
+                      <span className="text-[10px] text-purple-300 font-mono bg-purple-950/60 px-2 py-0.5 rounded border border-purple-500/30">
+                        {lignesPrecadres.length} précadre(s) • {lignesPrecadres.reduce((s, p) => s + p.quantite * 2, 0)} montants verticaux
+                      </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-4 h-4" />
-                      <span>💾 Enregistrer la Commande</span>
-                    </button>
                   </div>
-                ) : (
-                  <div className="bg-slate-900/90 p-3.5 rounded-xl border border-purple-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse"></span>
-                      <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                        <span>Optimisation de Découpe Précadres :</span>
-                        <span className="text-[10px] text-purple-300 font-mono bg-purple-950/60 px-2 py-0.5 rounded border border-purple-500/30">
-                          {lignesPrecadres.length} précadre(s) • {lignesPrecadres.reduce((s, p) => s + p.quantite * 2, 0)} montants verticaux
-                        </span>
-                      </div>
-                    </div>
 
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleOptimiserPrecadres()}
                       className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-purple-500/20 transition active:scale-95 cursor-pointer"
+                      title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
                       <span>⚡ Optimiser Découpe Précadres</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>💾 Enregistrer</span>
+                    </button>
                   </div>
-                )
+                </div>
               )}
             </div>
           )}
@@ -8925,6 +9029,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         <span>Commande N° {cmd.ref}</span>
                       </span>
 
+                      {cmd.estConfirmee ? (
+                        <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 shadow-sm">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>Confirmée • Atelier</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1">
+                          <span>⏳ En préparation</span>
+                        </span>
+                      )}
+
                       {isCurrentlyActive && (
                         <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500 text-slate-950">
                           En cours de saisie
@@ -8933,6 +9048,42 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* BOUTON CONFIRMATION INDIVIDUELLE OU RÉ-IMPRESSION OF */}
+                      {cmd.estConfirmee ? (
+                        <button
+                          type="button"
+                          onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
+                          className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                          title={`Ouvrir ou ré-imprimer l'Ordre de Fabrication pour la commande N° ${cmd.ref}`}
+                        >
+                          <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                          <span>🖨️ Ouvrir / Ré-imprimer OF</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmerCommandeIndividuelle(cmd.ref)}
+                          disabled={cmd.total === 0}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-40 text-slate-950 font-black rounded-lg text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/20 transition active:scale-95 cursor-pointer"
+                          title={`Confirmer la commande N° ${cmd.ref} et émettre son OF sans attendre les autres commandes`}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                          <span>✅ Confirmer (Émettre OF)</span>
+                        </button>
+                      )}
+
+                      {/* Optimisation débit de cette commande */}
+                      <button
+                        type="button"
+                        onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
+                        disabled={cmd.total === 0}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 shadow transition active:scale-95 cursor-pointer"
+                        title={`Calculer l'optimisation de découpe pour la commande N° ${cmd.ref}`}
+                      >
+                        <Scissors className="w-3.5 h-3.5 text-amber-400" />
+                        <span>⚡ Plans de Découpe</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -8945,18 +9096,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow transition cursor-pointer"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
-                        <span>Modifier / Compléter</span>
-                      </button>
-
-                      {/* Ce bouton concerne UNIQUEMENT cette commande associée */}
-                      <button
-                        type="button"
-                        onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow transition cursor-pointer"
-                        title={`Optimiser uniquement les articles de la commande N° ${cmd.ref}`}
-                      >
-                        <Scissors className="w-3.5 h-3.5" />
-                        <span>⚡ Optimiser cette Commande (N° {cmd.ref})</span>
+                        <span>Modifier</span>
                       </button>
 
                       <button
@@ -9429,6 +9569,35 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         params={paramsMaille}
         onSave={handleSaveParamsMaille}
       />
+
+      {/* ========================================================================= */}
+      {/* 12. MODAL VALIDATION DU DÉLAI DE LIVRAISON LORS DE L'ENREGISTREMENT       */}
+      {/* ========================================================================= */}
+      {showValidationDelaiModal && (
+        <ValidationDelaiCommandeModal
+          isOpen={showValidationDelaiModal}
+          onClose={() => setShowValidationDelaiModal(false)}
+          onConfirmSave={async (dateFinaleISO, dateFinaleTexte, estPrio, motifPrio) => {
+            await executerSauvegardeDossier(
+              statutCiblePourEnregistrement,
+              dateFinaleISO,
+              dateFinaleTexte,
+              estPrio,
+              motifPrio
+            );
+          }}
+          refCommande={getActiveNumCommande() || numCommande || 'CMD'}
+          nomClient={clientDeMonClient.trim() || 'CLIENT'}
+          donneurOrdre={monClient}
+          dateCommande={dateCommande}
+          estimationGlobale={estimationLivraisonLive}
+          isSaving={isSavingDossier}
+          isUpdate={!!editingDossierId}
+          initialEstPrioritaire={estPrioritaire}
+          initialMotifPriorite={motifPriorite}
+          initialDateLivraisonISO={dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO}
+        />
+      )}
     </div>
   );
 };

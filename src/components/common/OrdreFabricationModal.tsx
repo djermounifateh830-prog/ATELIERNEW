@@ -489,6 +489,30 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
+
+    // Calcul du volume réel de pièces de cet OF d'après les lignes de coupe ou moustiquaires
+    let totalPiecesDuOF = 0;
+    if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
+      totalPiecesDuOF = lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+    } else if (Array.isArray(sections) && sections.length > 0) {
+      sections.forEach(s => {
+        if (s.resultat?.barres_neuves) {
+          s.resultat.barres_neuves.forEach(b => {
+            totalPiecesDuOF += Array.isArray(b.pieces) ? b.pieces.length : 1;
+          });
+        }
+        if (s.resultat?.chutes_utilisees) {
+          s.resultat.chutes_utilisees.forEach(c => {
+            totalPiecesDuOF += Array.isArray(c.pieces) ? c.pieces.length : 1;
+          });
+        }
+      });
+      if (totalPiecesDuOF === 0) {
+        totalPiecesDuOF = sections.reduce((sum, s) => sum + (s.resultat?.total_barres_neuves || 1) * 3, 0);
+      }
+    }
+    const nbPiecesOFReelles = Math.max(1, totalPiecesDuOF);
+
     StorageService.getSuivisOF().then(ofs => {
       setAllOfsState(ofs);
       // Détection de la famille active
@@ -502,6 +526,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         setEmittedSequence(match.numeroEmission);
         setEmittedCode(match.codeOF || `OF-${String(match.numeroEmission).padStart(3, '0')}`);
         setOfEmis(true);
+        if (!match.nombrePieces) match.nombrePieces = nbPiecesOFReelles;
         setMatchedOf(match);
         if (match.estPrioritaire) setEstPrioritaire(true);
         if (match.motifPriorite) setMotifPriorite(match.motifPriorite);
@@ -530,6 +555,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           titreSection: titreProduit || '',
           totalBarresNeuvesPrevu: 0,
           totalChutesUtiliseesPrevu: 0,
+          nombrePieces: nbPiecesOFReelles,
           lignesRetour: [],
           estPrioritaire
         };
@@ -662,7 +688,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         groupesBarresNeuves,
         groupesChutesRecup
       };
-    });
+    }).filter(sec => (sec.groupesBarresNeuves && sec.groupesBarresNeuves.length > 0) || (sec.groupesChutesRecup && sec.groupesChutesRecup.length > 0));
   }, [sections, resultat, article, titreProduit, coloris, famille]);
 
   // Regroupement par Familles
@@ -790,6 +816,21 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   const totalStockableMm = listeSections.reduce((s, sec) => s + (sec.resultat.total_chute_mm || 0), 0);
   const totalDechetMm = listeSections.reduce((s, sec) => s + (sec.resultat.total_dechet_mm || 0), 0);
   const totalAccessoiresToutesSections = syntheseAccessoires.reduce((s, acc) => s + acc.quantiteRequise, 0);
+  const totalPiecesToutesSections = useMemo(() => {
+    if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
+      return lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+    }
+    let sumPieces = 0;
+    listeSections.forEach(sec => {
+      sec.resultat?.barres_neuves?.forEach(b => {
+        sumPieces += Array.isArray(b.pieces) ? b.pieces.length : 1;
+      });
+      sec.resultat?.chutes_utilisees?.forEach(c => {
+        sumPieces += Array.isArray(c.pieces) ? c.pieces.length : 1;
+      });
+    });
+    return sumPieces > 0 ? sumPieces : totalBarresNeuvesToutesSections * 3;
+  }, [listeSections, lignesMoustiquaires, totalBarresNeuvesToutesSections]);
 
   if (!isOpen) return null;
   if (listeSections.length === 0) return null;
@@ -804,6 +845,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   /* ─── RENDU HTML POUR EXPORT / TÉLÉCHARGEMENT ─────────────────────────────── */
   const buildSectionHTML = (sec: SectionTraitee, index?: number, total?: number) => {
+    if (sec.groupesBarresNeuves.length === 0 && sec.groupesChutesRecup.length === 0) {
+      return '';
+    }
     const { familleLabel, profileDesignation } = separerFamilleEtProfile(sec);
     const conditionsHtml = sec.titre.toUpperCase().includes('CAISSON') ? [
       labelFinition(sec.avecPeinture),
@@ -883,17 +927,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     }).join('');
 
     return `
-    <div class="section-container" style="page-break-inside:auto;break-inside:auto;margin-bottom:14px;">
-      <div style="background:#fff;border:2.5px solid #000;color:#000;padding:8px 14px;margin-bottom:8px;border-radius:6px;display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;text-align:center;page-break-after:avoid;break-after:avoid;page-break-inside:avoid;break-inside:avoid;">
-        <span style="background:#fff;color:#000;font-weight:900;font-size:20px;padding:4px 14px;border-radius:4px;text-transform:uppercase;border:2.5px solid #000;letter-spacing:0.5px;">
+    <div class="section-container" style="page-break-inside:auto;break-inside:auto;margin-bottom:12px;">
+      <div style="background:#fff;border:2.5px solid #000;color:#000;padding:6px 12px;margin-bottom:6px;border-radius:6px;display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;text-align:center;page-break-after:avoid;break-after:avoid;page-break-inside:avoid;break-inside:avoid;">
+        <span style="background:#fff;color:#000;font-weight:900;font-size:18px;padding:3px 12px;border-radius:4px;text-transform:uppercase;border:2px solid #000;letter-spacing:0.5px;">
           ${familleLabel}
         </span>
-        <span style="color:#000;font-size:28px;font-weight:900;">&rarr;</span>
-        <strong style="font-size:36px;font-weight:900;color:#000;font-family:Consolas,monospace;text-transform:uppercase;letter-spacing:2px;background:#fff;padding:4px 18px;border:3px solid #000;border-radius:6px;">
+        <span style="color:#000;font-size:24px;font-weight:900;">&rarr;</span>
+        <strong style="font-size:28px;font-weight:900;color:#000;font-family:Consolas,monospace;text-transform:uppercase;letter-spacing:1px;background:#fff;padding:3px 14px;border:2.5px solid #000;border-radius:6px;">
           ${profileDesignation}
         </strong>
-        ${total !== undefined && index !== undefined ? `<span style="font-size:14px;font-weight:900;background:#000;color:#fff;padding:4px 12px;border-radius:4px;font-family:Consolas,monospace;letter-spacing:0.5px;">PROFILÉ ${index + 1} / ${total}</span>` : ''}
-        ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:13px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:4px 10px;border-radius:4px;">${c}</span>`).join(' ') : ''}
+        ${total !== undefined && index !== undefined ? `<span style="font-size:13px;font-weight:900;background:#000;color:#fff;padding:3px 10px;border-radius:4px;font-family:Consolas,monospace;letter-spacing:0.5px;">PROFILÉ ${index + 1} / ${total}</span>` : ''}
+        ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:12px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:3px 8px;border-radius:4px;">${c}</span>`).join(' ') : ''}
       </div>
       ${sec.groupesBarresNeuves.length > 0 ? `
       <div style="font-size:14px;font-weight:900;margin:6px 0 4px 0;text-align:center;text-transform:uppercase;color:#000;page-break-after:avoid;break-after:avoid;page-break-inside:avoid;break-inside:avoid;">
@@ -1086,23 +1130,32 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     .print-doc-table > tfoot { display: table-footer-group !important; }
     .print-doc-table > tfoot > tr > td { border: none !important; padding: 0 !important; margin: 0 !important; background: #fff !important; }
     .print-footer-fixed {
-      display: flex !important;
-      flex-direction: row !important;
-      flex-wrap: nowrap !important;
-      white-space: nowrap !important;
+      display: block !important;
       width: 100% !important;
-      height: 8mm !important;
       border-top: 2px solid #000 !important;
-      padding: 1.5mm 4mm 0 4mm !important;
+      padding: 2mm 3mm 1mm 3mm !important;
       margin-top: 2mm !important;
-      font-size: 10pt !important;
-      font-weight: 800 !important;
       color: #000 !important;
       background: #fff !important;
-      justify-content: space-between !important;
-      align-items: center !important;
       font-family: Arial, sans-serif !important;
       box-sizing: border-box !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .print-footer-fixed .footer-line-1 {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: baseline !important;
+      border-bottom: 1px solid #ccc !important;
+      padding-bottom: 1.5mm !important;
+      margin-bottom: 1.5mm !important;
+    }
+    .print-footer-fixed .footer-line-2 {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      font-size: 8.5pt !important;
+      font-weight: 700 !important;
     }
     .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; border-bottom:3px solid #000; padding-bottom:6px; }
     .header-left h1 { font-size:15px; font-weight:900; margin:0 0 4px 0; text-transform:uppercase; color:#000; letter-spacing:0.5px; }
@@ -1250,18 +1303,36 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <tfoot>
     <tr>
       <td>
-        <!-- PIED DE PAGE IMPRESSION (MENTION CLIENT, N° COMMANDE, LIVRAISON, N° DE PAGE) SUR UNE SEULE LIGNE -->
+        <!-- PIED DE PAGE IMPRESSION (CLIENT COMPLET SANS TRONCATURE SUR LIGNE 1, SUIVI TECHNIQUE SUR LIGNE 2) -->
         <div class="print-footer-fixed">
-          <div style="display:flex;gap:10px;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38%;flex-shrink:1;">
-            <span style="border:1.5px solid #000;padding:1px 6px;border-radius:3px;font-family:Consolas,monospace;font-size:11px;font-weight:900;">${currentCodeOFAffiche} (#${currentSequenceNum})</span>
-            <span><strong>CLIENT :</strong> ${clientAffiche} ${donneurOrdre ? `(${donneurOrdre})` : ''}</span>
+          <div class="footer-line-1">
+            <div style="font-size:12px;color:#000;flex:1;margin-right:12px;">
+              <span style="font-size:11px;font-weight:bold;color:#444;text-transform:uppercase;margin-right:4px;">CLIENT :</span>
+              <strong style="font-size:13px;font-weight:900;color:#000;letter-spacing:-0.2px;">${clientAffiche}</strong>
+              ${donneurOrdre ? `<span style="font-size:11px;color:#555;font-weight:bold;margin-left:6px;">(Donneur d'Ordre : ${donneurOrdre})</span>` : ''}
+            </div>
+            <div style="flex-shrink:0;text-align:right;">
+              <span style="font-size:11px;font-weight:bold;color:#444;text-transform:uppercase;margin-right:4px;">COMMANDE N° :</span>
+              <span style="font-family:Consolas,monospace;font-size:13px;font-weight:900;border:1.5px solid #000;padding:2px 8px;border-radius:4px;background:#fff;display:inline-block;">${cmdAffichee}</span>
+            </div>
           </div>
-          <div style="white-space:nowrap;flex-shrink:0;padding:0 8px;"><strong>COMMANDE N° :</strong> <span style="font-family:Consolas,monospace;">${cmdAffichee}</span></div>
-          <div style="white-space:nowrap;flex-shrink:0;padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};font-family:Consolas,monospace;font-size:11px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
-          <div style="white-space:nowrap;flex-shrink:0;">
-            <span style="font-family:Consolas,monospace;font-weight:900;border:1.5px solid #000;padding:1px 8px;border-radius:3px;background:#fff;font-size:11px;">
-              ${currentCodeOFAffiche} • ${listeSections.length > 0 ? `${listeSections.length} Profilé(s)` : 'Fiche Atelier'}
-            </span>
+          <div class="footer-line-2">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="border:1.5px solid #000;padding:1px 6px;border-radius:3px;background:#000;color:#fff;font-family:Consolas,monospace;font-size:11px;font-weight:900;">
+                ${currentCodeOFAffiche} (#${currentSequenceNum})
+              </span>
+              <span style="color:#222;font-size:11px;">
+                ${listeSections.length > 0 ? `${listeSections.length} profilé(s) à débiter` : 'Ordre de Fabrication Atelier'}
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="padding:2px 8px;border:1.5px solid #000;border-radius:3px;background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};font-family:Consolas,monospace;font-size:11px;font-weight:900;">
+                ${dateLivraisonPrevisionnelleAffichee}
+              </span>
+              <span style="font-family:Consolas,monospace;font-weight:900;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">
+                3M ALUMINIUM ATELIER
+              </span>
+            </div>
           </div>
         </div>
       </td>
@@ -1485,6 +1556,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       lignesRetour,
       totalBarresNeuvesPrevu: totalBarresNeuvesToutesSections,
       totalChutesUtiliseesPrevu: totalChutesRecycleesToutesSections,
+      nombrePieces: Math.max(1, totalPiecesToutesSections),
       chutesReservees,
       barresReservees,
       chutesMailleReservees,
@@ -1552,6 +1624,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   /** Rendu des tables de coupes pour une section */
   const renderSectionCuttingTables = (sec: SectionTraitee, sIdx: number) => {
+    if (sec.groupesBarresNeuves.length === 0 && sec.groupesChutesRecup.length === 0) {
+      return null;
+    }
+
     const conditionsParts: string[] = [];
     const isCaissonHeader = sec.titre.toUpperCase().includes('CAISSON');
     if (isCaissonHeader) {
@@ -1573,29 +1649,31 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     return (
       <div key={sIdx} className="space-y-3 of-section-container pt-2">
         {/* Titre du profilé - TRÈS GRAND, VISIBLE, CENTRÉ, FOND BLANC ET BORDURE NOIRE NETTE */}
-        <div className="bg-white border-[2.5px] border-black text-black p-3 sm:p-4 rounded-xl flex items-center justify-center gap-3 sm:gap-4 flex-wrap text-center of-keep-with-next">
-          <span className="bg-white text-black font-black text-base sm:text-xl px-4 py-2 rounded-lg uppercase tracking-wider border-2 border-black">
-            {familleLabel}
-          </span>
-          <span className="text-black text-2xl sm:text-3xl font-black">→</span>
-          <span className="text-2xl sm:text-4xl lg:text-5xl font-black text-black font-mono tracking-wider uppercase bg-white px-5 py-2 rounded-xl border-[3px] border-black">
-            {profileDesignation}
-          </span>
-          <span className="font-mono font-black text-xs sm:text-base px-3.5 py-1.5 rounded-lg border-2 border-black bg-black text-white shrink-0 tracking-wider">
-            PROFILÉ {profileNum} / {totalProfiles}
-          </span>
-          {conditionsParts.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {conditionsParts.map((c, i) => (
-                <span
-                  key={i}
-                  className="text-xs sm:text-sm font-black px-3 py-1 rounded border-2 border-black bg-white text-black"
-                >
-                  {c}
-                </span>
-              ))}
-            </div>
-          )}
+        <div className="of-section-header-block of-keep-with-next">
+          <div className="bg-white border-[2.5px] border-black text-black p-3 sm:p-4 rounded-xl flex items-center justify-center gap-3 sm:gap-4 flex-wrap text-center">
+            <span className="bg-white text-black font-black text-base sm:text-xl px-4 py-2 rounded-lg uppercase tracking-wider border-2 border-black">
+              {familleLabel}
+            </span>
+            <span className="text-black text-2xl sm:text-3xl font-black">→</span>
+            <span className="text-2xl sm:text-4xl lg:text-5xl font-black text-black font-mono tracking-wider uppercase bg-white px-5 py-2 rounded-xl border-[3px] border-black">
+              {profileDesignation}
+            </span>
+            <span className="font-mono font-black text-xs sm:text-base px-3.5 py-1.5 rounded-lg border-2 border-black bg-black text-white shrink-0 tracking-wider">
+              PROFILÉ {profileNum} / {totalProfiles}
+            </span>
+            {conditionsParts.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {conditionsParts.map((c, i) => (
+                  <span
+                    key={i}
+                    className="text-xs sm:text-sm font-black px-3 py-1 rounded border-2 border-black bg-white text-black"
+                  >
+                    {c}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Coupes sur Barres Neuves */}
@@ -1606,7 +1684,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 COUPES SUR BARRES NEUVES ({sec.resultat.total_barres_neuves} barre(s) — Rendement : {sec.resultat.taux_rendement}%)
               </span>
             </div>
-            <div className="border-[3px] border-black overflow-hidden rounded-lg shadow-sm">
+            <div className="border-[3px] border-black overflow-hidden print:overflow-visible rounded-lg shadow-sm">
               <table className="w-full text-left text-sm border-collapse table-fixed">
                 <thead className="bg-white text-black font-black border-b-[3px] border-black text-sm sm:text-base">
                   <tr>
@@ -1701,7 +1779,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 COUPES SUR CHUTES DU STOCK ({sec.resultat.total_chutes_recyclees} chute(s))
               </span>
             </div>
-            <div className="border-[3px] border-black overflow-hidden rounded-lg shadow-sm">
+            <div className="border-[3px] border-black overflow-hidden print:overflow-visible rounded-lg shadow-sm">
               <table className="w-full text-left text-sm border-collapse table-fixed">
                 <thead className="bg-white text-black font-black border-b-[3px] border-black text-sm sm:text-base">
                   <tr>
@@ -1811,12 +1889,13 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       lignesRetour: [],
       totalBarresNeuvesPrevu: totalBarresNeuvesToutesSections,
       totalChutesUtiliseesPrevu: totalChutesRecycleesToutesSections,
+      nombrePieces: Math.max(1, totalPiecesToutesSections),
       estPrioritaire,
       motifPriorite,
       dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee,
       dateLivraisonPrevisionnelleISO: dateLivraisonISO
     };
-  }, [matchedOf, refCommande, currentSequenceNum, currentCodeOFAffiche, nomClient, donneurOrdre, agenceInfo.nom, famille, sections, lignesMoustiquaires, titreProduit, ofEmis, dateCommande, totalBarresNeuvesToutesSections, totalChutesRecycleesToutesSections, estPrioritaire, motifPriorite, dateLivraisonPrevisionnelleAffichee, dateLivraisonISO]);
+  }, [matchedOf, refCommande, currentSequenceNum, currentCodeOFAffiche, nomClient, donneurOrdre, agenceInfo.nom, famille, sections, lignesMoustiquaires, titreProduit, ofEmis, dateCommande, totalBarresNeuvesToutesSections, totalChutesRecycleesToutesSections, totalPiecesToutesSections, estPrioritaire, motifPriorite, dateLivraisonPrevisionnelleAffichee, dateLivraisonISO]);
 
   const handleDelaiSaved = (updatedOF: SuiviOF) => {
     setEstPrioritaire(!!updatedOF.estPrioritaire);
@@ -1836,42 +1915,92 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 10mm 8mm 14mm 8mm;
+            margin: 8mm 7mm 8mm 7mm;
             @top-right {
               content: "${currentCodeOFAffiche} — PAGE " counter(page) " / " counter(pages);
               font-family: Consolas, "Courier New", monospace;
-              font-size: 9pt;
+              font-size: 8.5pt;
               font-weight: 800;
               color: #000000;
             }
             @bottom-right {
               content: "PAGE " counter(page) " / " counter(pages);
               font-family: Consolas, "Courier New", monospace;
-              font-size: 11pt;
+              font-size: 9.5pt;
               font-weight: 900;
               color: #000000;
             }
             @bottom-left {
               content: "${currentCodeOFAffiche} (#${currentSequenceNum}) • COMMANDE N° ${cmdAffichee} • ${clientAffiche}";
               font-family: Consolas, "Courier New", monospace;
-              font-size: 8.5pt;
+              font-size: 8pt;
               font-weight: 700;
               color: #222222;
             }
           }
           .of-partie-break {
             ${optimiserImpressionAntiPagesBlanches
-              ? `page-break-before: auto !important;
+              ? `page-break-before: always !important;
+                 break-before: page !important;
+                 margin-top: 0 !important;
+                 padding-top: 0 !important;`
+              : `page-break-before: auto !important;
                  break-before: auto !important;
                  margin-top: 14px !important;
-                 padding-top: 10px !important;`
-              : `page-break-before: always !important;
-                 break-before: page !important;`}
+                 padding-top: 10px !important;`}
+          }
+          .of-partie-header {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            padding: 8px 12px !important;
+            margin-bottom: 6px !important;
           }
           .of-section-container {
             page-break-inside: auto !important;
             break-inside: auto !important;
-            margin-bottom: 12px !important;
+            margin-bottom: 10px !important;
+          }
+          .of-section-header-block {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            margin-bottom: 4px !important;
+          }
+          .of-section-header-block > div {
+            padding: 4px 8px !important;
+            border-width: 2px !important;
+            gap: 8px !important;
+          }
+          .of-section-header-block strong,
+          .of-section-header-block .font-mono {
+            font-size: 18pt !important;
+            padding: 2px 10px !important;
+            border-width: 2px !important;
+            line-height: 1.2 !important;
+          }
+          .of-section-header-block span {
+            line-height: 1.2 !important;
+          }
+          .of-section-container table {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
+            margin-bottom: 8px !important;
+          }
+          .of-section-container thead {
+            display: table-header-group !important;
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          .of-section-container tbody {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
+          }
+          .of-avoid-break, .of-prep-block, .of-section-compact {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .of-keep-with-next, h1, h2, h3, h4, .keep-with-next {
             page-break-after: avoid !important;
@@ -1883,8 +2012,14 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
+          /* Empêcher les conteneurs overflow-hidden de bloquer la pagination des tableaux */
+          .overflow-hidden, [class*="overflow-hidden"], .of-table-wrapper {
+            overflow: visible !important;
+            border-radius: 0 !important;
+          }
           .print-doc-table {
             width: 100% !important;
+            height: auto !important;
             border-collapse: collapse !important;
             border: none !important;
             margin: 0 !important;
@@ -1895,9 +2030,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             padding: 0 !important;
             margin: 0 !important;
             background: #ffffff !important;
+            height: auto !important;
           }
           .print-doc-table > tfoot {
             display: table-footer-group !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .print-doc-table > tfoot > tr > td {
             border: none !important;
@@ -1906,22 +2044,35 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             background: #ffffff !important;
           }
           .print-footer-bar {
-            display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: nowrap !important;
-            white-space: nowrap !important;
+            display: block !important;
             width: 100% !important;
-            border-top: 2px solid #000000 !important;
-            padding: 2mm 2mm 0 2mm !important;
-            margin-top: 2mm !important;
-            font-size: 10pt !important;
-            font-weight: 800 !important;
+            border-top: 1.5px solid #000000 !important;
+            padding: 1.5mm 2mm 1mm 2mm !important;
+            margin: 0 !important;
+            font-size: 8.5pt !important;
             color: #000000 !important;
             background: #ffffff !important;
-            justify-content: space-between !important;
-            align-items: center !important;
             box-sizing: border-box !important;
             font-family: Arial, Helvetica, sans-serif !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .print-footer-bar .footer-line-1 {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: baseline !important;
+            border-bottom: 1px solid #cccccc !important;
+            padding-bottom: 1mm !important;
+            margin-bottom: 1mm !important;
+            width: 100% !important;
+          }
+          .print-footer-bar .footer-line-2 {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            width: 100% !important;
+            font-size: 8pt !important;
+            font-weight: 700 !important;
           }
           html, body {
             height: auto !important;
@@ -2096,11 +2247,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   : 'bg-white text-slate-700 border-black hover:bg-slate-50'
               }`}
               title={optimiserImpressionAntiPagesBlanches 
-                ? "Mode Anti-pages blanches ACTIF : élimine les sauts de page vides et regroupe les débits pour économiser le papier"
-                : "Mode Standard : saut de page strict entre Fiche Magasin et Fiche Débit"}
+                ? "Fiches Dédiées (Recommandé Atelier) : Fiche Magasin nette en Page 1, Fiche Découpe Atelier en Page 2 sans aucune page blanche"
+                : "Mode Continu : enchaîne Fiche 1 et Fiche 2"}
             >
               <FileText className="w-3.5 h-3.5" />
-              <span>{optimiserImpressionAntiPagesBlanches ? 'Anti-pages blanches : Actif ✓' : 'Anti-pages blanches : Inactif'}</span>
+              <span>{optimiserImpressionAntiPagesBlanches ? 'Fiches Dédiées Magasin/Scies ✓' : 'Fiches Enchaînées'}</span>
             </button>
             <button onClick={handleDownloadHTML} className="px-3 py-1.5 bg-white hover:bg-slate-100 text-black border-2 border-black text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer">
               <Download className="w-3.5 h-3.5 text-black" /><span>Exporter HTML</span>
@@ -2261,11 +2412,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
                     {/* TABLEAU A : BARRES NEUVES DU MAGASIN */}
                     {matieresNeuves.length > 0 && (
-                      <div className="space-y-1.5">
+                      <div className="space-y-1.5 of-prep-block of-avoid-break">
                         <div className="text-xs sm:text-sm font-black uppercase text-black text-center of-keep-with-next">
                           A. Barres Neuves à prélever du Stock Magasin
                         </div>
-                        <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
+                        <div className="border-[2.5px] border-black overflow-hidden print:overflow-visible rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
                             <colgroup>
                               <col className="w-[52%]" />
@@ -2300,11 +2451,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
                     {/* TABLEAU B : CHUTES DU STOCK À DÉSTOCKER */}
                     {chutesADestoquer.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
+                      <div className="space-y-1.5 pt-1 of-prep-block of-avoid-break">
                         <div className="text-xs sm:text-sm font-black uppercase text-black text-center of-keep-with-next">
                           B. Chutes Récupérées à Déstocker des Casiers
                         </div>
-                        <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
+                        <div className="border-[2.5px] border-black overflow-hidden print:overflow-visible rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
                             <colgroup>
                               <col className="w-[52%]" />
@@ -2339,11 +2490,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
                     {/* TABLEAU C : ACCESSOIRES À PRÉPARER */}
                     {accessoiresFiltres.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
+                      <div className="space-y-1.5 pt-1 of-prep-block of-avoid-break">
                         <div className="text-xs sm:text-sm font-black uppercase text-black text-center of-keep-with-next">
                           C. Accessoires à Préparer
                         </div>
-                        <div className="border-[2.5px] border-black overflow-hidden rounded-lg">
+                        <div className="border-[2.5px] border-black overflow-hidden print:overflow-visible rounded-lg">
                           <table className="w-full text-left text-sm border-collapse table-fixed">
                             <colgroup>
                               <col className="w-[52%]" />
@@ -2387,11 +2538,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
               {/* TABLEAU D : DÉBIT TOILE PLISSÉE / MAILLE MSTQ (MATIÈRE PREMIÈRE) */}
               {lignesMoustiquaires && lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length > 0 && (
-                <div className="space-y-1.5 pt-1 of-section-container">
+                <div className="space-y-1.5 pt-1 of-section-container of-prep-block of-avoid-break">
                   <div className="text-sm sm:text-base font-black uppercase text-black text-center bg-slate-100 border-2 border-black py-1.5 px-3 rounded tracking-wide of-keep-with-next">
                     OPTIMISATION MAILLE MSTQ
                   </div>
-                  <div className="border-2 border-black overflow-hidden rounded">
+                  <div className="border-2 border-black overflow-hidden print:overflow-visible rounded">
                     <table className="w-full text-left text-sm border-collapse table-fixed">
                       <colgroup>
                         <col className="w-[10%]" />
@@ -2448,7 +2599,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             {/* PARTIE 2 : ATELIER SCIES — PLANS D'OPTIMISATION DE DÉCOUPE DES PROFILÉS   */}
             {/* ========================================================================= */}
             <div className={`space-y-4 pt-4 border-t-4 border-black ${hasAnyPreparation ? 'of-partie-break print:mt-0 print:pt-4' : ''}`}>
-              <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center shadow-none of-keep-with-next">
+              <div className="bg-white text-black p-3.5 rounded-lg border-2 border-black text-center shadow-none of-partie-header of-keep-with-next">
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <div className="font-black text-base sm:text-xl uppercase tracking-wider text-black">
                     ✂️ {hasAnyPreparation ? 'FICHE 2 : OPTIMISATION DE DÉCOUPE ATELIER' : 'FICHE 1 : OPTIMISATION DE DÉCOUPE ATELIER'}
@@ -2483,30 +2634,48 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               <tr>
                 <td className="border-none p-0 m-0 bg-transparent">
                   <div className="max-w-4xl mx-auto">
-                    {/* PIED DE PAGE D'IMPRESSION OBLIGATOIRE (CLIENT, N° COMMANDE, N° DE PAGE) SUR UNE SEULE LIGNE */}
-                    <div className="print-footer-bar flex flex-row flex-nowrap items-center justify-between whitespace-nowrap border-t-2 border-black pt-2 px-3 mt-4 text-xs sm:text-sm font-black text-black bg-white">
-                      <div className="flex items-center gap-1.5 shrink min-w-0 truncate">
-                        <span className="font-mono font-black text-xs px-2 py-0.5 border border-black rounded bg-white text-black shrink-0">
-                          {currentCodeOFAffiche} (#{currentSequenceNum})
-                        </span>
-                        <span className="font-bold text-slate-800 shrink-0">CLIENT :</span>
-                        <span className="font-black text-black truncate">{clientAffiche}</span>
-                        {donneurOrdre && <span className="font-semibold text-slate-700 shrink-0">({donneurOrdre})</span>}
+                    {/* PIED DE PAGE D'IMPRESSION SUR 2 LIGNES SANS AUCUNE TRONCATURE DU NOM DU CLIENT */}
+                    <div className="print-footer-bar border-t-2 border-black pt-2 px-3 mt-3 text-xs text-black bg-white">
+                      {/* Ligne 1 : Nom du Client Complet et N° de Commande */}
+                      <div className="footer-line-1 flex items-baseline justify-between gap-3 pb-1 border-b border-slate-300 print:border-black/30">
+                        <div className="flex items-baseline gap-1.5 min-w-0 flex-1">
+                          <span className="font-bold text-slate-700 print:text-black uppercase text-[11px] shrink-0">CLIENT :</span>
+                          <span className="font-black text-black text-xs sm:text-sm tracking-tight break-words">{clientAffiche}</span>
+                          {donneurOrdre && (
+                            <span className="font-semibold text-slate-600 print:text-black text-[11px] shrink-0">
+                              (Donneur d'Ordre : {donneurOrdre})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="font-bold text-slate-700 print:text-black text-[11px] uppercase">COMMANDE N° :</span>
+                          <span className="font-mono font-black text-black text-xs sm:text-sm px-2 py-0.5 bg-slate-100 print:bg-white border border-black rounded">
+                            {cmdAffichee}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0 px-3">
-                        <span className="font-bold text-slate-800">COMMANDE N° :</span>
-                        <span className="font-mono font-black text-black">{cmdAffichee}</span>
-                      </div>
-                      <div className={`flex items-center gap-1.5 shrink-0 px-2 py-0.5 rounded border-2 border-black font-mono font-black text-black text-xs ${
-                        estPrioritaire ? 'bg-rose-200' : 'bg-amber-100'
-                      }`}>
-                        <Clock className="w-3.5 h-3.5 text-black print:hidden" />
-                        <span>{dateLivraisonPrevisionnelleAffichee}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="font-mono font-black text-black border-2 border-black px-2.5 py-0.5 rounded bg-white text-xs">
-                          {currentCodeOFAffiche} • {listeSections.length > 0 ? `${listeSections.length} Profilé(s)` : 'Fiche Atelier'}
-                        </span>
+
+                      {/* Ligne 2 : Séquence OF, Débit profilés, Date prévisionnelle et Signature Atelier */}
+                      <div className="footer-line-2 flex items-center justify-between gap-3 pt-1 text-[11px] font-bold">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-xs px-2 py-0.5 border border-black rounded bg-black text-white shrink-0">
+                            {currentCodeOFAffiche} (#{currentSequenceNum})
+                          </span>
+                          <span className="text-slate-700 print:text-black font-semibold">
+                            {listeSections.length > 0 ? `${listeSections.length} Profilé(s) à débiter` : 'Fiche Atelier'}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded border border-black font-mono font-black text-xs ${
+                            estPrioritaire ? 'bg-rose-200 text-rose-950' : 'bg-amber-100 text-slate-950'
+                          }`}>
+                            <Clock className="w-3 h-3 text-black print:hidden" />
+                            <span>{dateLivraisonPrevisionnelleAffichee}</span>
+                          </div>
+                          <span className="font-mono font-black tracking-wider uppercase text-[10px] text-slate-800 print:text-black">
+                            3M ALUMINIUM ATELIER
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>

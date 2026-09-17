@@ -73,6 +73,11 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
 
   // Raccourcis rapides de date
   const appliquerRaccourci = (joursAjoutes: number) => {
+    if (joursAjoutes === 0) {
+      const aujourdhui = new Date();
+      setDateSelectionnee(DelaisProductionService.toISODateString(aujourdhui));
+      return;
+    }
     const params = DelaisProductionService.getParametres();
     const aujourdhui = new Date();
     const cible = DelaisProductionService.ajouterJoursOuvres(aujourdhui, joursAjoutes, params.joursOuvres);
@@ -86,6 +91,13 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     setEstPrioritaire(false);
     setMotifPriorite('');
   };
+
+  // Calcul du volume et de la cadence pour la famille de cet OF
+  const paramsProd = DelaisProductionService.getParametres();
+  const famKey = (((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) || 'CAISSON') as keyof typeof paramsProd.familles;
+  const configFamille = paramsProd.familles[famKey] || paramsProd.familles.CAISSON;
+  const nbPiecesOF = DelaisProductionService.compterPiecesOF(of);
+  const dateSystemeAujStr = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const handleSave = async () => {
     if (!of || !dateSelectionnee) return;
@@ -189,19 +201,39 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
             </div>
           )}
 
-          {/* Récapitulatif commande & client */}
-          <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <div>
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Client</span>
-              <span className="font-bold text-white text-sm">{of.nomClient || 'Non spécifié'}</span>
+          {/* Récapitulatif commande, client, volume & cadence famille */}
+          <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3.5 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Client</span>
+                <span className="font-bold text-white text-sm">{of.nomClient || 'Non spécifié'}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Famille &amp; Section</span>
+                <span className="font-mono text-slate-200 font-semibold">{of.famille} — {of.titreSection}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Émis le</span>
+                <span className="font-mono text-slate-300">{of.dateEmission}</span>
+              </div>
             </div>
-            <div>
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Famille &amp; Section</span>
-              <span className="font-mono text-slate-200 font-semibold">{of.famille} — {of.titreSection}</span>
-            </div>
-            <div>
-              <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Émis le</span>
-              <span className="font-mono text-slate-300">{of.dateEmission}</span>
+
+            {/* Détail Volume & Cadence de la famille */}
+            <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <div className="flex items-center gap-1.5 text-cyan-300 font-mono">
+                <span className="text-slate-400">Volume calculé :</span>
+                <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/60 font-bold">{nbPiecesOF} pièce(s)</span>
+                <span className="text-slate-500">•</span>
+                <span className="text-slate-400">Cadence atelier :</span>
+                <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-bold">
+                  {configFamille.capaciteJournalierePieces} pcs / jour
+                </span>
+              </div>
+              <div className="text-purple-300 text-[11px] font-mono flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-purple-400" />
+                <span className="text-slate-400">Aujourd'hui :</span>
+                <span className="font-bold capitalize">{dateSystemeAujStr}</span>
+              </div>
             </div>
           </div>
 
