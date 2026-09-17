@@ -450,6 +450,8 @@ export interface SuiviOF {
   numeroEmission?: number;
   /** Code formaté de l'OF pour les opérateurs machine (ex: OF-001, OF-002...) */
   codeOF?: string;
+  /** Identifiant du dossier de commande global rattaché */
+  dossierId?: string;
   /** Référence de la commande (ex: S-A26736) */
   numCommande: string;
   /** Nom du client final */
@@ -460,6 +462,8 @@ export interface SuiviOF {
   famille: FamilleProduit;
   /** Section / désignation article (ex: Cadre MSTQ, CT SOMO 30) */
   titreSection: string;
+  /** Remarques / notes de commande */
+  notes?: string;
   /** État courant de l'OF */
   statut: StatutOF;
   /** Date d'émission (DD/MM/YYYY) */
@@ -603,6 +607,7 @@ export interface EstimationDelaiDetail {
   dateLivraisonPrevue: Date;
   dateLivraisonFormattee: string;     // ex: "MERCREDI 16/09"
   capaciteJournaliere?: number;
+  tempsUnitaireMinutes?: number;
   nbOfsEnCours?: number;
   ofsDetails?: DetailOFEnCours[];
 }

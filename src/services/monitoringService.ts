@@ -77,7 +77,7 @@ export interface LigneCommandeMonitoring {
   donneurOrdre: string;
   dateCommande: string;
   famille: FamilleProduit;
-  statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON';
+  statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON' | 'OF_CLOTURE' | 'FABRIQUE';
   statutBadgeLabel: string;
   typePrecision: string; // Ex: "Caisson 30", "Tablier Lame 43", etc.
   sousTypeCle?: string; // Clé normalisée principale pour filtrage rapide (ex: 'CAISSON_30')
@@ -103,6 +103,10 @@ export interface DonneesMonitoringAtelier {
   totalEnRetard: number;
   totalRetardCritiqueAVerifier: number; // >= 3 jours (à vérifier en atelier)
   commandesAVerifier: LigneCommandeMonitoring[];
+  // Statistiques et suivi des OFs clôturés
+  totalOFsClotures: number;
+  totalPiecesCloturees: number;
+  ofsClotures: SuiviOF[];
   caissons: StatsFamilleMonitoring;
   tabliers: StatsFamilleMonitoring;
   precadres: StatsFamilleMonitoring;
@@ -267,9 +271,9 @@ export class MonitoringService {
       if (a.code_art) articleMap.set(a.code_art.toUpperCase(), a);
     });
 
-    // Filtre des dossiers actifs (non clôturés, non livrés, non terminés)
+    // Filtre des dossiers actifs (non clôturés, non livrés, non terminés, non fabriqués)
     const dossiersActifs = dossiers.filter(d =>
-      d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE'
+      d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE' && d.statut !== 'FABRIQUE'
     );
 
     // Filtre des OFs actifs (émis ou en attente de retour atelier)
@@ -339,8 +343,8 @@ export class MonitoringService {
         detailsDescriptions.push(`${qte}x ${nomProd} (${c.longueur || 0}mm)`);
       });
 
-      // Trouver si un OF existe pour ce caisson
-      const matchingOF = ofsActifs.find(o =>
+      // Trouver si un OF existe pour ce caisson (dans tous les suivis OF)
+      const matchingOF = suivisOF.find(o =>
         (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeCaisson)) &&
         (o.famille === 'CAISSON' || (o.famille as string) === 'SOUS_FACE')
       );
@@ -351,7 +355,7 @@ export class MonitoringService {
         dossier.dateLivraisonPrevisionnelle || dateLiv,
         dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
         dossier.dateCommande,
-        dossier.statut
+        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
       );
 
       const sousTypesList = Array.from(sousTypesSet);
@@ -370,8 +374,20 @@ export class MonitoringService {
         donneurOrdre: dossier.donneurOrdre || 'Atelier',
         dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'CAISSON',
-        statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
+        statutAtelier: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? 'OF_CLOTURE'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'RETOUR_SAISI'
+              : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? '✓ OF Clôturé (Fabriqué)'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'Retour Saisi'
+              : 'OF Émis (En Coupe)')
+          : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Caisson',
         sousTypeCle: primaryKey,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
@@ -445,13 +461,14 @@ export class MonitoringService {
 
     // Calcul de l'échéance prévisionnelle globale pour les Caissons
     const configCaisson = params.familles.CAISSON;
-    const capaciteJourCaisson = configCaisson.capaciteJournalierePieces || 20;
+    const capaciteJourCaisson = configCaisson.capaciteJournalierePieces || 120;
     const delaiFixeCaisson = configCaisson.delaiFixeJours || 0;
     const joursRequisCaisson = piecesCaissonsTotal > 0
-      ? Math.max(1, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson + delaiFixeCaisson))
+      ? Math.max(1, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson) + delaiFixeCaisson)
       : 1;
 
-    const dateFinCaisson = DelaisProductionService.ajouterJoursOuvres(dateRef, joursRequisCaisson, params.joursOuvres);
+    const joursAjoutesCaisson = piecesCaissonsTotal > 0 ? Math.max(0, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson) - 1 + delaiFixeCaisson) : 0;
+    const dateFinCaisson = DelaisProductionService.ajouterJoursOuvres(dateRef, joursAjoutesCaisson, params.joursOuvres);
     // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
     let dateFinCaissonFinale = dateFinCaisson;
     lignesCommandesCaissons.forEach(l => {
@@ -567,7 +584,7 @@ export class MonitoringService {
         detailsDescriptions.push(`${qte}x ${nomLame} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
       });
 
-      const matchingOF = ofsActifs.find(o =>
+      const matchingOF = suivisOF.find(o =>
         (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeTablier)) &&
         o.famille === 'TABLIER'
       );
@@ -578,7 +595,7 @@ export class MonitoringService {
         dossier.dateLivraisonPrevisionnelle || dateLiv,
         dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
         dossier.dateCommande,
-        dossier.statut
+        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
       );
 
       const sousTypesList = Array.from(sousTypesSet);
@@ -595,8 +612,20 @@ export class MonitoringService {
         donneurOrdre: dossier.donneurOrdre || 'Atelier',
         dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'TABLIER',
-        statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
+        statutAtelier: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? 'OF_CLOTURE'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'RETOUR_SAISI'
+              : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? '✓ OF Clôturé (Fabriqué)'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'Retour Saisi'
+              : 'OF Émis (En Coupe)')
+          : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Tablier',
         sousTypeCle: primaryKey,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
@@ -666,13 +695,14 @@ export class MonitoringService {
     });
 
     const configTablier = params.familles.TABLIER;
-    const capaciteJourTablier = configTablier.capaciteJournalierePieces || 15;
+    const capaciteJourTablier = configTablier.capaciteJournalierePieces || 35;
     const delaiFixeTablier = configTablier.delaiFixeJours || 0;
     const joursRequisTablier = piecesTabliersTotal > 0
-      ? Math.max(1, Math.ceil(piecesTabliersTotal / capaciteJourTablier + delaiFixeTablier))
+      ? Math.max(1, Math.ceil(piecesTabliersTotal / capaciteJourTablier) + delaiFixeTablier)
       : 1;
 
-    const dateFinTablier = DelaisProductionService.ajouterJoursOuvres(dateRef, joursRequisTablier, params.joursOuvres);
+    const joursAjoutesTablier = piecesTabliersTotal > 0 ? Math.max(0, Math.ceil(piecesTabliersTotal / capaciteJourTablier) - 1 + delaiFixeTablier) : 0;
+    const dateFinTablier = DelaisProductionService.ajouterJoursOuvres(dateRef, joursAjoutesTablier, params.joursOuvres);
     // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
     let dateFinTablierFinale = dateFinTablier;
     lignesCommandesTabliers.forEach(l => {
@@ -795,16 +825,16 @@ export class MonitoringService {
 
       const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
       const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
+      const matchingOF = suivisOF.find(o =>
+        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandePrecadre)) &&
+        o.famille === 'PRECADRE'
+      );
+
       const alerteDelai = DelaisProductionService.evaluerStatutDelai(
         dossier.dateLivraisonPrevisionnelle || dateLiv,
         dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
         dossier.dateCommande,
-        dossier.statut
-      );
-
-      const matchingOF = ofsActifs.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandePrecadre)) &&
-        o.famille === 'PRECADRE'
+        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
       );
 
       const sousTypesList = Array.from(sousTypesSet);
@@ -816,8 +846,20 @@ export class MonitoringService {
         donneurOrdre: dossier.donneurOrdre || 'Atelier',
         dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'PRECADRE',
-        statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
+        statutAtelier: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? 'OF_CLOTURE'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'RETOUR_SAISI'
+              : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? '✓ OF Clôturé (Fabriqué)'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'Retour Saisi'
+              : 'OF Émis (En Coupe)')
+          : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Précadre Type 36',
         sousTypeCle: sousTypeCode,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
@@ -1042,16 +1084,16 @@ export class MonitoringService {
 
       const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
       const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
+      const matchingOF = suivisOF.find(o =>
+        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeMoustiquaire)) &&
+        o.famille === 'MOUSTIQUAIRE'
+      );
+
       const alerteDelai = DelaisProductionService.evaluerStatutDelai(
         dossier.dateLivraisonPrevisionnelle || dateLiv,
         dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
         dossier.dateCommande,
-        dossier.statut
-      );
-
-      const matchingOF = ofsActifs.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeMoustiquaire)) &&
-        o.famille === 'MOUSTIQUAIRE'
+        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
       );
 
       const sousTypesList = Array.from(sousTypesSet);
@@ -1063,8 +1105,20 @@ export class MonitoringService {
         donneurOrdre: dossier.donneurOrdre || 'Atelier',
         dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'MOUSTIQUAIRE',
-        statutAtelier: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS') : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)') : 'En Attente Découpe',
+        statutAtelier: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? 'OF_CLOTURE'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'RETOUR_SAISI'
+              : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: matchingOF
+          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
+              ? '✓ OF Clôturé (Fabriqué)'
+              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
+              ? 'Retour Saisi'
+              : 'OF Émis (En Coupe)')
+          : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Moustiquaire Plissée',
         sousTypeCle: sousTypeCode,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
@@ -1275,6 +1329,11 @@ export class MonitoringService {
     const commandesAVerifier = allCommandesList.filter(c => c.alerteDelai.estRetardCritique);
     const totalRetardCritiqueAVerifier = commandesAVerifier.length;
 
+    // Prise en compte et synthèse des OFs clôturés
+    const ofsClotures = suivisOF.filter(o => o && (o.statut === 'CLOTURE' || o.statut === 'LIVRE'));
+    const totalOFsClotures = ofsClotures.length;
+    const totalPiecesCloturees = ofsClotures.reduce((sum, o) => sum + (o.nombrePieces || 0), 0);
+
     return {
       dateHeureCalcul: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       totalCommandesActives: allUniqueCommandes.size,
@@ -1285,6 +1344,9 @@ export class MonitoringService {
       totalEnRetard,
       totalRetardCritiqueAVerifier,
       commandesAVerifier,
+      totalOFsClotures,
+      totalPiecesCloturees,
+      ofsClotures,
       caissons: statsCaissons,
       tabliers: statsTabliers,
       precadres: statsPrecadres,

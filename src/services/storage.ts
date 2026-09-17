@@ -107,8 +107,8 @@ export class StorageService {
 
             return {
               articles: Array.isArray(d.articles) ? d.articles : [],
-              chutesBarres: (d.chutesBarres && typeof d.chutesBarres === 'object') ? d.chutesBarres : {},
-              chutesMaille: Array.isArray(d.chutesMaille) ? d.chutesMaille : [],
+              chutesBarres: (d.chutesBarres && typeof d.chutesBarres === 'object') ? this.consoliderChutesBarres(d.chutesBarres) : {},
+              chutesMaille: Array.isArray(d.chutesMaille) ? this.consoliderChutesMaille(d.chutesMaille) : [],
               mapping: (d.mapping && typeof d.mapping === 'object') ? d.mapping : {},
               dossiers: Array.isArray(d.dossiers) ? d.dossiers : [],
               suivisOF: Array.isArray(d.suivisOF) ? d.suivisOF : [],
@@ -225,19 +225,78 @@ export class StorageService {
   }
 
   // =========================================================================
-  // CHUTES BARRES
+  // CHUTES BARRES & MAILLE : CONSOLIDATION SANS DOUBLONS
   // =========================================================================
+
+  static consoliderChutesBarres(chutes: Record<string, ChuteItem[]>): Record<string, ChuteItem[]> {
+    const consolidated: Record<string, ChuteItem[]> = {};
+    for (const [sheet, items] of Object.entries(chutes)) {
+      if (!Array.isArray(items)) {
+        consolidated[sheet] = [];
+        continue;
+      }
+      const byLength = new Map<number, ChuteItem>();
+      for (const item of items) {
+        const lg = Math.round(Number(item.longueur) * 10) / 10;
+        if (isNaN(lg) || lg <= 0) continue;
+        if (byLength.has(lg)) {
+          const ex = byLength.get(lg)!;
+          ex.quantite = (ex.quantite || 0) + (item.quantite || 0);
+          ex.quantitePhysique = (ex.quantitePhysique !== undefined ? ex.quantitePhysique : (ex.quantite || 0)) +
+                                (item.quantitePhysique !== undefined ? item.quantitePhysique : (item.quantite || 0));
+          ex.reserve = (ex.reserve || 0) + (item.reserve || 0);
+        } else {
+          byLength.set(lg, {
+            ...item,
+            longueur: lg,
+            quantite: item.quantite || 0,
+            quantitePhysique: item.quantitePhysique !== undefined ? item.quantitePhysique : (item.quantite || 0),
+            reserve: item.reserve || 0
+          });
+        }
+      }
+      // Trier par longueur décroissante
+      consolidated[sheet] = Array.from(byLength.values()).sort((a, b) => b.longueur - a.longueur);
+    }
+    return consolidated;
+  }
+
+  static consoliderChutesMaille(items: ChuteMaille[]): ChuteMaille[] {
+    if (!Array.isArray(items)) return [];
+    const byDim = new Map<number, ChuteMaille>();
+    for (const item of items) {
+      const dim = Math.round(Number(item.dimension_fixe) * 10) / 10;
+      if (isNaN(dim) || dim <= 0) continue;
+      if (byDim.has(dim)) {
+        const ex = byDim.get(dim)!;
+        ex.plis = (ex.plis || 0) + (item.plis || 0);
+        ex.plisPhysique = (ex.plisPhysique !== undefined ? ex.plisPhysique : (ex.plis || 0)) +
+                          (item.plisPhysique !== undefined ? item.plisPhysique : (item.plis || 0));
+        ex.plisReserve = (ex.plisReserve || 0) + (item.plisReserve || 0);
+      } else {
+        byDim.set(dim, {
+          ...item,
+          dimension_fixe: dim,
+          plis: item.plis || 0,
+          plisPhysique: item.plisPhysique !== undefined ? item.plisPhysique : (item.plis || 0),
+          plisReserve: item.plisReserve || 0
+        });
+      }
+    }
+    return Array.from(byDim.values()).sort((a, b) => b.dimension_fixe - a.dimension_fixe);
+  }
 
   static async saveChutesBarres(chutes: Record<string, ChuteItem[]>): Promise<void> {
     try {
+      const consolidated = this.consoliderChutesBarres(chutes);
       await this.request('/api/chutes/barres', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chutes)
+        body: JSON.stringify(consolidated)
       });
-      const totalPieces = Object.values(chutes).reduce((acc, list) => acc + list.reduce((s, c) => s + (c.quantite || 0), 0), 0);
-      logger.sqlite('Chutes Barres', `${Object.keys(chutes).length} familles de chutes sauvegardées (${totalPieces} pièces au total).`, {
-        famillesCount: Object.keys(chutes).length,
+      const totalPieces = Object.values(consolidated).reduce((acc, list) => acc + list.reduce((s, c) => s + (c.quantite || 0), 0), 0);
+      logger.sqlite('Chutes Barres', `${Object.keys(consolidated).length} familles de chutes sauvegardées (${totalPieces} pièces au total, sans doublons).`, {
+        famillesCount: Object.keys(consolidated).length,
         totalPieces
       });
     } catch (e: any) {
@@ -249,14 +308,15 @@ export class StorageService {
 
   static async saveChutesMaille(chutes: ChuteMaille[]): Promise<void> {
     try {
+      const consolidated = this.consoliderChutesMaille(chutes);
       await this.request('/api/chutes/maille', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(chutes)
+        body: JSON.stringify(consolidated)
       });
-      const totalPlis = chutes.reduce((acc, c) => acc + (c.plis || 0), 0);
-      logger.sqlite('Chutes Maille', `${chutes.length} références de chutes maille sauvegardées (${totalPlis} plis).`, {
-        count: chutes.length,
+      const totalPlis = consolidated.reduce((acc, c) => acc + (c.plis || 0), 0);
+      logger.sqlite('Chutes Maille', `${consolidated.length} références de chutes maille sauvegardées (${totalPlis} plis, sans doublons).`, {
+        count: consolidated.length,
         totalPlis
       });
     } catch (e: any) {

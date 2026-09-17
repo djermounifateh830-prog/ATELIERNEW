@@ -290,8 +290,8 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
         </div>
       )}
 
-      {/* ── 2. KPIS GLOBAUX DE L'ATELIER (5 CARTES AVEC RESPECT DES DÉLAIS) ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
+      {/* ── 2. KPIS GLOBAUX DE L'ATELIER (6 CARTES AVEC OFS CLÔTURÉS & RESPECT DES DÉLAIS) ── */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
         {/* Total Commandes Actives */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
           <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
@@ -312,7 +312,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
         {/* Total Pièces en Fabrication */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
           <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>Total Pièces à Fabriquer</span>
+            <span>Pièces en Attente / Coupe</span>
             <Scissors className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
@@ -326,20 +326,32 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
           </div>
         </div>
 
+        {/* Total OFs Clôturés */}
+        <div className="bg-slate-900 border border-emerald-900/40 rounded-xl p-4 shadow">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+            <span>OFs Clôturés (Fabriqués)</span>
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="text-3xl font-black text-emerald-300 font-mono mt-1">
+            {monitoringData.totalOFsClotures || 0}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-1">
+            <span className="text-emerald-400 font-semibold">{monitoringData.totalPiecesCloturees || 0}</span> pièces terminées
+          </div>
+        </div>
+
         {/* Charge Globale Heures */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
           <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>Charge d'Atelier Estimée</span>
+            <span>Charge Atelier Restante</span>
             <Clock className="w-4 h-4 text-sky-400" />
           </div>
           <div className="text-3xl font-black text-sky-400 font-mono mt-1">
-            {monitoringData.chargeTotaleHeures} <span className="text-sm font-sans font-normal text-slate-400">heures</span>
+            {monitoringData.chargeTotaleHeures} <span className="text-sm font-sans font-normal text-slate-400">h</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
             <span className="text-amber-400 font-semibold">{caissons.chargeHeuresEstimee}h</span> Cais. •{' '}
-            <span className="text-sky-400 font-semibold">{tabliers.chargeHeuresEstimee}h</span> Tabl. •{' '}
-            <span className="text-purple-400 font-semibold">{precadres.chargeHeuresEstimee}h</span> Préc. •{' '}
-            <span className="text-emerald-400 font-semibold">{moustiquaires.chargeHeuresEstimee}h</span> Mstq.
+            <span className="text-sky-400 font-semibold">{tabliers.chargeHeuresEstimee}h</span> Tabl.
           </div>
         </div>
 

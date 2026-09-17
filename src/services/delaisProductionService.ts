@@ -27,35 +27,35 @@ export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
     CAISSON: {
       famille: 'CAISSON',
       libelle: 'Caissons & Sous-faces',
-      tempsUnitaireMinutes: 24, // 24 min par caisson/sous-face
-      capaciteJournalierePieces: 20, // 20 caissons / jour
+      tempsUnitaireMinutes: 5, // 5 min par caisson/sous-face (soit 120 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 120, // 120 caissons / jour
       delaiFixeJours: 0
     },
     PRECADRE: {
       famille: 'PRECADRE',
       libelle: 'Précadres',
-      tempsUnitaireMinutes: 24,
-      capaciteJournalierePieces: 20, // 20 précadres / jour
+      tempsUnitaireMinutes: 6, // 6 min par précadre (soit 80 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 80, // 80 précadres / jour
       delaiFixeJours: 0
     },
     MOUSTIQUAIRE: {
       famille: 'MOUSTIQUAIRE',
       libelle: 'Moustiquaires plissées',
-      tempsUnitaireMinutes: 32,
-      capaciteJournalierePieces: 15, // 15 moustiquaires / jour
+      tempsUnitaireMinutes: 10, // 10 min par moustiquaire (soit 50 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 50, // 50 moustiquaires / jour
       delaiFixeJours: 0
     },
     TABLIER: {
       famille: 'TABLIER',
       libelle: 'Tabliers de volet',
-      tempsUnitaireMinutes: 32,
-      capaciteJournalierePieces: 15, // 15 tabliers / jour
+      tempsUnitaireMinutes: 15, // 15 min par tablier (soit 35 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 35, // 35 tabliers / jour
       delaiFixeJours: 0
     }
   }
 };
 
-const STORAGE_KEY = '3m_parametres_production_v2';
+const STORAGE_KEY = '3m_parametres_production_v3';
 let cachedParametres: ParametresProductionAtelier | null = null;
 
 export class DelaisProductionService {
@@ -271,15 +271,15 @@ export class DelaisProductionService {
     statut?: string,
     datePivot?: Date
   ): InfoStatutDelai {
-    // Si la commande est déjà livrée ou clôturée, aucun retard d'atelier
-    if (statut === 'LIVRE' || statut === 'CLOTURE') {
+    // Si la commande est déjà livrée, fabriquée ou clôturée, aucun retard d'atelier
+    if (statut === 'LIVRE' || statut === 'CLOTURE' || statut === 'FABRIQUE' || statut === 'TERMINE') {
       return {
         statutDelai: 'LIVRE',
         joursDeRetard: 0,
         estDepasse: false,
         estRetardCritique: false,
-        texteAlerte: 'Commande livrée / clôturée',
-        badgeLabel: '✓ Livré',
+        texteAlerte: statut === 'LIVRE' ? 'Commande livrée' : 'Commande fabriquée / clôturée',
+        badgeLabel: statut === 'LIVRE' ? '✓ Livré' : '✓ Fabriqué (Clôturé)',
         badgeClasses: 'bg-emerald-950 text-emerald-300 border border-emerald-700/60',
         ligneClasses: '',
         flagEmoji: '✓'
@@ -561,14 +561,17 @@ export class DelaisProductionService {
     }
 
     const piecesTarget = this.compterPiecesOF(targetOF);
-    const capaciteJour = configFam.capaciteJournalierePieces || 120;
+    const capaciteJour = configFam.capaciteJournalierePieces || (famKey === 'CAISSON' ? 120 : famKey === 'PRECADRE' ? 80 : famKey === 'MOUSTIQUAIRE' ? 50 : 35);
 
     // Calcul du délai requis en jours ouvrés basé sur le volume et la cadence journalière de la famille
     const totalChargePieces = targetOF.estPrioritaire ? piecesTarget : (piecesEnFileAttente + piecesTarget);
     const joursProduction = Math.max(1, Math.ceil(totalChargePieces / capaciteJour));
     const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
 
-    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursRequis, params.joursOuvres);
+    // Si 1 jour de travail : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
+    // Si N jours de travail : achèvement à (N - 1) jours ouvrés après le jour de démarrage
+    const joursAjoutes = Math.max(0, joursProduction - 1) + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
+    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursAjoutes, params.joursOuvres);
     const texteDate = this.formaterDateLivraison(dateLivraison);
     let texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
     if (estEnPauseOF) {
@@ -756,22 +759,47 @@ export class DelaisProductionService {
 
       // Volume total à absorber par l'atelier pour cette famille
       const totalChargePieces = dossier.estPrioritaire ? nbPieces : (piecesEnFile + nbPieces);
-      const cap = configFam.capaciteJournalierePieces || (fam === 'CAISSON' ? 20 : fam === 'PRECADRE' ? 20 : 15);
-      
-      // Jours ouvrés requis pour que l'atelier termine l'ensemble de la charge cumulée
-      // Si la commande courante a des pièces, on calcule sur totalChargePieces. Sinon, sur la file d'attente de l'atelier
-      const chargePourCalcul = nbPieces > 0 ? totalChargePieces : piecesEnFile;
-      const joursProduction = chargePourCalcul > 0 ? Math.max(1, Math.ceil(chargePourCalcul / cap)) : 0;
-      const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + (nbPieces > 0 ? joursInterruptionDossier : 0);
-      
-      // Date prévisionnelle à laquelle l'atelier aura achevé et pourra LIVRER la commande au client
-      const dateEstimee = this.ajouterJoursOuvres(dateDepart, Math.max(1, joursRequis), params.joursOuvres);
+      const cap = configFam.capaciteJournalierePieces || (fam === 'CAISSON' ? 120 : fam === 'PRECADRE' ? 80 : fam === 'MOUSTIQUAIRE' ? 50 : 35);
+      const tempsUnit = configFam.tempsUnitaireMinutes || (fam === 'CAISSON' ? 5 : fam === 'PRECADRE' ? 6 : fam === 'MOUSTIQUAIRE' ? 10 : 15);
 
-      if (nbPieces > 0 && dateEstimee.getTime() > maxTime) {
-        maxTime = dateEstimee.getTime();
-        dateMax = dateEstimee;
-        joursMax = joursRequis;
-        familleGoulot = fam;
+      let joursOuvresFamille = 0;
+      let dateEstimeeFamille = dateDepart;
+      let dateLivraisonFormatteeFamille = 'Disponible (0 pc)';
+
+      if (nbPieces > 0) {
+        // La commande comporte des pièces à fabriquer pour cette famille
+        const chargeEffective = dossier.estPrioritaire ? nbPieces : totalChargePieces;
+        const joursProduction = Math.max(1, Math.ceil(chargeEffective / cap));
+        const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+
+        // Si 1 journée de travail requise : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
+        // Si N journées requises : achèvement à (N - 1) jours ouvrés après le jour de démarrage
+        const joursAjoutes = Math.max(0, joursProduction - 1) + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+        const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursAjoutes, params.joursOuvres);
+
+        joursOuvresFamille = joursRequis;
+        dateEstimeeFamille = dateEstimee;
+        dateLivraisonFormatteeFamille = this.formaterDateLivraison(dateEstimee).replace('LIVRAISON : ', '');
+
+        if (dateEstimee.getTime() > maxTime) {
+          maxTime = dateEstimee.getTime();
+          dateMax = dateEstimee;
+          joursMax = joursRequis;
+          familleGoulot = fam;
+        }
+      } else if (piecesEnFile > 0) {
+        // La commande n'a pas de pièce dans cette famille, mais l'atelier a une file en cours
+        const joursFile = Math.max(1, Math.ceil(piecesEnFile / cap));
+        const joursAjoutesFile = Math.max(0, joursFile - 1);
+        const dateFinFile = this.ajouterJoursOuvres(dateDepart, joursAjoutesFile, params.joursOuvres);
+        joursOuvresFamille = 0; // Ne retarde pas cette commande
+        dateEstimeeFamille = dateFinFile;
+        dateLivraisonFormatteeFamille = `File atelier : ${piecesEnFile} pcs (~${joursFile}j)`;
+      } else {
+        // 0 pièce dans la commande, 0 pièce en file
+        joursOuvresFamille = 0;
+        dateEstimeeFamille = dateDepart;
+        dateLivraisonFormatteeFamille = 'Disponible (0 pc)';
       }
 
       detailsParFamille[fam] = {
@@ -780,10 +808,11 @@ export class DelaisProductionService {
         piecesCommande: nbPieces,
         piecesEnFileAttente: piecesEnFile,
         totalPiecesCharge: totalChargePieces,
-        joursOuvresRequis: Math.max(1, joursRequis),
-        dateLivraisonPrevue: dateEstimee,
-        dateLivraisonFormattee: this.formaterDateLivraison(dateEstimee).replace('LIVRAISON : ', ''),
+        joursOuvresRequis: joursOuvresFamille,
+        dateLivraisonPrevue: dateEstimeeFamille,
+        dateLivraisonFormattee: dateLivraisonFormatteeFamille,
         capaciteJournaliere: cap,
+        tempsUnitaireMinutes: tempsUnit,
         nbOfsEnCours: ofsDetailsList.length,
         ofsDetails: ofsDetailsList
       };

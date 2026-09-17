@@ -624,9 +624,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
     const generatedSections: SectionMultiArticleCaisson[] = [];
 
-    // 1. Groupement des Caissons Tunnel (CT) PAR CODE ARTICLE
+    // 1. Groupement des Caissons Tunnel (CT) PAR CODE ARTICLE (exclure strictement les sous-faces seules)
     const groupsCT = new Map<string, CommandeCaisson[]>();
     for (const ligne of sourceLines) {
+      if (ligne.isSousFaceSeule || ligne.typePrestation === 'SOUS_FACE_SEULE') continue;
       const code = ligne.articleCode || caissonConfig.ctArticleCode;
       if (!groupsCT.has(code)) groupsCT.set(code, []);
       groupsCT.get(code)!.push(ligne);
@@ -692,8 +693,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       });
     });
 
-    // 2. Groupement des Sous-Faces (SF) PAR CODE ARTICLE (pour les lignes avec SF active)
-    const lignesAvecSF = sourceLines.filter(c => c.avecSousFace);
+    // 2. Groupement des Sous-Faces (SF) PAR CODE ARTICLE (pour les lignes avec SF active ou SF seule, excluant caisson seul)
+    const lignesAvecSF = sourceLines.filter(c =>
+      c.typePrestation !== 'CAISSON_SEUL' && (c.avecSousFace || c.isSousFaceSeule || c.typePrestation === 'SOUS_FACE_SEULE')
+    );
     const groupsSF = new Map<string, CommandeCaisson[]>();
     for (const ligne of lignesAvecSF) {
       const code = ligne.sfArticleCode || caissonConfig.sfArticleCode;
@@ -2489,12 +2492,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     // Pré-calcul des groupes pour estimer précisément le nombre d'étapes
     const groupsCT = new Map<string, CommandeCaisson[]>();
     for (const ligne of caissonsFiltres) {
+      if (ligne.isSousFaceSeule || ligne.typePrestation === 'SOUS_FACE_SEULE') continue;
       const code = ligne.articleCode || caissonConfig.ctArticleCode;
       if (!groupsCT.has(code)) groupsCT.set(code, []);
       groupsCT.get(code)!.push(ligne);
     }
 
-    const lignesAvecSF = caissonsFiltres.filter(c => c.avecSousFace);
+    const lignesAvecSF = caissonsFiltres.filter(c =>
+      c.typePrestation !== 'CAISSON_SEUL' && (c.avecSousFace || c.isSousFaceSeule || c.typePrestation === 'SOUS_FACE_SEULE')
+    );
     const groupsSF = new Map<string, CommandeCaisson[]>();
     for (const ligne of lignesAvecSF) {
       const code = ligne.sfArticleCode || caissonConfig.sfArticleCode;
@@ -9541,6 +9547,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             numCommandeTablier={numCommandeTablier}
             numCommandeMoustiquaire={numCommandeMoustiquaire}
             numCommandePrecadre={numCommandePrecadre}
+            dateLivraisonPrevisionnelle={dateLivraisonPrevisionnelle}
+            dateLivraisonPrevisionnelleISO={dateLivraisonPrevisionnelleISO}
             onOFEmis={onDossiersUpdated}
           />
         );
@@ -9564,6 +9572,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           chutesMaille={chutesMaille}
           paramsMaille={paramsMaille}
           mapping={mapping}
+          dateLivraisonPrevisionnelle={dateLivraisonPrevisionnelle}
+          dateLivraisonPrevisionnelleISO={dateLivraisonPrevisionnelleISO}
           onOFEmis={onDossiersUpdated}
         />
       )}

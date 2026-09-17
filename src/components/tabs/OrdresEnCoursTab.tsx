@@ -15,6 +15,7 @@ import { DelaisProductionService } from '../../services/delaisProductionService'
 import { RetourOFModal } from '../common/RetourOFModal';
 import { FicheTransfertModal } from '../common/FicheTransfertModal';
 import { ModifierDelaiLivraisonModal } from '../common/ModifierDelaiLivraisonModal';
+import { DossierDetailModal } from '../common/DossierDetailModal';
 import {
   ClipboardCheck,
   Search,
@@ -43,6 +44,7 @@ import {
   Sparkles,
   Truck,
   FileCheck,
+  FileText,
   RotateCcw,
   Ban,
   Activity,
@@ -76,7 +78,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   const [recherche, setRecherche] = useState<string>('');
   const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE'>('TOUS');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
+  const [filtreClient, setFiltreClient] = useState<string>('TOUS');
   const [filtrePrioritaireSeulement, setFiltrePrioritaireSeulement] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20);
 
   // Modal Date de Livraison & Priorité OF
   const [ofToEditDelai, setOfToEditDelai] = useState<SuiviOF | null>(null);
@@ -99,6 +104,118 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
   // Modal Détails OF (Visualisation des coupes & lignes)
   const [selectedSuiviForDetails, setSelectedSuiviForDetails] = useState<SuiviOF | null>(null);
+
+  // Modal Visualisation Commande Complète depuis Suivi OF (Demande Utilisateur)
+  const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
+  const [isDossierDetailOpen, setIsDossierDetailOpen] = useState<boolean>(false);
+
+  const getLinkedDossierForOF = (of: SuiviOF): DossierCommandeGlobal | null => {
+    if (!of) return null;
+    const ofCmd = (of.numCommande || '').toLowerCase().trim();
+    const ofCode = (of.codeOF || '').toLowerCase().trim();
+
+    // 1. Recherche par ID direct
+    if (of.dossierId) {
+      const found = dossiers.find(d => d.id === of.dossierId);
+      if (found) return found;
+    }
+
+    // 2. Recherche par refCommande exacte ou sous-commandes
+    if (ofCmd || ofCode) {
+      const found = dossiers.find(d => {
+        const ref = (d.refCommande || '').toLowerCase().trim();
+        if (ref && (ref === ofCmd || ref.includes(ofCmd) || ofCmd.includes(ref))) return true;
+        const subRefs = [
+          d.numCommandeCaisson,
+          d.numCommandeSousFace,
+          d.numCommandeTablier,
+          d.numCommandeMoustiquaire,
+          d.numCommandePrecadre
+        ].filter(Boolean) as string[];
+        return subRefs.some(s => {
+          const sub = s.toLowerCase().trim();
+          return sub === ofCmd || ofCmd.includes(sub) || sub.includes(ofCmd);
+        });
+      });
+      if (found) return found;
+    }
+
+    // 3. Dossier virtuel riche créé à partir de l'OF s'il n'existe pas dans l'historique complet
+    const virtualDossier: DossierCommandeGlobal = {
+      id: of.dossierId || `virt-${of.id}`,
+      refCommande: of.numCommande || of.codeOF || `OF-${of.id}`,
+      nomClientFinal: of.nomClient || 'Client Atelier',
+      donneurOrdre: of.donneurOrdre || '',
+      dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+      dateLivraisonPrevisionnelle: of.dateLivraisonPrevisionnelle || of.dateLivraison || '',
+      statut: of.statut === 'LIVRE' ? 'LIVRE' : of.statut === 'CLOTURE' ? 'CLOTURE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'EN_COURS' : 'EN_ATTENTE',
+      estPrioritaire: of.estPrioritaire,
+      notes: of.notes || of.titreSection || of.remarqueGlobale || '',
+      numCommandeCaisson: of.famille === 'CAISSON' ? of.numCommande : undefined,
+      numCommandeTablier: of.famille === 'TABLIER' ? of.numCommande : undefined,
+      numCommandeMoustiquaire: of.famille === 'MOUSTIQUAIRE' ? of.numCommande : undefined,
+      numCommandePrecadre: of.famille === 'PRECADRE' ? of.numCommande : undefined,
+      articlesCaissons: of.famille === 'CAISSON' ? of.lignesRetour.map((l, i) => ({
+        id: `c-${i}`,
+        repere: l.repere || `C${i + 1}`,
+        longueur: l.longueurPrevue || 0,
+        quantite: 1,
+        articleCode: l.articleCode || '',
+        articleDesignation: l.articleDesignation || of.titreSection || 'Caisson',
+        typeCaisson: 'TUNNEL_SIMPLE' as const,
+        avecSousFace: false,
+        montageSousFace: 'NON_MONTEE' as const,
+        avecPeinture: false
+      })) : [],
+      articlesTabliers: of.famille === 'TABLIER' ? of.lignesRetour.map((l, i) => ({
+        id: `t-${i}`,
+        repere: l.repere || `V${i + 1}`,
+        largeur: l.longueurPrevue || 0,
+        hauteur: 0,
+        hauteur_lame_tablier: 43,
+        quantite: 1,
+        typeFabrication: 'TABLIER_SEUL' as const,
+        avecLameFinale: true,
+        articleCode: l.articleCode || '',
+        articleDesignation: l.articleDesignation || of.titreSection || 'Lame Tablier'
+      })) : [],
+      articlesMoustiquaires: of.famille === 'MOUSTIQUAIRE' ? of.lignesRetour.map((l, i) => ({
+        id: `m-${i}`,
+        repere: l.repere || `M${i + 1}`,
+        modele: of.titreSection || 'Standard',
+        typeOuverture: 'FENETRE' as const,
+        typeFabrication: 'COMPLET' as const,
+        avecBarreInferieure: false,
+        largeur: l.longueurPrevue || 0,
+        hauteur: 0,
+        quantite: 1,
+        articleCodeCadre: l.articleCode || '',
+        articleDesignationCadre: l.articleDesignation || of.titreSection || 'Cadre Moustiquaire'
+      })) : [],
+      articlesPrecadres: of.famille === 'PRECADRE' ? of.lignesRetour.map((l, i) => ({
+        id: `p-${i}`,
+        repere: l.repere || `P${i + 1}`,
+        largeur: l.longueurPrevue || 0,
+        hauteur: 0,
+        quantite: 1,
+        figure: 'VIDE' as const,
+        modeDebordement: 'SANS_DEBORDEMENT' as const,
+        debordementSuperieur: 0,
+        debordementInferieur: 0,
+        articleCode: l.articleCode || '',
+        articleDesignation: l.articleDesignation || of.titreSection || 'Précadre'
+      })) : []
+    };
+    return virtualDossier;
+  };
+
+  const handleVisualiserCommande = (of: SuiviOF) => {
+    const dossier = getLinkedDossierForOF(of);
+    if (dossier) {
+      setSelectedDossierToView(dossier);
+      setIsDossierDetailOpen(true);
+    }
+  };
 
   // Modal / Dialogue Modification Rapide Référence OF
   const [editingOF, setEditingOF] = useState<SuiviOF | null>(null);
@@ -178,7 +295,18 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     }
   };
 
-  // Filtrage et Tri
+  // Liste unique des clients pour le filtre
+  const listeClients = useMemo(() => {
+    const setClients = new Set<string>();
+    suivisOF.forEach(of => {
+      if (of.nomClient && of.nomClient.trim()) {
+        setClients.add(of.nomClient.trim());
+      }
+    });
+    return Array.from(setClients).sort((a, b) => a.localeCompare(b));
+  }, [suivisOF]);
+
+  // Filtrage et Tri (Recherche unifiée avec l'Historique, y compris par REPÈRE de pièce)
   const filteredAndSortedOFs = useMemo(() => {
     return suivisOF
       .filter(of => {
@@ -186,9 +314,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         if (filtreStatut !== 'TOUS' && of.statut !== filtreStatut) return false;
         // Filtre Famille
         if (filtreFamille !== 'TOUTES' && of.famille !== filtreFamille) return false;
+        // Filtre Client
+        if (filtreClient !== 'TOUS' && (of.nomClient || '').trim() !== filtreClient) return false;
         // Filtre Commande Prioritaire
         if (filtrePrioritaireSeulement && !of.estPrioritaire) return false;
-        // Filtre Recherche texte
+        // Filtre Recherche texte unifié (N° Commande, Client, Titre, Donneur d'ordre, Notes, mais aussi REPÈRES DE PIÈCES!)
         if (recherche.trim()) {
           const q = recherche.toLowerCase().trim();
           const matchNum = (of.numCommande || '').toLowerCase().includes(q);
@@ -197,7 +327,47 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           const matchTitre = (of.titreSection || '').toLowerCase().includes(q);
           const matchDonneur = (of.donneurOrdre || '').toLowerCase().includes(q);
           const matchFamille = (of.famille || '').toLowerCase().includes(q);
-          if (!matchNum && !matchCode && !matchClient && !matchTitre && !matchDonneur && !matchFamille) {
+          const matchNotes = (of.notes || '').toLowerCase().includes(q);
+
+          // Recherche dans les lignes de l'OF (article, désignation, repère, remarque)
+          const matchLignes = (of.lignesRetour || []).some(l =>
+            (l.articleCode || '').toLowerCase().includes(q) ||
+            (l.articleDesignation || '').toLowerCase().includes(q) ||
+            (l.repere || '').toLowerCase().includes(q) ||
+            (l.piecesInfoStr || '').toLowerCase().includes(q) ||
+            (l.remarque || '').toLowerCase().includes(q)
+          );
+
+          // Recherche dans le dossier associé (y compris par REPÈRES de pièces CF1, DF2, etc.)
+          const linkedDossier = getLinkedDossierForOF(of);
+          let matchDossierRepere = false;
+          let matchDossierMeta = false;
+
+          if (linkedDossier) {
+            matchDossierMeta =
+              (linkedDossier.refCommande || '').toLowerCase().includes(q) ||
+              (linkedDossier.nomClientFinal || '').toLowerCase().includes(q) ||
+              (linkedDossier.donneurOrdre || '').toLowerCase().includes(q) ||
+              ((linkedDossier.notes || '').toLowerCase().includes(q));
+
+            const matchRepereCaisson = (linkedDossier.articlesCaissons || []).some(c =>
+              (c.repere || '').toLowerCase().includes(q) ||
+              (c.articleDesignation || c.sfArticleDesignation || '').toLowerCase().includes(q)
+            );
+            const matchRepereTablier = (linkedDossier.articlesTabliers || []).some(t =>
+              (t.repere || '').toLowerCase().includes(q)
+            );
+            const matchRepereMstq = (linkedDossier.articlesMoustiquaires || []).some(m =>
+              (m.repere || '').toLowerCase().includes(q)
+            );
+            const matchReperePrecadre = (linkedDossier.articlesPrecadres || []).some(p =>
+              (p.repere || '').toLowerCase().includes(q)
+            );
+
+            matchDossierRepere = matchRepereCaisson || matchRepereTablier || matchRepereMstq || matchReperePrecadre;
+          }
+
+          if (!matchNum && !matchCode && !matchClient && !matchTitre && !matchDonneur && !matchFamille && !matchNotes && !matchLignes && !matchDossierMeta && !matchDossierRepere) {
             return false;
           }
         }
@@ -215,7 +385,20 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           ? String(va).localeCompare(String(vb))
           : String(vb).localeCompare(String(va));
       });
-  }, [suivisOF, filtreStatut, filtreFamille, filtrePrioritaireSeulement, recherche, sortKey, sortDir]);
+  }, [suivisOF, filtreStatut, filtreFamille, filtreClient, filtrePrioritaireSeulement, recherche, sortKey, sortDir, dossiers]);
+
+  // Pagination calculée
+  const totalPages = Math.max(1, Math.ceil(filteredAndSortedOFs.length / (pageSize === -1 ? filteredAndSortedOFs.length || 1 : pageSize)));
+  const displayedOFs = useMemo(() => {
+    if (pageSize === -1) return filteredAndSortedOFs;
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedOFs.slice(start, start + pageSize);
+  }, [filteredAndSortedOFs, currentPage, pageSize]);
+
+  // Réinitialiser la page quand les filtres changent
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [recherche, filtreStatut, filtreFamille, filtreClient, filtrePrioritaireSeulement, pageSize]);
 
   // Statistiques globales
   const stats = useMemo(() => {
@@ -431,11 +614,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-3.5 flex flex-wrap items-center justify-between gap-2.5 shadow-sm">
         <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
           {/* Recherche */}
-          <div className="relative flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[240px]">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
             <input
               type="text"
-              placeholder="Rechercher par N° Commande, Client, Titre, Donneur d'ordre..."
+              placeholder="Rechercher par Repère de pièce (ex: CF1, DF2...), N° commande, Client, N° OF..."
               value={recherche}
               onChange={e => setRecherche(e.target.value)}
               className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500 font-medium"
@@ -462,6 +645,21 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <option value="MOUSTIQUAIRE">Moustiquaire (Toile &amp; Profilés)</option>
             <option value="PRECADRE">Précadre</option>
           </select>
+
+          {/* Filtre Client */}
+          {listeClients.length > 0 && (
+            <select
+              value={filtreClient}
+              onChange={e => setFiltreClient(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500 max-w-[150px] truncate"
+              title="Filtrer par client"
+            >
+              <option value="TOUS">Tous les Clients</option>
+              {listeClients.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
 
           {/* Bouton Réparation / Synchronisation Familles */}
           <button
@@ -570,11 +768,26 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredAndSortedOFs.map(of => {
+                displayedOFs.map(of => {
                   const isEmis = of.statut === 'EMIS';
                   const isAttente = of.statut === 'RETOUR_EN_ATTENTE';
                   const isCloture = of.statut === 'CLOTURE';
                   const isLivre = of.statut === 'LIVRE';
+
+                  // Détection des repères de pièces correspondants à la recherche
+                  const matchedReperes = (() => {
+                    if (!recherche.trim()) return [];
+                    const q = recherche.toLowerCase().trim();
+                    const linked = getLinkedDossierForOF(of);
+                    if (!linked) return [];
+                    const found = [
+                      ...(linked.articlesCaissons || []).filter(c => (c.repere || '').toLowerCase().includes(q)).map(c => c.repere),
+                      ...(linked.articlesTabliers || []).filter(t => (t.repere || '').toLowerCase().includes(q)).map(t => t.repere),
+                      ...(linked.articlesMoustiquaires || []).filter(m => (m.repere || '').toLowerCase().includes(q)).map(m => m.repere),
+                      ...(linked.articlesPrecadres || []).filter(p => (p.repere || '').toLowerCase().includes(q)).map(p => p.repere)
+                    ].filter(Boolean) as string[];
+                    return Array.from(new Set(found));
+                  })();
 
                   return (
                     <tr
@@ -601,7 +814,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                         </div>
                       </td>
 
-                      {/* N° Commande */}
+                      {/* N° Commande (Cliquer pour visualiser la commande) */}
                       <td className="py-2.5 px-2.5 font-mono font-bold text-amber-300">
                         <div className="flex items-center gap-1 flex-wrap">
                           {of.numCommande
@@ -609,12 +822,16 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             .map(c => c.trim())
                             .filter(Boolean)
                             .map((cmd, cIdx) => (
-                              <span
+                              <button
                                 key={cIdx}
-                                className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold"
+                                type="button"
+                                onClick={() => handleVisualiserCommande(of)}
+                                className="px-2 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer group shadow-2xs"
+                                title="Cliquer pour visualiser la commande complète et ses repères"
                               >
-                                {cmd}
-                              </span>
+                                <span>{cmd}</span>
+                                <Eye className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 text-amber-400" />
+                              </button>
                             ))}
                           <button
                             type="button"
@@ -625,6 +842,25 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
+                        {/* Affichage des repères trouvés lors de la recherche */}
+                        {matchedReperes.length > 0 && (
+                          <div className="mt-1 flex items-center gap-1 flex-wrap">
+                            <span className="text-[9px] text-purple-300 font-bold">Repère:</span>
+                            {matchedReperes.slice(0, 3).map((r, rIdx) => (
+                              <span
+                                key={rIdx}
+                                className="px-1.5 py-0.2 bg-purple-900/60 border border-purple-500/50 text-purple-200 text-[10px] font-mono font-bold rounded"
+                              >
+                                {r}
+                              </span>
+                            ))}
+                            {matchedReperes.length > 3 && (
+                              <span className="text-[9px] text-purple-400 font-mono">
+                                +{matchedReperes.length - 3}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       {/* Client / Donneur d'ordre */}
@@ -816,6 +1052,17 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             </button>
                           )}
 
+                          {/* Bouton Visualiser Commande Complète */}
+                          <button
+                            type="button"
+                            onClick={() => handleVisualiserCommande(of)}
+                            className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                            title="Visualiser le dossier de commande complet (repères, articles, cotes, statut)"
+                          >
+                            <FileText className="w-3 h-3 text-purple-400" />
+                            <span>Commande</span>
+                          </button>
+
                           {/* Bouton Annuler Clôture / Rouvrir l'OF (Point 3.3 de l'audit) */}
                           {(isCloture || isLivre) && (
                             <button
@@ -876,6 +1123,90 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination & Informations de volume */}
+        {filteredAndSortedOFs.length > 0 && (
+          <div className="p-3 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <span>
+                Affichage de <span className="font-bold text-slate-200">{pageSize === -1 ? 1 : (currentPage - 1) * pageSize + 1}</span> à{' '}
+                <span className="font-bold text-slate-200">{pageSize === -1 ? filteredAndSortedOFs.length : Math.min(currentPage * pageSize, filteredAndSortedOFs.length)}</span> sur{' '}
+                <span className="font-bold text-amber-400">{filteredAndSortedOFs.length}</span> ordres
+              </span>
+              <span className="text-slate-600">|</span>
+              <div className="flex items-center gap-1">
+                <span>Par page :</span>
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={-1}>Tout ({filteredAndSortedOFs.length})</option>
+                </select>
+              </div>
+            </div>
+
+            {pageSize !== -1 && totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-slate-900 text-slate-300 rounded border border-slate-800 font-medium transition cursor-pointer"
+                >
+                  Précédent
+                </button>
+                <div className="flex items-center gap-1 px-1">
+                  {Array.from({ length: totalPages }).map((_, idx) => {
+                    const pageNum = idx + 1;
+                    if (
+                      pageNum === 1 ||
+                      pageNum === totalPages ||
+                      Math.abs(pageNum - currentPage) <= 1
+                    ) {
+                      return (
+                        <button
+                          key={pageNum}
+                          type="button"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`w-7 h-7 rounded text-xs font-bold transition cursor-pointer ${
+                            currentPage === pageNum
+                              ? 'bg-amber-500 text-slate-950 font-black'
+                              : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    }
+                    if (pageNum === 2 && currentPage > 3) {
+                      return <span key="ellipsis-start" className="px-1 text-slate-600">...</span>;
+                    }
+                    if (pageNum === totalPages - 1 && currentPage < totalPages - 2) {
+                      return <span key="ellipsis-end" className="px-1 text-slate-600">...</span>;
+                    }
+                    return null;
+                  })}
+                </div>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-slate-900 text-slate-300 rounded border border-slate-800 font-medium transition cursor-pointer"
+                >
+                  Suivant
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Registre des Fiches de Transfert & Bons de Remise Transporteur ── */}
@@ -1291,6 +1622,23 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         suivisOF={suivisOF}
         onSaved={() => {
           onRefreshData();
+        }}
+      />
+
+      {/* ── Modal Visualisation Commande Complète ── */}
+      <DossierDetailModal
+        isOpen={isDossierDetailOpen}
+        onClose={() => {
+          setIsDossierDetailOpen(false);
+          setSelectedDossierToView(null);
+        }}
+        dossier={selectedDossierToView}
+        onLoadInEcosysteme={(d) => {
+          setIsDossierDetailOpen(false);
+          if (onNavigateToTab) {
+            localStorage.setItem('3m_selected_dossier_to_load', d.id);
+            onNavigateToTab('commandes');
+          }
         }}
       />
     </div>

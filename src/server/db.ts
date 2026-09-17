@@ -1041,15 +1041,60 @@ class AtelierDatabase {
   // PARAMÈTRES DE PRODUCTION & DÉLAIS
   // ==========================================
   getParametresProduction(): any {
+    const DEFAULT_PARAMS = {
+      joursOuvres: [0, 1, 2, 3, 4],
+      heuresTravailParJour: 8,
+      familles: {
+        CAISSON: {
+          famille: 'CAISSON',
+          libelle: 'Caissons & Sous-faces',
+          tempsUnitaireMinutes: 5,
+          capaciteJournalierePieces: 120,
+          delaiFixeJours: 0
+        },
+        PRECADRE: {
+          famille: 'PRECADRE',
+          libelle: 'Précadres',
+          tempsUnitaireMinutes: 6,
+          capaciteJournalierePieces: 80,
+          delaiFixeJours: 0
+        },
+        MOUSTIQUAIRE: {
+          famille: 'MOUSTIQUAIRE',
+          libelle: 'Moustiquaires plissées',
+          tempsUnitaireMinutes: 10,
+          capaciteJournalierePieces: 50,
+          delaiFixeJours: 0
+        },
+        TABLIER: {
+          famille: 'TABLIER',
+          libelle: 'Tabliers de volet',
+          tempsUnitaireMinutes: 15,
+          capaciteJournalierePieces: 35,
+          delaiFixeJours: 0
+        }
+      }
+    };
+
     try {
       const row = this.db.prepare('SELECT json_data FROM parametres_production WHERE id = ?').get('default') as any;
       if (row?.json_data) {
-        return JSON.parse(row.json_data);
+        const parsed = JSON.parse(row.json_data);
+        // Si la base contient encore l'ancienne valeur temporaire de 20 caissons au lieu de 120, migrer automatiquement vers la cadence réelle
+        if (parsed?.familles?.CAISSON?.capaciteJournalierePieces === 20) {
+          this.saveParametresProduction(DEFAULT_PARAMS);
+          return DEFAULT_PARAMS;
+        }
+        return parsed;
+      } else {
+        // Initialiser avec les cadences réelles d'usine si vide
+        this.saveParametresProduction(DEFAULT_PARAMS);
+        return DEFAULT_PARAMS;
       }
     } catch (e) {
       console.warn('Erreur lecture parametres_production:', e);
     }
-    return null;
+    return DEFAULT_PARAMS;
   }
 
   saveParametresProduction(params: any) {

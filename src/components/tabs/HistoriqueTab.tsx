@@ -16,17 +16,30 @@ import {
   Sliders,
   Building2,
   FolderOpen,
-  Filter
+  Filter,
+  Eye,
+  Table,
+  LayoutGrid,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  X,
+  Zap
 } from 'lucide-react';
 import { DossierCommandeGlobal, SuiviOF } from '../../types';
 import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
+import { DossierDetailModal } from '../common/DossierDetailModal';
 
 interface HistoriqueTabProps {
   dossiers?: DossierCommandeGlobal[];
   onLoadDossierInEcosysteme: (dossier: DossierCommandeGlobal) => void;
   onRefreshData?: () => void;
 }
+
+type SortColumn = 'dateCommande' | 'refCommande' | 'nomClientFinal' | 'dateLivraison' | 'nbArticles' | 'statut';
 
 export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   dossiers = [],
@@ -37,16 +50,62 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('TOUS');
   const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
 
+  // Mode d'affichage confortable pour grands volumes (Tableau compact par défaut ou Cartes)
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+
+  // Tri des dossiers
+  const [sortColumn, setSortColumn] = useState<SortColumn>('dateCommande');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Pagination pour confort de défilement sur grands volumes
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+
+  // Modal Visualisation Complète du Dossier
+  const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
+  const [isDossierDetailOpen, setIsDossierDetailOpen] = useState<boolean>(false);
+
+  // Modal OF (Rechargement dans l'Écosystème)
+  const [selectedOFDossier, setSelectedOFDossier] = useState<DossierCommandeGlobal | null>(null);
+  const [isOFModalOpen, setIsOFModalOpen] = useState<boolean>(false);
+
   useEffect(() => {
     StorageService.getSuivisOF().then(setSuivisOF).catch(() => {});
   }, [dossiers]);
 
-  // OF Modal State
-  const [selectedOFDossier, setSelectedOFDossier] = useState<DossierCommandeGlobal | null>(null);
-  const [isOFModalOpen, setIsOFModalOpen] = useState<boolean>(false);
+  // Réinitialiser la pagination lors d'un changement de filtre ou de recherche
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, pageSize]);
 
-  const filteredDossiers = useMemo(() => {
-    return dossiers.filter(d => {
+  const handleSort = (col: SortColumn) => {
+    if (sortColumn === col) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(col);
+      setSortDirection('asc');
+    }
+  };
+
+  const getDossierTotalArticles = (d: DossierCommandeGlobal) => {
+    return (
+      (d.articlesCaissons || []).length +
+      (d.articlesTabliers || []).length +
+      (d.articlesMoustiquaires || []).length +
+      (d.articlesPrecadres || []).length
+    );
+  };
+
+  const getDossierDateLivraison = (d: DossierCommandeGlobal) => {
+    return (
+      d.dateLivraisonPrevisionnelle ||
+      DelaisProductionService.estimerDelaiDossier(d, dossiers, suivisOF).dateLivraisonFormattee ||
+      '—'
+    );
+  };
+
+  const filteredAndSortedDossiers = useMemo(() => {
+    const filtered = dossiers.filter(d => {
       const term = searchTerm.toLowerCase().trim();
       if (!term) {
         return statusFilter === 'TOUS' || d.statut === statusFilter;
@@ -59,9 +118,20 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
         d.donneurOrdre.toLowerCase().includes(term) ||
         (d.notes && d.notes.toLowerCase().includes(term));
 
+      // Recherche par sous-commandes
+      const distinctRefs = [
+        d.numCommandeCaisson,
+        d.numCommandeSousFace,
+        d.numCommandeTablier,
+        d.numCommandeMoustiquaire,
+        d.numCommandePrecadre
+      ].filter(Boolean) as string[];
+      const matchSubRefs = distinctRefs.some(r => r.toLowerCase().includes(term));
+
       // Recherche par REPÈRE DE LIGNE COMMANDE (pour l'opérateur caisson et atelier)
       const matchRepereCaisson = (d.articlesCaissons || []).some(c =>
-        (c.repere || '').toLowerCase().includes(term)
+        (c.repere || '').toLowerCase().includes(term) ||
+        (c.articleDesignation || c.sfArticleDesignation || '').toLowerCase().includes(term)
       );
       const matchRepereTablier = (d.articlesTabliers || []).some(t =>
         (t.repere || '').toLowerCase().includes(term)
@@ -74,12 +144,62 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
       );
 
       const matchRepere = matchRepereCaisson || matchRepereTablier || matchRepereMstq || matchReperePrecadre;
-      const matchSearch = matchMeta || matchRepere;
+      const matchSearch = matchMeta || matchSubRefs || matchRepere;
       const matchStatus = statusFilter === 'TOUS' || d.statut === statusFilter;
 
       return matchSearch && matchStatus;
     });
-  }, [dossiers, searchTerm, statusFilter]);
+
+    // Tri dynamique
+    return filtered.sort((a, b) => {
+      let valA: string | number = '';
+      let valB: string | number = '';
+
+      switch (sortColumn) {
+        case 'refCommande':
+          valA = a.refCommande || '';
+          valB = b.refCommande || '';
+          break;
+        case 'nomClientFinal':
+          valA = a.nomClientFinal || '';
+          valB = b.nomClientFinal || '';
+          break;
+        case 'statut':
+          valA = a.statut || '';
+          valB = b.statut || '';
+          break;
+        case 'nbArticles':
+          valA = getDossierTotalArticles(a);
+          valB = getDossierTotalArticles(b);
+          break;
+        case 'dateLivraison':
+          valA = getDossierDateLivraison(a);
+          valB = getDossierDateLivraison(b);
+          break;
+        case 'dateCommande':
+        default:
+          valA = a.dateCommande || '';
+          valB = b.dateCommande || '';
+          break;
+      }
+
+      if (typeof valA === 'number' && typeof valB === 'number') {
+        return sortDirection === 'asc' ? valA - valB : valB - valA;
+      }
+      return sortDirection === 'asc'
+        ? String(valA).localeCompare(String(valB))
+        : String(valB).localeCompare(String(valA));
+    });
+  }, [dossiers, searchTerm, statusFilter, sortColumn, sortDirection, suivisOF]);
+
+  // Dossiers paginés
+  const totalItems = filteredAndSortedDossiers.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const displayedDossiers = useMemo(() => {
+    if (pageSize >= 9999) return filteredAndSortedDossiers;
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedDossiers.slice(start, start + pageSize);
+  }, [filteredAndSortedDossiers, currentPage, pageSize]);
 
   const handleSupprimerDossier = async (id: string, ref: string) => {
     if (confirm(`Voulez-vous vraiment supprimer définitivement le dossier ${ref} de l'historique ?`)) {
@@ -101,6 +221,11 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
     const updated = [newDossier, ...dossiers];
     await StorageService.saveDossiers(updated);
     if (onRefreshData) onRefreshData();
+  };
+
+  const handleOpenDossierDetail = (dossier: DossierCommandeGlobal) => {
+    setSelectedDossierToView(dossier);
+    setIsDossierDetailOpen(true);
   };
 
   const handleOpenOFModal = (dossier: DossierCommandeGlobal) => {
@@ -172,7 +297,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
         </div>
       </div>
 
-      {/* Filter & Search Toolbar */}
+      {/* Filter, Search & View Mode Toolbar */}
       <div className="bg-slate-900/90 p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-md">
         <div className="flex items-center gap-2 flex-1 min-w-[280px]">
           <div className="relative flex-1">
@@ -182,30 +307,135 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Rechercher par Repère de pièce (ex: CF1, DF2...), N° commande, Client, Donneur d'ordre..."
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-8 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2.5 top-2 text-slate-400 hover:text-white"
+                title="Effacer la recherche"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-purple-400" />
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-purple-300 font-bold focus:outline-none"
-          >
-            <option value="TOUS">Tous les statuts</option>
-            <option value="EN_ATTENTE">En attente</option>
-            <option value="EN_COURS">En cours de fabrication</option>
-            <option value="CLOTURE">Clôturé / Prêt livraison</option>
-            <option value="LIVRE">Livré (Fiche de Transfert)</option>
-            <option value="TERMINE">Terminé</option>
-          </select>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Filtre Statut */}
+          <div className="flex items-center gap-1.5">
+            <Filter className="w-3.5 h-3.5 text-purple-400" />
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-purple-300 font-bold focus:outline-none"
+            >
+              <option value="TOUS">Tous les statuts</option>
+              <option value="EN_ATTENTE">En attente</option>
+              <option value="EN_COURS">En cours de fabrication</option>
+              <option value="CLOTURE">Clôturé / Prêt livraison</option>
+              <option value="LIVRE">Livré (Fiche de Transfert)</option>
+              <option value="TERMINE">Terminé</option>
+            </select>
+          </div>
+
+          {/* Sélecteur Nombre par page (Confort grands volumes) */}
+          <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-lg border border-slate-700 text-xs">
+            <span className="text-slate-400 text-[11px]">Afficher :</span>
+            <select
+              value={pageSize}
+              onChange={e => setPageSize(Number(e.target.value))}
+              className="bg-transparent text-amber-300 font-bold focus:outline-none cursor-pointer"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={9999}>Tout</option>
+            </select>
+          </div>
+
+          {/* Toggle Vue Tableau vs Vue Cartes */}
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-700">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Vue Tableau Compact (Recommandée pour grand volume de commandes)"
+            >
+              <Table className="w-3.5 h-3.5" />
+              <span>Tableau</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('cards')}
+              className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition cursor-pointer ${
+                viewMode === 'cards'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Vue Cartes Détaillées"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Cartes</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Dossiers Grid */}
-      {filteredDossiers.length === 0 ? (
+      {/* Barre de pagination & résumé des résultats */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 px-1">
+        <div>
+          <span>Affichage de </span>
+          <strong className="text-white">
+            {totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+          </strong>
+          <span> à </span>
+          <strong className="text-white">
+            {Math.min(currentPage * pageSize, totalItems)}
+          </strong>
+          <span> sur </span>
+          <strong className="text-amber-400 font-mono">{totalItems}</strong>
+          <span> commande(s) trouvée(s)</span>
+          {searchTerm && <span className="text-purple-300 ml-1">(filtrées par « {searchTerm} »)</span>}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Page précédente"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <span className="px-3 py-1 font-mono text-xs bg-slate-900 border border-slate-700 rounded-lg text-amber-300 font-bold">
+              Page {currentPage} / {totalPages}
+            </span>
+
+            <button
+              type="button"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              className="p-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title="Page suivante"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Vue Tableau Compact (Optimal pour grand volume) */}
+      {displayedDossiers.length === 0 ? (
         <div className="bg-slate-900/50 p-12 rounded-2xl border border-slate-800 text-center space-y-3">
           <FolderOpen className="w-12 h-12 text-slate-600 mx-auto" />
           <h3 className="text-sm font-bold text-slate-300">Aucun dossier de commande trouvé</h3>
@@ -215,9 +445,302 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               : "Aucune commande n'est encore enregistrée dans l'historique de l'atelier."}
           </p>
         </div>
+      ) : viewMode === 'table' ? (
+        <div className="bg-slate-900/90 rounded-xl border border-slate-800 shadow-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-slate-950 text-slate-300 border-b border-slate-800 font-bold select-none">
+                <tr>
+                  <th
+                    onClick={() => handleSort('refCommande')}
+                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Réf. Commande</span>
+                      {sortColumn === 'refCommande' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('dateCommande')}
+                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Date Commande</span>
+                      {sortColumn === 'dateCommande' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('dateLivraison')}
+                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Échéance / Délai</span>
+                      {sortColumn === 'dateLivraison' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('nomClientFinal')}
+                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Client Final</span>
+                      {sortColumn === 'nomClientFinal' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3 px-3">Donneur d'Ordre</th>
+                  <th
+                    onClick={() => handleSort('nbArticles')}
+                    className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Articles / Pièces</span>
+                      {sortColumn === 'nbArticles' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleSort('statut')}
+                    className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
+                  >
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span>Statut</span>
+                      {sortColumn === 'statut' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="py-3 px-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {displayedDossiers.map((dossier, idx) => {
+                  const nbCaisson = (dossier.articlesCaissons || []).length;
+                  const nbTablier = (dossier.articlesTabliers || []).length;
+                  const nbMstq = (dossier.articlesMoustiquaires || []).length;
+                  const nbPrecadre = (dossier.articlesPrecadres || []).length;
+                  const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
+                  const dateLiv = getDossierDateLivraison(dossier);
+
+                  // Repères trouvés si recherche active
+                  const term = searchTerm.toLowerCase().trim();
+                  const matchedRepere = term
+                    ? [
+                        ...(dossier.articlesCaissons || []).filter(c => (c.repere || '').toLowerCase().includes(term)).map(c => `📦 ${c.repere}`),
+                        ...(dossier.articlesTabliers || []).filter(t => (t.repere || '').toLowerCase().includes(term)).map(t => `🪟 ${t.repere}`),
+                        ...(dossier.articlesMoustiquaires || []).filter(m => (m.repere || '').toLowerCase().includes(term)).map(m => `🦟 ${m.repere}`),
+                        ...(dossier.articlesPrecadres || []).filter(p => (p.repere || '').toLowerCase().includes(term)).map(p => `🚪 ${p.repere}`)
+                      ]
+                    : [];
+
+                  return (
+                    <tr
+                      key={dossier.id}
+                      className={`hover:bg-slate-850/80 transition ${
+                        idx % 2 === 0 ? 'bg-slate-900/40' : 'bg-slate-900/80'
+                      }`}
+                    >
+                      {/* Réf. Commande */}
+                      <td className="py-2.5 px-3 font-mono">
+                        <div className="flex flex-col gap-1 items-start">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDossierDetail(dossier)}
+                            className="font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1 transition cursor-pointer shadow-xs"
+                            title="Cliquer pour visualiser tous les détails de cette commande"
+                          >
+                            <span>{dossier.refCommande}</span>
+                            <Eye className="w-3 h-3 text-amber-400 opacity-60" />
+                          </button>
+                          {dossier.estPrioritaire && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                              <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
+                              <span>Prioritaire</span>
+                            </span>
+                          )}
+                          {matchedRepere.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {matchedRepere.slice(0, 3).map((r, i) => (
+                                <span key={i} className="text-[10px] bg-purple-950 text-purple-300 border border-purple-500/40 px-1 py-0.2 rounded font-bold">
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Date Commande */}
+                      <td className="py-2.5 px-3 font-mono text-slate-300 text-[11px] whitespace-nowrap">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-slate-500" />
+                          <span>{dossier.dateCommande}</span>
+                        </span>
+                      </td>
+
+                      {/* Échéance */}
+                      <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-bold">
+                          <Clock className="w-3 h-3 text-amber-400" />
+                          <span>{dateLiv}</span>
+                        </span>
+                      </td>
+
+                      {/* Client Final */}
+                      <td className="py-2.5 px-3 font-semibold text-slate-100 max-w-[180px] truncate" title={dossier.nomClientFinal}>
+                        <div className="flex items-center gap-1.5">
+                          <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          <span className="truncate">{dossier.nomClientFinal}</span>
+                        </div>
+                      </td>
+
+                      {/* Donneur d'Ordre */}
+                      <td className="py-2.5 px-3 text-sky-300 font-medium max-w-[150px] truncate" title={dossier.donneurOrdre}>
+                        {dossier.donneurOrdre || '—'}
+                      </td>
+
+                      {/* Articles / Pièces */}
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="inline-flex items-center gap-1 font-mono text-[11px]">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold" title="Total lignes articles">
+                            {totalArticles} pcs
+                          </span>
+                          {nbCaisson > 0 && (
+                            <span className="px-1 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-[10px]" title={`${nbCaisson} caisson(s)`}>
+                              {nbCaisson}C
+                            </span>
+                          )}
+                          {nbTablier > 0 && (
+                            <span className="px-1 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/30 text-[10px]" title={`${nbTablier} volet(s)`}>
+                              {nbTablier}V
+                            </span>
+                          )}
+                          {nbMstq > 0 && (
+                            <span className="px-1 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-500/30 text-[10px]" title={`${nbMstq} moustiquaire(s)`}>
+                              {nbMstq}M
+                            </span>
+                          )}
+                          {nbPrecadre > 0 && (
+                            <span className="px-1 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-500/30 text-[10px]" title={`${nbPrecadre} précadre(s)`}>
+                              {nbPrecadre}P
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Statut */}
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
+                            dossier.statut === 'LIVRE'
+                              ? 'bg-blue-950 text-blue-300 border-blue-500/40'
+                              : dossier.statut === 'CLOTURE'
+                              ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                              : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
+                              ? 'bg-emerald-950 text-emerald-300 border-emerald-500/30'
+                              : dossier.statut === 'EN_COURS'
+                              ? 'bg-amber-950 text-amber-300 border-amber-500/30'
+                              : 'bg-purple-950 text-purple-300 border-purple-500/30'
+                          }`}
+                        >
+                          {dossier.statut === 'LIVRE'
+                            ? '🚚 LIVRÉ'
+                            : dossier.statut === 'CLOTURE'
+                            ? '✅ CLÔTURÉ'
+                            : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
+                            ? '🏭 FABRIQUÉ'
+                            : dossier.statut === 'EN_COURS'
+                            ? '⚙️ EN COURS'
+                            : '⏳ EN ATTENTE'}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Bouton Visualiser Complète */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDossierDetail(dossier)}
+                            className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 hover:text-purple-100 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-purple-700/60 shadow-xs"
+                            title="Visualiser le détail complet de la commande"
+                          >
+                            <Eye className="w-3 h-3 text-purple-400" />
+                            <span>Visualiser</span>
+                          </button>
+
+                          {/* Charger dans Écosystème */}
+                          <button
+                            type="button"
+                            onClick={() => onLoadDossierInEcosysteme(dossier)}
+                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                            title="Charger et modifier dans l'Écosystème"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                          </button>
+
+                          {/* Imprimer OF */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenOFModal(dossier)}
+                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                            title="Imprimer Ordre de Fabrication (OF)"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-amber-400" />
+                          </button>
+
+                          {/* Dupliquer */}
+                          <button
+                            type="button"
+                            onClick={() => handleDupliquerDossier(dossier)}
+                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                            title="Dupliquer le dossier"
+                          >
+                            <Copy className="w-3.5 h-3.5 text-sky-400" />
+                          </button>
+
+                          {/* Supprimer */}
+                          <button
+                            type="button"
+                            onClick={() => handleSupprimerDossier(dossier.id, dossier.refCommande)}
+                            className="p-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer"
+                            title="Supprimer définitivement"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : (
+        /* Vue Cartes (Détaillée) */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredDossiers.map(dossier => {
+          {displayedDossiers.map(dossier => {
             const nbCaisson = (dossier.articlesCaissons || []).length;
             const nbTablier = (dossier.articlesTabliers || []).length;
             const nbMstq = (dossier.articlesMoustiquaires || []).length;
@@ -422,14 +945,27 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 
                 {/* Actions Footer */}
                 <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onLoadDossierInEcosysteme(dossier)}
-                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Charger / Modifier</span>
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDossierDetail(dossier)}
+                      className="px-2.5 py-1.5 bg-purple-950/80 hover:bg-purple-900 text-purple-300 hover:text-purple-100 rounded-lg text-xs font-bold flex items-center gap-1.5 transition border border-purple-700/60 shadow cursor-pointer"
+                      title="Visualiser le détail complet de la commande"
+                    >
+                      <Eye className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Visualiser</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onLoadDossierInEcosysteme(dossier)}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shadow cursor-pointer"
+                      title="Charger et modifier dans l'Écosystème"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Charger</span>
+                    </button>
+                  </div>
 
                   <div className="flex items-center gap-1">
                     <button
@@ -462,6 +998,23 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* Modal Visualisation Complète du Dossier */}
+      {selectedDossierToView && (
+        <DossierDetailModal
+          isOpen={isDossierDetailOpen}
+          dossier={selectedDossierToView}
+          onClose={() => {
+            setIsDossierDetailOpen(false);
+            setSelectedDossierToView(null);
+          }}
+          onLoadInEcosysteme={d => {
+            setIsDossierDetailOpen(false);
+            setSelectedDossierToView(null);
+            onLoadDossierInEcosysteme(d);
+          }}
+        />
       )}
 
       {/* OF Modal — depuis l'Historique, il faut recharger le dossier dans l'Ecosystème pour imprimer l'OF complet */}

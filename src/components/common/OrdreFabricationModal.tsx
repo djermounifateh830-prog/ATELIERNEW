@@ -57,6 +57,8 @@ export interface OrdreFabricationModalProps {
   paramsMaille?: ParametresOptimisationMaille;
   numeroEmission?: number;
   codeOF?: string;
+  dateLivraisonPrevisionnelle?: string;
+  dateLivraisonPrevisionnelleISO?: string;
   onOFEmis?: () => void;
 }
 
@@ -466,6 +468,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   paramsMaille,
   numeroEmission,
   codeOF,
+  dateLivraisonPrevisionnelle,
+  dateLivraisonPrevisionnelleISO,
   onOFEmis
 }) => {
   const [ofEmis, setOfEmis] = useState<boolean>(false);
@@ -530,9 +534,13 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         setMatchedOf(match);
         if (match.estPrioritaire) setEstPrioritaire(true);
         if (match.motifPriorite) setMotifPriorite(match.motifPriorite);
-        if (match.dateLivraisonPrevisionnelleISO) setDateLivraisonISO(match.dateLivraisonPrevisionnelleISO);
+        if (match.dateLivraisonPrevisionnelleISO || dateLivraisonPrevisionnelleISO) {
+          setDateLivraisonISO(match.dateLivraisonPrevisionnelleISO || dateLivraisonPrevisionnelleISO || '');
+        }
         if (match.dateLivraisonPrevisionnelle) {
           setDateLivraisonPrevisionnelleAffichee(match.dateLivraisonPrevisionnelle);
+        } else if (dateLivraisonPrevisionnelle) {
+          setDateLivraisonPrevisionnelleAffichee(dateLivraisonPrevisionnelle);
         } else {
           const estim = DelaisProductionService.estimerDelaiOF(match, ofs);
           setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
@@ -543,28 +551,36 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         setNextSequencePreview(maxNum + 1);
         setMatchedOf(null);
 
-        // Calcul prévisionnel initial de livraison
-        const ofRef: SuiviOF = {
-          id: 'preview',
-          numCommande: refCommande || 'CMD',
-          nomClient: nomClient || agenceInfo.nom || '',
-          donneurOrdre: donneurOrdre || agenceInfo.nom || '',
-          famille: familleRecherche,
-          statut: 'EMIS',
-          dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
-          titreSection: titreProduit || '',
-          totalBarresNeuvesPrevu: 0,
-          totalChutesUtiliseesPrevu: 0,
-          nombrePieces: nbPiecesOFReelles,
-          lignesRetour: [],
-          estPrioritaire
-        };
-        const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
-        setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
-        setDateLivraisonISO(estim.dateLivraisonISO);
+        // Si la date a été réglée sur l'Écosystème lors de la saisie de la commande, la garder rigoureusement !
+        if (dateLivraisonPrevisionnelle) {
+          setDateLivraisonPrevisionnelleAffichee(dateLivraisonPrevisionnelle);
+          if (dateLivraisonPrevisionnelleISO) {
+            setDateLivraisonISO(dateLivraisonPrevisionnelleISO);
+          }
+        } else {
+          // Calcul prévisionnel initial de livraison si non renseigné
+          const ofRef: SuiviOF = {
+            id: 'preview',
+            numCommande: refCommande || 'CMD',
+            nomClient: nomClient || agenceInfo.nom || '',
+            donneurOrdre: donneurOrdre || agenceInfo.nom || '',
+            famille: familleRecherche,
+            statut: 'EMIS',
+            dateEmission: dateCommande || new Date().toLocaleDateString('fr-FR'),
+            titreSection: titreProduit || '',
+            totalBarresNeuvesPrevu: 0,
+            totalChutesUtiliseesPrevu: 0,
+            nombrePieces: nbPiecesOFReelles,
+            lignesRetour: [],
+            estPrioritaire
+          };
+          const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
+          setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
+          setDateLivraisonISO(estim.dateLivraisonISO);
+        }
       }
     }).catch(() => {});
-  }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande]);
+  }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO]);
 
   const currentSequenceNum = emittedSequence || nextSequencePreview || 1;
   const currentCodeOFAffiche = emittedCode || `OF-${String(currentSequenceNum).padStart(3, '0')}`;
