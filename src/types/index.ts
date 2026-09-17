@@ -12,6 +12,7 @@ export interface Article {
   quantite_reservee: number;
   prix_unitaire: number;    // DZD
   stock_min: number;        // seuil d'alerte stock
+  categorie?: string;
 }
 
 export interface ChuteItem {

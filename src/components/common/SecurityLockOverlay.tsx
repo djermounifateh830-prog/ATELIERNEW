@@ -4,10 +4,12 @@ import { userService, ROLE_CONFIG } from '../../services/userService';
 import { UserProfile } from '../../types';
 
 interface SecurityLockOverlayProps {
-  onUnlocked: () => void;
+  isOpen?: boolean;
+  onUnlocked?: () => void;
+  onUnlock?: () => void;
 }
 
-export const SecurityLockOverlay: React.FC<SecurityLockOverlayProps> = ({ onUnlocked }) => {
+export const SecurityLockOverlay: React.FC<SecurityLockOverlayProps> = ({ isOpen, onUnlocked, onUnlock }) => {
   const [activeOp, setActiveOp] = useState<UserProfile>(userService.getActiveOperator());
   const [operators, setOperators] = useState<UserProfile[]>(userService.getOperators());
   const [pin, setPin] = useState<string>('');
@@ -52,7 +54,8 @@ export const SecurityLockOverlay: React.FC<SecurityLockOverlayProps> = ({ onUnlo
     const res = userService.unlockSession(code);
     if (res.success) {
       setErrorMsg(null);
-      onUnlocked();
+      if (onUnlocked) onUnlocked();
+      if (onUnlock) onUnlock();
     } else {
       setErrorMsg(res.message || 'Code PIN incorrect.');
       setShake(true);
@@ -67,6 +70,10 @@ export const SecurityLockOverlay: React.FC<SecurityLockOverlayProps> = ({ onUnlo
     setPin('');
     setErrorMsg(null);
   };
+
+  if (isOpen === false) {
+    return null;
+  }
 
   const roleMeta = ROLE_CONFIG[activeOp.role] || ROLE_CONFIG.ATELIER;
 
