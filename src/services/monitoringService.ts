@@ -445,7 +445,7 @@ export class MonitoringService {
 
     // Calcul de l'échéance prévisionnelle globale pour les Caissons
     const configCaisson = params.familles.CAISSON;
-    const capaciteJourCaisson = configCaisson.capaciteJournalierePieces || 120;
+    const capaciteJourCaisson = configCaisson.capaciteJournalierePieces || 20;
     const delaiFixeCaisson = configCaisson.delaiFixeJours || 0;
     const joursRequisCaisson = piecesCaissonsTotal > 0
       ? Math.max(1, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson + delaiFixeCaisson))
@@ -666,7 +666,7 @@ export class MonitoringService {
     });
 
     const configTablier = params.familles.TABLIER;
-    const capaciteJourTablier = configTablier.capaciteJournalierePieces || 80;
+    const capaciteJourTablier = configTablier.capaciteJournalierePieces || 15;
     const delaiFixeTablier = configTablier.delaiFixeJours || 0;
     const joursRequisTablier = piecesTabliersTotal > 0
       ? Math.max(1, Math.ceil(piecesTabliersTotal / capaciteJourTablier + delaiFixeTablier))
@@ -886,7 +886,7 @@ export class MonitoringService {
     });
 
     const configPrecadre = params.familles.PRECADRE;
-    const capPrecadre = configPrecadre.capaciteJournalierePieces || 50;
+    const capPrecadre = configPrecadre.capaciteJournalierePieces || 20;
     const jPrecadre = piecesPrecadresTotal > 0 ? Math.max(1, Math.ceil(piecesPrecadresTotal / capPrecadre)) : 1;
     const dateFinPrecadre = DelaisProductionService.ajouterJoursOuvres(dateRef, jPrecadre, params.joursOuvres);
     // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
@@ -1139,7 +1139,7 @@ export class MonitoringService {
     });
 
     const configMstq = params.familles.MOUSTIQUAIRE;
-    const capMstq = configMstq.capaciteJournalierePieces || 35;
+    const capMstq = configMstq.capaciteJournalierePieces || 15;
     const jMstq = piecesMstqTotal > 0 ? Math.max(1, Math.ceil(piecesMstqTotal / capMstq)) : 1;
     const dateFinMstq = DelaisProductionService.ajouterJoursOuvres(dateRef, jMstq, params.joursOuvres);
     // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file

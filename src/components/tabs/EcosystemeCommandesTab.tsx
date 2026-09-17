@@ -9595,7 +9595,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           isUpdate={!!editingDossierId}
           initialEstPrioritaire={estPrioritaire}
           initialMotifPriorite={motifPriorite}
-          initialDateLivraisonISO={dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO}
+          initialDateLivraisonISO={delaiFixeManuellement ? (dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO) : ''}
         />
       )}
     </div>

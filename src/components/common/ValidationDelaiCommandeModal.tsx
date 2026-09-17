@@ -72,7 +72,7 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
     setEstPrioritaire(initialEstPrioritaire);
     setMotifPriorite(initialMotifPriorite);
 
-    if (initialDateLivraisonISO) {
+    if (initialDateLivraisonISO && initialDateLivraisonISO !== estimationGlobale.dateLivraisonISO) {
       setDateSelectionneeISO(initialDateLivraisonISO);
       setModeDate('MANUEL');
     } else if (estimationGlobale.dateLivraisonISO) {
@@ -83,7 +83,14 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
       setDateSelectionneeISO(auj);
       setModeDate('AUTO');
     }
-  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale]);
+  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale.dateLivraisonISO]);
+
+  // Synchronisation dynamique si en mode AUTO
+  useEffect(() => {
+    if (modeDate === 'AUTO' && estimationGlobale.dateLivraisonISO) {
+      setDateSelectionneeISO(estimationGlobale.dateLivraisonISO);
+    }
+  }, [estimationGlobale.dateLivraisonISO, modeDate]);
 
   if (!isOpen) return null;
 
@@ -109,7 +116,8 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
       return;
     }
     const params = DelaisProductionService.getParametres();
-    const dRef = DelaisProductionService.parseDateString(dateCommande) || new Date();
+    // Les raccourcis partent d'aujourd'hui pour un délai de livraison réel
+    const dRef = new Date();
     const cible = DelaisProductionService.ajouterJoursOuvres(dRef, joursAjoutes, params.joursOuvres);
     setDateSelectionneeISO(DelaisProductionService.toISODateString(cible));
   };
@@ -272,11 +280,11 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
               </div>
             )}
 
-            {/* Explication pédagogique */}
-            <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2 leading-relaxed">
+            {/* Explication pédagogique de la formule */}
+            <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-300 flex items-start gap-2 leading-relaxed bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
-                Le délai prévisionnel additionne le volume de cette commande avec les ordres déjà en cours de fabrication à l'atelier pour la même famille, garantissant une date de livraison réaliste et fiable.
+                <strong>Formule de livraison atelier :</strong> Le délai de livraison au client est calculé en additionnant le <strong>volume total des commandes déjà en cours à l'atelier</strong> + le <strong>volume de cette commande</strong>, divisé par la <strong>cadence journalière</strong> de chaque famille (en jours ouvrés à compter d'aujourd'hui). L'atelier peut ainsi s'engager sur une date de remise réelle au client tenant compte de sa file de production complète.
               </span>
             </div>
           </div>

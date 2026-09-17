@@ -27,35 +27,35 @@ export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
     CAISSON: {
       famille: 'CAISSON',
       libelle: 'Caissons & Sous-faces',
-      tempsUnitaireMinutes: 5, // 5 min par caisson
-      capaciteJournalierePieces: 120, // 120 caissons / jour
+      tempsUnitaireMinutes: 24, // 24 min par caisson/sous-face
+      capaciteJournalierePieces: 20, // 20 caissons / jour
       delaiFixeJours: 0
     },
     PRECADRE: {
       famille: 'PRECADRE',
       libelle: 'Précadres',
-      tempsUnitaireMinutes: 6,
-      capaciteJournalierePieces: 80,
+      tempsUnitaireMinutes: 24,
+      capaciteJournalierePieces: 20, // 20 précadres / jour
       delaiFixeJours: 0
     },
     MOUSTIQUAIRE: {
       famille: 'MOUSTIQUAIRE',
       libelle: 'Moustiquaires plissées',
-      tempsUnitaireMinutes: 10,
-      capaciteJournalierePieces: 50,
+      tempsUnitaireMinutes: 32,
+      capaciteJournalierePieces: 15, // 15 moustiquaires / jour
       delaiFixeJours: 0
     },
     TABLIER: {
       famille: 'TABLIER',
       libelle: 'Tabliers de volet',
-      tempsUnitaireMinutes: 15,
-      capaciteJournalierePieces: 35,
+      tempsUnitaireMinutes: 32,
+      capaciteJournalierePieces: 15, // 15 tabliers / jour
       delaiFixeJours: 0
     }
   }
 };
 
-const STORAGE_KEY = '3m_parametres_production_v1';
+const STORAGE_KEY = '3m_parametres_production_v2';
 let cachedParametres: ParametresProductionAtelier | null = null;
 
 export class DelaisProductionService {
@@ -606,7 +606,18 @@ export class DelaisProductionService {
     }
 
     const params = paramsCustom || this.getParametres();
-    const dateDepart = this.parseDateString(dossier.dateCommande);
+    
+    // Détermination de la date de départ atelier :
+    // La fabrication et la file d'attente s'exécutent à partir d'aujourd'hui (au plus tôt)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dCmd = this.parseDateString(dossier.dateCommande);
+    dCmd.setHours(0, 0, 0, 0);
+
+    // Si la commande a été saisie dans le passé, l'atelier ne peut commencer qu'aujourd'hui
+    const dateDepart = dCmd.getTime() > today.getTime() ? dCmd : today;
+
     const piecesParFamille = this.compterPiecesDossierParFamille(dossier);
 
     const detailsParFamille: Record<string, EstimationDelaiDetail> = {};
@@ -625,43 +636,91 @@ export class DelaisProductionService {
       auMoinsUneFamille = true;
       const configFam = params.familles[fam] || PARAMETRES_PRODUCTION_DEFAUT.familles[fam];
 
-      // Calculer le volume des travaux en cours de cette famille
-      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
+      // Calculer le volume des travaux en cours de cette famille à l'atelier
+      // RÈGLE : Total des commandes en cours à l'atelier pour cette famille + Volume de la commande actuelle
       let piecesEnFile = 0;
       if (!dossier.estPrioritaire) {
-        const ofsEnCours = suivisOF.filter(o =>
-          (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE') &&
-          !o.estEnPause &&
-          (o.famille === fam || (fam === 'CAISSON' && (o.famille as string) === 'SOUS_FACE'))
-        );
+        const cmdActuelle = (dossier.refCommande || '').toLowerCase().trim();
+        const dossierIdActuel = dossier.id;
+
+        // Ensemble des ID de dossiers déjà comptabilisés via leurs OFs en cours pour cette famille
+        const dossiersComptabilisesOF = new Set<string>();
+
+        // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
+        const ofsEnCours = suivisOF.filter(o => {
+          if (o.statut !== 'EMIS' && o.statut !== 'RETOUR_EN_ATTENTE') return false;
+          if (o.estEnPause) return false;
+          const ofFam = (o.famille as string) === 'SOUS_FACE' ? 'CAISSON' : o.famille;
+          return ofFam === fam;
+        });
 
         ofsEnCours.forEach(o => {
-          // Exclure les OFs qui appartiennent déjà à ce même dossier
-          const cmdDossier = (dossier.refCommande || '').toLowerCase().trim();
           const cmdOF = (o.numCommande || '').toLowerCase().trim();
-          if (cmdDossier && cmdOF && (cmdDossier.includes(cmdOF) || cmdOF.includes(cmdDossier))) {
+          // Exclure les OFs qui appartiennent déjà à ce même dossier
+          if (cmdActuelle && cmdOF && (cmdActuelle === cmdOF || cmdActuelle.includes(cmdOF) || cmdOF.includes(cmdActuelle))) {
             return;
           }
           piecesEnFile += this.compterPiecesOF(o);
+
+          // Identifier si cet OF appartient à un dossier connu pour ne pas le recompter en étape 2
+          const dParent = tousDossiers.find(d => {
+            if (d.id === dossierIdActuel) return false;
+            const refs = [
+              d.refCommande,
+              d.numCommandeCaisson,
+              d.numCommandeSousFace,
+              d.numCommandeTablier,
+              d.numCommandeMoustiquaire,
+              d.numCommandePrecadre
+            ].filter(Boolean).map(r => r!.toLowerCase().trim());
+            return refs.some(r => r === cmdOF || r.includes(cmdOF) || cmdOF.includes(r));
+          });
+          if (dParent) {
+            dossiersComptabilisesOF.add(dParent.id);
+          }
         });
 
-        // 2. D'après les autres dossiers en attente ou en cours antérieurs si pas encore d'OF (en excluant les suspendus)
+        // 2. D'après les autres dossiers en attente ou en cours dont l'OF de cette famille n'a pas encore été émis
         tousDossiers.forEach(d => {
-          if (d.id === dossier.id) return;
+          if (d.id === dossierIdActuel) return;
+          // Ne compter que les dossiers en cours ou en attente, non en pause
           if ((d.statut !== 'EN_COURS' && d.statut !== 'EN_ATTENTE') || d.estEnPause) return;
-          // Éviter double compte si un OF existe déjà pour ce dossier
-          const hasOF = suivisOF.some(o => o.numCommande === d.refCommande);
-          if (!hasOF) {
+          // Si cette famille a déjà un OF comptabilisé à l'étape 1, éviter le double compte
+          if (dossiersComptabilisesOF.has(d.id)) return;
+
+          // Vérifier si un OF existe déjà pour ce dossier spécifiquement dans cette famille
+          const refsD = [
+            d.refCommande,
+            d.numCommandeCaisson,
+            d.numCommandeSousFace,
+            d.numCommandeTablier,
+            d.numCommandeMoustiquaire,
+            d.numCommandePrecadre
+          ].filter(Boolean).map(r => r!.toLowerCase().trim());
+
+          const hasOFPourCetteFamille = suivisOF.some(o => {
+            const ofFam = (o.famille as string) === 'SOUS_FACE' ? 'CAISSON' : o.famille;
+            if (ofFam !== fam) return false;
+            const cmdOF = (o.numCommande || '').toLowerCase().trim();
+            return refsD.some(r => r === cmdOF || r.includes(cmdOF) || cmdOF.includes(r));
+          });
+
+          if (!hasOFPourCetteFamille) {
             const countD = this.compterPiecesDossierParFamille(d);
             piecesEnFile += countD[fam] || 0;
           }
         });
       }
 
+      // Volume total à absorber par l'atelier = File d'attente existante + Volume de la commande actuelle
       const totalChargePieces = dossier.estPrioritaire ? nbPieces : (piecesEnFile + nbPieces);
-      const cap = configFam.capaciteJournalierePieces || 120;
+      const cap = configFam.capaciteJournalierePieces || (fam === 'CAISSON' ? 20 : fam === 'PRECADRE' ? 20 : 15);
+      
+      // Jours ouvrés requis pour que l'atelier termine l'ensemble de la charge cumulée
       const joursProduction = Math.max(1, Math.ceil(totalChargePieces / cap));
       const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+      
+      // Date prévisionnelle à laquelle l'atelier aura achevé et pourra LIVRER la commande au client
       const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursRequis, params.joursOuvres);
 
       if (dateEstimee.getTime() > maxTime) {
