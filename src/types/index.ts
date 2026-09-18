@@ -657,6 +657,7 @@ export interface UserPermissions {
   tabStock: boolean;            // 📦 Gestion Stock & Chutes
   tabDevis: boolean;            // 💰 Devis & Coûts
   tabDocumentation: boolean;    // 📘 Règles Métier
+  tabParametres?: boolean;      // ⚙️ Paramètres & Configuration Atelier
   
   // Actions opérationnelles sensibles
   canCloseOF: boolean;          // Clôture des OFs

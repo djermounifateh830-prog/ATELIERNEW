@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChuteItem, ChuteMaille } from '../../types';
 import { StorageService } from '../../services/storage';
 import {
@@ -18,6 +18,7 @@ interface ImportChutesModalProps {
   chutesBarresExistantes: Record<string, ChuteItem[]>;
   chutesMailleExistantes: ChuteMaille[];
   onImportComplete: () => void;
+  initialFile?: File | null;
 }
 
 export type StrategieImportChute = 'REPLACE_SELECTED' | 'MERGE_ADD' | 'REPLACE_ALL';
@@ -36,7 +37,8 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
   onClose,
   chutesBarresExistantes,
   chutesMailleExistantes,
-  onImportComplete
+  onImportComplete,
+  initialFile = null
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
@@ -47,15 +49,36 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
     chutesBarres: Record<string, ChuteItem[]>;
     chutesMaille: ChuteMaille[];
   } | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Traiter un fichier initial si fourni lors de l'ouverture
+  useEffect(() => {
+    if (isOpen && initialFile && !file) {
+      processFile(initialFile);
+    }
+  }, [isOpen, initialFile]);
+
+  // Réinitialiser les états à l'ouverture
+  useEffect(() => {
+    if (isOpen && !initialFile) {
+      setFile(null);
+      setSheetsDetected([]);
+      setParsedData(null);
+      setErrorMessage(null);
+      setSuccessMessage(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
+  const processFile = async (selectedFile: File) => {
     setFile(selectedFile);
     setIsAnalyzing(true);
+    setErrorMessage(null);
 
     try {
       const res = await StorageService.parseChutesExcelFile(selectedFile);
@@ -92,10 +115,30 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
 
       setSheetsDetected(sheetsInfo);
     } catch (err: any) {
-      alert('Erreur lors de la lecture du fichier Excel de chutes: ' + err.message);
+      setErrorMessage('Erreur lors de la lecture du fichier Excel de chutes : ' + (err.message || 'Fichier non lisible.'));
       setFile(null);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      processFile(selectedFile);
+    }
+    // Permettre de ré-importer le même fichier si besoin
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      processFile(droppedFile);
     }
   };
 
@@ -114,19 +157,15 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
 
     const selectedSheets = sheetsDetected.filter(s => s.selected);
     if (selectedSheets.length === 0) {
-      alert('Veuillez cocher au moins un onglet à importer.');
+      setErrorMessage('Veuillez cocher au moins un onglet à importer.');
       return;
     }
 
     setIsApplying(true);
+    setErrorMessage(null);
 
     try {
       if (strategie === 'REPLACE_ALL') {
-        if (!confirm(`⚠️ ATTENTION : Vous avez choisi "Remplacement Complet du Classeur". Tous les onglets existants seront supprimés et remplacés par ceux du fichier Excel (${selectedSheets.length} onglets). Continuer ?`)) {
-          setIsApplying(false);
-          return;
-        }
-
         const newChutesBarres: Record<string, ChuteItem[]> = {};
         let newChutesMaille: ChuteMaille[] = [];
 
@@ -141,7 +180,6 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
         await StorageService.saveChutesBarres(newChutesBarres);
         await StorageService.saveChutesMaille(newChutesMaille);
       } else if (strategie === 'REPLACE_SELECTED') {
-        // Conserver les onglets existants non sélectionnés, et remplacer ceux sélectionnés
         const updatedBarres: Record<string, ChuteItem[]> = { ...chutesBarresExistantes };
         let updatedMaille: ChuteMaille[] = [...chutesMailleExistantes];
 
@@ -156,7 +194,6 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
         await StorageService.saveChutesBarres(updatedBarres);
         await StorageService.saveChutesMaille(updatedMaille);
       } else if (strategie === 'MERGE_ADD') {
-        // Cumuler les chutes dans les onglets sélectionnés
         const updatedBarres: Record<string, ChuteItem[]> = { ...chutesBarresExistantes };
         let updatedMaille: ChuteMaille[] = [...chutesMailleExistantes];
 
@@ -190,13 +227,14 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
         await StorageService.saveChutesMaille(updatedMaille);
       }
 
-      // Fermer la modal et rafraîchir UNIQUEMENT APRÈS le succès de la sauvegarde
-      onClose();
-      onImportComplete();
-      alert(`Import de chutes terminé avec succès ! (${selectedSheets.length} onglet(s) mis à jour)`);
+      setSuccessMessage(`Import réussi ! (${selectedSheets.length} onglet(s) importé(s) dans la base SQLite)`);
+      setTimeout(() => {
+        onImportComplete();
+        onClose();
+      }, 900);
     } catch (err: any) {
       console.error('Erreur lors de l\'import des chutes:', err);
-      alert('Erreur lors de l\'import : ' + (err.message || 'Une erreur est survenue lors de l\'enregistrement des chutes.'));
+      setErrorMessage('Erreur lors de l\'import : ' + (err.message || 'Une erreur est survenue lors de l\'enregistrement des chutes.'));
     } finally {
       setIsApplying(false);
     }
@@ -219,45 +257,81 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                Import Intelligent de Chutes (Excel)
+                <span>Importation Intelligente des Chutes</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/20 text-sky-400 border border-sky-500/30">
+                  Excel (.xlsx) Multi-Onglets
+                </span>
               </h2>
-              <p className="text-[11px] text-slate-400">
-                Sélectionnez quels onglets / familles importer sans risquer d'écraser le reste.
+              <p className="text-xs text-slate-400">
+                Détection automatique des onglets, profilés de barres et toiles moustiquaires.
               </p>
             </div>
           </div>
+
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Message d'erreur ou succès */}
+        {errorMessage && (
+          <div className="mx-5 mt-4 p-3 bg-red-950/60 border border-red-500/50 rounded-xl text-red-200 text-xs flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mx-5 mt-4 p-3 bg-emerald-950/60 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+        )}
 
         {/* Corps modal */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
           {/* Étape 1 : Sélection Fichier */}
           {!file && (
-            <div className="border-2 border-dashed border-slate-700 rounded-2xl p-10 text-center hover:border-sky-500/50 transition bg-slate-950/40">
+            <label
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              className={`block border-2 border-dashed rounded-2xl p-10 text-center transition cursor-pointer ${
+                isDragging
+                  ? 'border-sky-400 bg-sky-950/30'
+                  : 'border-slate-700 hover:border-sky-500/50 bg-slate-950/40'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={handleFileChange}
+                className="sr-only"
+              />
               <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-sky-400/60" />
               <h3 className="text-sm font-bold text-slate-200 mb-1">
-                Sélectionnez votre classeur de chutes (<code>stok_chutes.xlsx</code>)
+                Cliquez ici ou déposez votre classeur de chutes (<code>stok_chutes.xlsx</code>)
               </h3>
               <p className="text-xs text-slate-500 mb-4">
                 Tous les onglets du fichier seront analysés et vous pourrez choisir exactement quoi importer.
               </p>
-              <label className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black text-xs rounded-xl cursor-pointer shadow-lg shadow-sky-500/20 transition">
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black text-xs rounded-xl cursor-pointer shadow-lg shadow-sky-500/20 transition"
+              >
                 <Upload className="w-4 h-4" />
                 <span>Parcourir le fichier Excel</span>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </label>
-            </div>
+              </span>
+            </label>
           )}
 
           {isAnalyzing && (
@@ -270,110 +344,125 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
           {/* Étape 2 : Onglets détectés & Options */}
           {file && !isAnalyzing && (
             <div className="space-y-4">
-              {/* Info Fichier */}
-              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="w-5 h-5 text-sky-400" />
-                  <div>
-                    <div className="text-xs font-bold text-slate-200 font-mono">{file.name}</div>
-                    <div className="text-[11px] text-slate-500">
-                      {sheetsDetected.length} onglet(s) trouvé(s) • Total : {sheetsDetected.reduce((a, s) => a + s.count, 0)} chute(s)
-                    </div>
-                  </div>
+                  <FileSpreadsheet className="w-4 h-4 text-sky-400" />
+                  <span className="text-xs font-bold text-slate-200">{file.name}</span>
+                  <span className="text-[10px] text-slate-500">
+                    ({(file.size / 1024).toFixed(1)} Ko)
+                  </span>
+                </div>
+                <div className="text-xs font-bold text-sky-400">
+                  {sheetsDetected.length} onglet(s) détecté(s)
                 </div>
               </div>
 
-              {/* Stratégie d'import */}
+              {/* Choix de la stratégie */}
               <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
                 <div className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Mode d'Import pour les Chutes :</span>
+                  <Info className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Mode d'application pour les onglets sélectionnés :</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <label className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2 text-xs transition ${
-                    strategie === 'REPLACE_SELECTED' ? 'bg-sky-950/50 border-sky-500 text-sky-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition ${
+                      strategie === 'REPLACE_SELECTED'
+                        ? 'bg-sky-950/40 border-sky-500/60 text-sky-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="strategie_chute"
+                      name="strategie"
                       checked={strategie === 'REPLACE_SELECTED'}
                       onChange={() => setStrategie('REPLACE_SELECTED')}
-                      className="mt-0.5"
+                      className="mt-0.5 text-sky-500"
                     />
                     <div>
-                      <div className="font-bold text-sky-400">🟢 Remplacer les onglets cochés</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">Remplace uniquement les onglets sélectionnés, conserve tous les autres intacts.</div>
+                      <div className="font-bold text-slate-200">Remplacer onglets choisis</div>
+                      <div className="text-[11px] text-slate-400">
+                        Écrase le stock uniquement pour les onglets cochés. Les autres onglets existants restent intacts.
+                      </div>
                     </div>
                   </label>
 
-                  <label className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2 text-xs transition ${
-                    strategie === 'MERGE_ADD' ? 'bg-emerald-950/50 border-emerald-500 text-emerald-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}>
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition ${
+                      strategie === 'MERGE_ADD'
+                        ? 'bg-sky-950/40 border-sky-500/60 text-sky-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="strategie_chute"
+                      name="strategie"
                       checked={strategie === 'MERGE_ADD'}
                       onChange={() => setStrategie('MERGE_ADD')}
-                      className="mt-0.5"
+                      className="mt-0.5 text-sky-500"
                     />
                     <div>
-                      <div className="font-bold text-emerald-400">🔵 Cumuler / Ajouter au stock</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">Ajoute les chutes importées à celles déjà présentes dans ces onglets.</div>
+                      <div className="font-bold text-slate-200">Ajouter / Cumuler (Fusion)</div>
+                      <div className="text-[11px] text-slate-400">
+                        Ajoute les chutes du fichier à celles déjà présentes dans la base SQLite.
+                      </div>
                     </div>
                   </label>
 
-                  <label className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2 text-xs transition ${
-                    strategie === 'REPLACE_ALL' ? 'bg-rose-950/50 border-rose-500 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
-                  }`}>
+                  <label
+                    className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer text-xs transition ${
+                      strategie === 'REPLACE_ALL'
+                        ? 'bg-amber-950/40 border-amber-500/60 text-amber-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
                     <input
                       type="radio"
-                      name="strategie_chute"
+                      name="strategie"
                       checked={strategie === 'REPLACE_ALL'}
                       onChange={() => setStrategie('REPLACE_ALL')}
-                      className="mt-0.5"
+                      className="mt-0.5 text-amber-500"
                     />
                     <div>
-                      <div className="font-bold text-rose-400">🔴 Remplacement Total Classeur</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">Écrase l'intégralité du stock de chutes existant.</div>
+                      <div className="font-bold text-amber-300 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                        <span>Remplacement Total</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Supprime tout l'ancien stock de chutes et ne conserve que le nouveau classeur.
+                      </div>
                     </div>
                   </label>
                 </div>
               </div>
 
               {/* Sélection des onglets */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-400">
+              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+                <div className="px-4 py-2.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSelectAll(true)}
-                      className="text-sky-400 hover:underline font-semibold"
-                    >
-                      Tout cocher
-                    </button>
-                    <span>•</span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSelectAll(false)}
-                      className="text-slate-400 hover:underline"
-                    >
-                      Tout décocher
-                    </button>
+                    <input
+                      type="checkbox"
+                      checked={countSelectionnes === sheetsDetected.length && sheetsDetected.length > 0}
+                      onChange={(e) => handleToggleSelectAll(e.target.checked)}
+                      id="selectAllSheets"
+                      className="rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="selectAllSheets" className="text-xs font-bold text-slate-200 cursor-pointer select-none">
+                      Tout sélectionner ({sheetsDetected.length} onglets)
+                    </label>
                   </div>
-                  <div>
-                    <span className="font-bold text-sky-300">{countSelectionnes}</span> onglet(s) sélectionné(s) ({totalChutesSelectionnees} chutes)
+                  <div className="text-xs text-slate-400">
+                    <span className="font-bold text-sky-400">{countSelectionnes}</span> sélectionnés •{' '}
+                    <span className="font-bold text-emerald-400">{totalChutesSelectionnees}</span> chutes au total
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+                <div className="divide-y divide-slate-800/60 max-h-72 overflow-y-auto">
                   {sheetsDetected.map(sheet => (
                     <div
                       key={sheet.name}
                       onClick={() => handleToggleSheet(sheet.name)}
-                      className={`p-3 rounded-xl border cursor-pointer transition flex items-center justify-between ${
-                        sheet.selected
-                          ? 'bg-slate-800/70 border-sky-500/60 shadow-sm'
-                          : 'bg-slate-950/30 border-slate-800 text-slate-500 hover:border-slate-700'
+                      className={`px-4 py-2.5 flex items-center justify-between hover:bg-slate-900/60 cursor-pointer transition select-none ${
+                        sheet.selected ? 'bg-sky-950/20' : 'opacity-60'
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -381,25 +470,22 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
                           type="checkbox"
                           checked={sheet.selected}
                           onChange={() => {}}
-                          className="rounded text-sky-500 focus:ring-sky-400"
+                          className="rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-0 cursor-pointer"
                         />
                         <div>
-                          <div className="font-mono font-bold text-xs text-slate-100 flex items-center gap-1.5">
+                          <div className="text-xs font-bold text-slate-200 flex items-center gap-2">
                             <span>{sheet.name}</span>
                             {sheet.isMaille && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                                Toile
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                Toile Moustiquaire
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] mt-0.5">
-                            Fichier : <span className={`font-bold font-mono ${sheet.count > 0 ? 'text-sky-300' : 'text-rose-400'}`}>{sheet.count}</span> chutes
-                            {sheet.count === 0 && (
-                              <span className="text-rose-400 ml-1">⚠ Format non reconnu</span>
-                            )}
-                            {sheet.alreadyExists && sheet.count > 0 && (
-                              <span className="text-slate-500 ml-1.5">
-                                (En stock : {sheet.existingCount})
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                            <span>{sheet.count} chutes trouvées</span>
+                            {sheet.alreadyExists && (
+                              <span className="text-amber-400/80">
+                                • {sheet.existingCount} existante(s) en base
                               </span>
                             )}
                           </div>
@@ -407,32 +493,15 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
                       </div>
 
                       <div className="text-right">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                          sheet.count === 0
-                            ? 'bg-rose-950 text-rose-400 border-rose-800'
-                            : sheet.alreadyExists
-                            ? 'bg-slate-800 text-slate-300 border-slate-700'
-                            : 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                        <span className={`text-[11px] px-2 py-0.5 rounded font-mono font-bold ${
+                          sheet.count > 0 ? 'bg-sky-500/10 text-sky-300' : 'bg-slate-800 text-slate-500'
                         }`}>
-                          {sheet.count === 0 ? '0 chute' : sheet.alreadyExists ? 'Existant' : 'Nouveau'}
+                          {sheet.count} pcs
                         </span>
                       </div>
                     </div>
                   ))}
                 </div>
-                {sheetsDetected.length > 0 && sheetsDetected.every(s => s.count === 0) && (
-                  <div className="mt-3 p-3 rounded-xl bg-rose-950/40 border border-rose-500/40 text-xs text-rose-300 flex items-start gap-2">
-                    <span className="text-lg leading-none">⚠️</span>
-                    <div>
-                      <div className="font-bold mb-1">Aucune chute n'a pu être lue depuis ce fichier Excel.</div>
-                      <div className="text-[11px] text-rose-400/80">
-                        Le parseur n'a pas reconnu le format de vos données. Vérifiez dans la console du navigateur (F12 → Console) 
-                        les lignes <code className="bg-rose-900/40 px-1 rounded">[Import Chutes]</code> pour voir la structure exacte de votre fichier.
-                        <br/>Format attendu : <strong>Colonne A = Longueur (mm)</strong>, <strong>Colonne B = Quantité</strong>.
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -445,10 +514,14 @@ export const ImportChutesModal: React.FC<ImportChutesModalProps> = ({
             {file && (
               <button
                 type="button"
-                onClick={() => { setFile(null); setSheetsDetected([]); }}
-                className="text-xs text-slate-400 hover:text-slate-200 underline"
+                onClick={() => {
+                  setFile(null);
+                  setSheetsDetected([]);
+                  setParsedData(null);
+                }}
+                className="text-xs text-slate-400 hover:text-slate-200 underline cursor-pointer"
               >
-                Changer de fichier
+                Changer de fichier Excel
               </button>
             )}
           </div>

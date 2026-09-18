@@ -2446,6 +2446,27 @@ class AtelierDatabase {
   getDbFilePath(): string {
     return DB_PATH;
   }
+
+  restoreRawDatabase(buffer: Buffer) {
+    try {
+      this.db.close();
+    } catch (e) {
+      console.warn('Fermeture préalable db:', e);
+    }
+    if (fs.existsSync(`${DB_PATH}-wal`)) {
+      try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
+    }
+    if (fs.existsSync(`${DB_PATH}-shm`)) {
+      try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
+    }
+    fs.writeFileSync(DB_PATH, buffer);
+    this.db = new DatabaseSync(DB_PATH);
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+    this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+    this.initTables();
+  }
 }
 
 // Instance Singleton

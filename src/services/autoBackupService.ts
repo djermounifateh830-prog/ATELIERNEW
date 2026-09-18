@@ -1,0 +1,167 @@
+import { StorageService } from './storage';
+import { logger } from './logger';
+
+export interface BackupSettings {
+  enabled: boolean;
+  scheduledTime: string; // "16:30"
+  defaultPath: string; // "D:\\Sauvegardes_3M\\" ou "Téléchargements / 3M_Backups"
+  lastBackupDate: string | null; // "2026-09-18"
+  lastBackupTime: string | null; // "16:30:00"
+  backupFormat: 'db' | 'json';
+}
+
+const STORAGE_KEY = '3m_backup_settings';
+
+export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
+  enabled: true,
+  scheduledTime: '16:30',
+  defaultPath: 'Sauvegardes_3M_Atelier',
+  lastBackupDate: null,
+  lastBackupTime: null,
+  backupFormat: 'db'
+};
+
+type BackupListener = (settings: BackupSettings) => void;
+
+class AutoBackupService {
+  private settings: BackupSettings = { ...DEFAULT_BACKUP_SETTINGS };
+  private listeners: Set<BackupListener> = new Set();
+  private checkInterval: any = null;
+
+  constructor() {
+    this.load();
+    this.startScheduler();
+  }
+
+  private load(): void {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        this.settings = { ...DEFAULT_BACKUP_SETTINGS, ...JSON.parse(stored) };
+      }
+    } catch {
+      this.settings = { ...DEFAULT_BACKUP_SETTINGS };
+    }
+  }
+
+  private save(): void {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings));
+    } catch {}
+    this.notify();
+  }
+
+  public getSettings(): BackupSettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(updates: Partial<BackupSettings>): void {
+    this.settings = { ...this.settings, ...updates };
+    this.save();
+  }
+
+  private startScheduler(): void {
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+    }
+
+    // Vérification toutes les 30 secondes
+    this.checkInterval = setInterval(() => {
+      this.checkAndExecuteScheduledBackup();
+    }, 30000);
+  }
+
+  private checkAndExecuteScheduledBackup(): void {
+    if (!this.settings.enabled) return;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const currentDay = String(now.getDate()).padStart(2, '0');
+    const todayStr = `${currentYear}-${currentMonth}-${currentDay}`;
+
+    const currentHours = String(now.getHours()).padStart(2, '0');
+    const currentMinutes = String(now.getMinutes()).padStart(2, '0');
+    const currentTimeStr = `${currentHours}:${currentMinutes}`;
+
+    // Si la sauvegarde n'a pas encore été effectuée aujourd'hui
+    // et que l'heure actuelle est supérieure ou égale à l'heure programmée
+    if (this.settings.lastBackupDate !== todayStr && currentTimeStr >= this.settings.scheduledTime) {
+      this.executeBackup(true);
+    }
+  }
+
+  public async executeBackup(isAutomatic = false): Promise<void> {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const currentDay = String(now.getDate()).padStart(2, '0');
+    const todayStr = `${currentYear}-${currentMonth}-${currentDay}`;
+    const timeFormatted = now.toTimeString().split(' ')[0];
+
+    const timestampName = `${todayStr}_${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}`;
+    const filename = `3m_atelier_backup_${timestampName}.${this.settings.backupFormat}`;
+
+    try {
+      if (this.settings.backupFormat === 'db') {
+        // Téléchargement direct du fichier SQLite physique via l'API backend
+        const res = await fetch('/api/db/download');
+        if (!res.ok) {
+          throw new Error(`Erreur HTTP ${res.status} lors de l'export de la base SQLite`);
+        }
+        const blob = await res.blob();
+        this.triggerBrowserDownload(blob, filename);
+      } else {
+        // Format JSON complet
+        const fullData = await StorageService.initSqlite();
+        const jsonString = JSON.stringify(fullData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        this.triggerBrowserDownload(blob, filename);
+      }
+
+      this.settings.lastBackupDate = todayStr;
+      this.settings.lastBackupTime = timeFormatted;
+      this.save();
+
+      const logMsg = isAutomatic
+        ? `Sauvegarde automatique programmée exécutée avec succès (${filename}) à destination de [${this.settings.defaultPath}].`
+        : `Sauvegarde manuelle générée avec succès (${filename}).`;
+
+      logger.action('Sauvegarde Base', logMsg);
+    } catch (err: any) {
+      console.error('Erreur lors de la sauvegarde:', err);
+      logger.error('Sauvegarde Base', `Échec de la sauvegarde : ${err.message}`);
+      throw err;
+    }
+  }
+
+  private triggerBrowserDownload(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 200);
+  }
+
+  public subscribe(listener: BackupListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(): void {
+    for (const l of this.listeners) {
+      try {
+        l(this.getSettings());
+      } catch (err) {
+        console.error('Erreur listener backup:', err);
+      }
+    }
+  }
+}
+
+export const autoBackupService = new AutoBackupService();

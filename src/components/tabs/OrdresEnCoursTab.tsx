@@ -16,6 +16,8 @@ import { RetourOFModal } from '../common/RetourOFModal';
 import { FicheTransfertModal } from '../common/FicheTransfertModal';
 import { ModifierDelaiLivraisonModal } from '../common/ModifierDelaiLivraisonModal';
 import { DossierDetailModal } from '../common/DossierDetailModal';
+import { ColumnCustomizerPopover } from '../common/ColumnCustomizerPopover';
+import { columnConfigService } from '../../services/columnConfigService';
 import {
   ClipboardCheck,
   Search,
@@ -97,6 +99,14 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       onRefreshData();
     }
   }, [onRefreshData]);
+
+  const [, setColumnsTick] = useState(0);
+  useEffect(() => {
+    const unsub = columnConfigService.subscribe(() => {
+      setColumnsTick(t => t + 1);
+    });
+    return unsub;
+  }, []);
 
   // Modal Saisie Retour OF
   const [selectedSuiviForRetour, setSelectedSuiviForRetour] = useState<SuiviOF | null>(null);
@@ -720,6 +730,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
               </span>
             )}
           </button>
+
+          <ColumnCustomizerPopover tableId="of_encours" />
         </div>
       </div>
 
@@ -745,21 +757,39 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
               <tr>
-                <SortHeader col="numeroEmission" label="Ordre" className="w-24 text-center px-2" />
-                <SortHeader col="numCommande" label="N° Commande" className="w-32 px-2.5" />
-                <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
-                <SortHeader col="famille" label="Famille & Section" className="px-3 min-w-[170px]" />
-                <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
-                <th className="py-2.5 px-2 text-center w-36">Délai Prévisionnel</th>
-                <th className="py-2.5 px-2 text-center w-28">Barres &amp; Chutes</th>
-                <SortHeader col="statut" label="Statut" className="w-28 px-2 text-center" />
-                <th className="py-2.5 px-2 text-center w-48">Actions Atelier</th>
+                {columnConfigService.isColumnVisible('of_encours', 'id_of') && (
+                  <SortHeader col="numeroEmission" label="Ordre" className="w-24 text-center px-2" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'dossier') && (
+                  <SortHeader col="numCommande" label="N° Commande" className="w-32 px-2.5" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'agence') && (
+                  <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'produit') && (
+                  <SortHeader col="famille" label="Famille & Section" className="px-3 min-w-[170px]" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'date') && (
+                  <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'delai') && (
+                  <th className="py-2.5 px-2 text-center w-36">Délai Prévisionnel</th>
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'profils') && (
+                  <th className="py-2.5 px-2 text-center w-28">Barres &amp; Chutes</th>
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'statut') && (
+                  <SortHeader col="statut" label="Statut" className="w-28 px-2 text-center" />
+                )}
+                {columnConfigService.isColumnVisible('of_encours', 'actions') && (
+                  <th className="py-2.5 px-2 text-center w-48">Actions Atelier</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
               {filteredAndSortedOFs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-500 font-sans italic text-sm">
+                  <td colSpan={columnConfigService.getVisibleColumns('of_encours').length || 9} className="py-12 text-center text-slate-500 font-sans italic text-sm">
                     <ClipboardCheck className="w-12 h-12 mx-auto mb-3 opacity-25 text-blue-400" />
                     <p className="font-bold text-slate-400">Aucun Ordre de Fabrication correspondant</p>
                     <p className="text-xs text-slate-500 mt-1">
@@ -803,177 +833,194 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       }`}
                     >
                       {/* N° Ordre / Séquence d'Émission Atelier */}
-                      <td className="py-2.5 px-2 text-center">
-                        <div className="inline-flex flex-col items-center">
-                          <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 border border-amber-300 font-mono font-black text-xs shadow-xs tracking-wider">
-                            {of.codeOF || (of.numeroEmission ? `OF-${String(of.numeroEmission).padStart(3, '0')}` : 'OF-???')}
-                          </span>
-                          <span className="text-[10px] text-amber-400 font-bold mt-0.5 whitespace-nowrap">
-                            Ordre #{of.numeroEmission || '—'}
-                          </span>
-                        </div>
-                      </td>
+                      {columnConfigService.isColumnVisible('of_encours', 'id_of') && (
+                        <td className="py-2.5 px-2 text-center">
+                          <div className="inline-flex flex-col items-center">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 border border-amber-300 font-mono font-black text-xs shadow-xs tracking-wider">
+                              {of.codeOF || (of.numeroEmission ? `OF-${String(of.numeroEmission).padStart(3, '0')}` : 'OF-???')}
+                            </span>
+                            <span className="text-[10px] text-amber-400 font-bold mt-0.5 whitespace-nowrap">
+                              Ordre #{of.numeroEmission || '—'}
+                            </span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* N° Commande (Cliquer pour visualiser la commande) */}
-                      <td className="py-2.5 px-2.5 font-mono font-bold text-amber-300">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {of.numCommande
-                            .split(/[\s,+/]+/)
-                            .map(c => c.trim())
-                            .filter(Boolean)
-                            .map((cmd, cIdx) => (
-                              <button
-                                key={cIdx}
-                                type="button"
-                                onClick={() => handleVisualiserCommande(of)}
-                                className="px-2 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer group shadow-2xs"
-                                title="Cliquer pour visualiser la commande complète et ses repères"
-                              >
-                                <span>{cmd}</span>
-                                <Eye className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 text-amber-400" />
-                              </button>
-                            ))}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditOF(of)}
-                            className="p-1 text-slate-500 hover:text-amber-300 hover:bg-slate-800 rounded transition"
-                            title="Modifier les N° de commande / Référence de cet OF"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        {/* Affichage des repères trouvés lors de la recherche */}
-                        {matchedReperes.length > 0 && (
-                          <div className="mt-1 flex items-center gap-1 flex-wrap">
-                            <span className="text-[9px] text-purple-300 font-bold">Repère:</span>
-                            {matchedReperes.slice(0, 3).map((r, rIdx) => (
-                              <span
-                                key={rIdx}
-                                className="px-1.5 py-0.2 bg-purple-900/60 border border-purple-500/50 text-purple-200 text-[10px] font-mono font-bold rounded"
-                              >
-                                {r}
-                              </span>
-                            ))}
-                            {matchedReperes.length > 3 && (
-                              <span className="text-[9px] text-purple-400 font-mono">
-                                +{matchedReperes.length - 3}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Client / Donneur d'ordre */}
-                      <td className="py-2.5 px-3">
-                        <div className="font-bold text-slate-200">{of.nomClient || '—'}</div>
-                        {of.donneurOrdre && (
-                          <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                            <Building2 className="w-3 h-3 text-slate-500" />
-                            <span>{of.donneurOrdre}</span>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Famille & Section */}
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
-                            of.famille === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
-                            of.famille === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800' :
-                            of.famille === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
-                            'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          }`}>
-                            {of.famille}
-                          </span>
-                          <span className="font-semibold text-slate-300 text-xs truncate max-w-[220px]" title={of.titreSection}>
-                            {of.titreSection}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Date Émission & Retour */}
-                      <td className="py-2.5 px-2 font-mono text-slate-400 text-xs text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <Calendar className="w-3 h-3 text-slate-500" />
-                          <span>{of.dateEmission}</span>
-                        </div>
-                        {of.dateRetour && (
-                          <div className="text-[10px] text-emerald-400 mt-0.5">
-                            Retour : {of.dateRetour}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Délai Prévisionnel & Date de Livraison */}
-                      <td className="py-2.5 px-2 text-center font-mono">
-                        {(() => {
-                          const texteLivraison = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
-                          const isPrioritaire = !!of.estPrioritaire;
-                          return (
+                      {columnConfigService.isColumnVisible('of_encours', 'dossier') && (
+                        <td className="py-2.5 px-2.5 font-mono font-bold text-amber-300">
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {of.numCommande
+                              .split(/[\s,+/]+/)
+                              .map(c => c.trim())
+                              .filter(Boolean)
+                              .map((cmd, cIdx) => (
+                                <button
+                                  key={cIdx}
+                                  type="button"
+                                  onClick={() => handleVisualiserCommande(of)}
+                                  className="px-2 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border border-amber-500/40 text-xs font-mono font-bold transition flex items-center gap-1 cursor-pointer group shadow-2xs"
+                                  title="Cliquer pour visualiser la commande complète et ses repères"
+                                >
+                                  <span>{cmd}</span>
+                                  <Eye className="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 text-amber-400" />
+                                </button>
+                              ))}
                             <button
                               type="button"
-                              onClick={() => {
-                                setOfToEditDelai(of);
-                                setIsEditDelaiModalOpen(true);
-                              }}
-                              className="group inline-flex flex-col items-center gap-1 cursor-pointer transition p-1 rounded-lg hover:bg-slate-800/80 max-w-full"
-                              title="Cliquer pour modifier la date de livraison ou définir la priorité atelier"
+                              onClick={() => handleOpenEditOF(of)}
+                              className="p-1 text-slate-500 hover:text-amber-300 hover:bg-slate-800 rounded transition"
+                              title="Modifier les N° de commande / Référence de cet OF"
                             >
-                              {isPrioritaire && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black uppercase tracking-wide animate-pulse">
-                                  <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
-                                  <span>Prioritaire</span>
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          {/* Affichage des repères trouvés lors de la recherche */}
+                          {matchedReperes.length > 0 && (
+                            <div className="mt-1 flex items-center gap-1 flex-wrap">
+                              <span className="text-[9px] text-purple-300 font-bold">Repère:</span>
+                              {matchedReperes.slice(0, 3).map((r, rIdx) => (
+                                <span
+                                  key={rIdx}
+                                  className="px-1.5 py-0.2 bg-purple-900/60 border border-purple-500/50 text-purple-200 text-[10px] font-mono font-bold rounded"
+                                >
+                                  {r}
+                                </span>
+                              ))}
+                              {matchedReperes.length > 3 && (
+                                <span className="text-[9px] text-purple-400 font-mono">
+                                  +{matchedReperes.length - 3}
                                 </span>
                               )}
-                              <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border font-mono font-bold text-[11px] shadow-xs whitespace-nowrap transition ${
-                                isPrioritaire
-                                  ? 'bg-rose-950/40 border-rose-500/50 text-rose-200 group-hover:border-rose-400 group-hover:bg-rose-900/50'
-                                  : 'bg-amber-500/15 border-amber-500/35 text-amber-300 group-hover:border-amber-400 group-hover:bg-amber-500/25'
-                              }`}>
-                                <Clock className={`w-3 h-3 ${isPrioritaire ? 'text-rose-400' : 'text-amber-400'} shrink-0`} />
-                                <span>{texteLivraison}</span>
-                                <Edit2 className="w-2.5 h-2.5 ml-0.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-300" />
-                              </div>
-                            </button>
-                          );
-                        })()}
-                      </td>
+                            </div>
+                          )}
+                        </td>
+                      )}
+
+                      {/* Client / Donneur d'ordre */}
+                      {columnConfigService.isColumnVisible('of_encours', 'agence') && (
+                        <td className="py-2.5 px-3">
+                          <div className="font-bold text-slate-200">{of.nomClient || '—'}</div>
+                          {of.donneurOrdre && (
+                            <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                              <Building2 className="w-3 h-3 text-slate-500" />
+                              <span>{of.donneurOrdre}</span>
+                            </div>
+                          )}
+                        </td>
+                      )}
+
+                      {/* Famille & Section */}
+                      {columnConfigService.isColumnVisible('of_encours', 'produit') && (
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
+                              of.famille === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                              of.famille === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800' :
+                              of.famille === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+                              'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                            }`}>
+                              {of.famille}
+                            </span>
+                            <span className="font-semibold text-slate-300 text-xs truncate max-w-[220px]" title={of.titreSection}>
+                              {of.titreSection}
+                            </span>
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Date Émission & Retour */}
+                      {columnConfigService.isColumnVisible('of_encours', 'date') && (
+                        <td className="py-2.5 px-2 font-mono text-slate-400 text-xs text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <Calendar className="w-3 h-3 text-slate-500" />
+                            <span>{of.dateEmission}</span>
+                          </div>
+                          {of.dateRetour && (
+                            <div className="text-[10px] text-emerald-400 mt-0.5">
+                              Retour : {of.dateRetour}
+                            </div>
+                          )}
+                        </td>
+                      )}
+
+                      {/* Délai Prévisionnel & Date de Livraison */}
+                      {columnConfigService.isColumnVisible('of_encours', 'delai') && (
+                        <td className="py-2.5 px-2 text-center font-mono">
+                          {(() => {
+                            const texteLivraison = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
+                            const isPrioritaire = !!of.estPrioritaire;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOfToEditDelai(of);
+                                  setIsEditDelaiModalOpen(true);
+                                }}
+                                className="group inline-flex flex-col items-center gap-1 cursor-pointer transition p-1 rounded-lg hover:bg-slate-800/80 max-w-full"
+                                title="Cliquer pour modifier la date de livraison ou définir la priorité atelier"
+                              >
+                                {isPrioritaire && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black uppercase tracking-wide animate-pulse">
+                                    <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
+                                    <span>Prioritaire</span>
+                                  </span>
+                                )}
+                                <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border font-mono font-bold text-[11px] shadow-xs whitespace-nowrap transition ${
+                                  isPrioritaire
+                                    ? 'bg-rose-950/40 border-rose-500/50 text-rose-200 group-hover:border-rose-400 group-hover:bg-rose-900/50'
+                                    : 'bg-amber-500/15 border-amber-500/35 text-amber-300 group-hover:border-amber-400 group-hover:bg-amber-500/25'
+                                }`}>
+                                  <Clock className={`w-3 h-3 ${isPrioritaire ? 'text-rose-400' : 'text-amber-400'} shrink-0`} />
+                                  <span>{texteLivraison}</span>
+                                  <Edit2 className="w-2.5 h-2.5 ml-0.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-300" />
+                                </div>
+                              </button>
+                            );
+                          })()}
+                        </td>
+                      )}
 
                       {/* Barres & Chutes */}
-                      <td className="py-2.5 px-2 text-center font-mono whitespace-nowrap">
-                        <div className="text-xs font-bold text-slate-200">
-                          <span className="text-sky-400">{of.totalBarresNeuvesPrevu}</span> b.
-                          <span className="text-slate-500 mx-1">•</span>
-                          <span className="text-emerald-400">{of.totalChutesUtiliseesPrevu}</span> ch.
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {of.lignesRetour.length} ligne(s)
-                        </div>
-                      </td>
+                      {columnConfigService.isColumnVisible('of_encours', 'profils') && (
+                        <td className="py-2.5 px-2 text-center font-mono whitespace-nowrap">
+                          <div className="text-xs font-bold text-slate-200">
+                            <span className="text-sky-400">{of.totalBarresNeuvesPrevu}</span> b.
+                            <span className="text-slate-500 mx-1">•</span>
+                            <span className="text-emerald-400">{of.totalChutesUtiliseesPrevu}</span> ch.
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            {of.lignesRetour.length} ligne(s)
+                          </div>
+                        </td>
+                      )}
 
                       {/* Statut */}
-                      <td className="py-2.5 px-2 text-center whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
-                          isEmis
-                            ? 'bg-blue-950 text-blue-300 border-blue-700/60'
-                            : isAttente
-                            ? 'bg-amber-950 text-amber-300 border-amber-700/60 animate-pulse'
-                            : isLivre
-                            ? 'bg-teal-950 text-teal-300 border-teal-700/60'
-                            : 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
-                        }`}>
-                          {isEmis && <Clock className="w-3 h-3" />}
-                          {isAttente && <AlertCircle className="w-3 h-3" />}
-                          {isCloture && <CheckCircle2 className="w-3 h-3" />}
-                          {isLivre && <Truck className="w-3 h-3 text-teal-400" />}
-                          <span>
-                            {isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
+                      {columnConfigService.isColumnVisible('of_encours', 'statut') && (
+                        <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
+                            isEmis
+                              ? 'bg-blue-950 text-blue-300 border-blue-700/60'
+                              : isAttente
+                              ? 'bg-amber-950 text-amber-300 border-amber-700/60 animate-pulse'
+                              : isLivre
+                              ? 'bg-teal-950 text-teal-300 border-teal-700/60'
+                              : 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
+                          }`}>
+                            {isEmis && <Clock className="w-3 h-3" />}
+                            {isAttente && <AlertCircle className="w-3 h-3" />}
+                            {isCloture && <CheckCircle2 className="w-3 h-3" />}
+                            {isLivre && <Truck className="w-3 h-3 text-teal-400" />}
+                            <span>
+                              {isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
+                            </span>
                           </span>
-                        </span>
-                      </td>
+                        </td>
+                      )}
 
                       {/* Actions */}
-                      <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                      {columnConfigService.isColumnVisible('of_encours', 'actions') && (
+                        <td className="py-2.5 px-2 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
                           {/* Actions selon le statut de l'OF */}
                           {isEmis && (
@@ -1116,9 +1163,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           </button>
                         </div>
                       </td>
-                    </tr>
-                  );
-                })
+                    )}
+                  </tr>
+                );
+              })
               )}
             </tbody>
           </table>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Article } from '../../types';
 import { StorageService } from '../../services/storage';
 import {
@@ -43,6 +43,7 @@ export const ImportArticlesModal: React.FC<ImportArticlesModalProps> = ({
   const [strategie, setStrategie] = useState<StrategieImportArticle>('SMART_MERGE');
   const [articlesAnalyses, setArticlesAnalyses] = useState<ArticleAnalyse[]>([]);
   const [filterType, setFilterType] = useState<'TOUS' | 'NOUVEAU' | 'MODIFIE' | 'IDENTIQUE'>('TOUS');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
@@ -207,7 +208,16 @@ export const ImportArticlesModal: React.FC<ImportArticlesModalProps> = ({
 
           {/* Étape 1 : Sélection Fichier */}
           {!file && (
-            <div className="border-2 border-dashed border-slate-700 rounded-2xl p-10 text-center hover:border-amber-500/50 transition bg-slate-950/40">
+            <label
+              className="block border-2 border-dashed border-slate-700 rounded-2xl p-10 text-center hover:border-amber-500/50 transition bg-slate-950/40 cursor-pointer"
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                onChange={handleFileChange}
+                className="sr-only"
+              />
               <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-amber-400/60" />
               <h3 className="text-sm font-bold text-slate-200 mb-1">
                 Sélectionnez votre fichier Excel d'articles (<code>articles_stock.xlsx</code>)
@@ -215,17 +225,17 @@ export const ImportArticlesModal: React.FC<ImportArticlesModalProps> = ({
               <p className="text-xs text-slate-500 mb-4">
                 Le système analysera automatiquement les colonnes (code_art, designation, longueur, stock, prix, etc.).
               </p>
-              <label className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs rounded-xl cursor-pointer shadow-lg shadow-amber-500/20 transition">
+              <span
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs rounded-xl cursor-pointer shadow-lg shadow-amber-500/20 transition"
+              >
                 <Upload className="w-4 h-4" />
                 <span>Parcourir le fichier Excel</span>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-              </label>
-            </div>
+              </span>
+            </label>
           )}
 
           {isAnalyzing && (

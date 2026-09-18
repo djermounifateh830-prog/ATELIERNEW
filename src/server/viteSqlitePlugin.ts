@@ -361,6 +361,24 @@ export function sqlitePlugin(): Plugin {
           return sendJson(res, { success: true, message: 'Base de données SQLite vidée avec succès' });
         }
 
+        // --- 13. RESTAURER UNE SAUVEGARDE SQLITE OU JSON ---
+        if (url === '/api/db/restore' && method === 'POST') {
+          const body = await parseBody(req);
+          if (body?.format === 'raw' && body?.base64) {
+            const buffer = Buffer.from(body.base64, 'base64');
+            atelierDb.restoreRawDatabase(buffer);
+            broadcastEvent({ type: 'database_restored', target: 'all' });
+            return sendJson(res, { success: true, message: 'Base de données SQLite restaurée avec succès depuis le fichier .db' });
+          } else if (body?.data || body?.articles) {
+            const dataToSync = body.data || body;
+            atelierDb.fullSyncFromFrontend(dataToSync);
+            broadcastEvent({ type: 'sync_initial', target: 'all' });
+            return sendJson(res, { success: true, message: 'Données restaurées avec succès depuis la sauvegarde JSON' });
+          } else {
+            return sendJson(res, { error: 'Format de sauvegarde non reconnu' }, 400);
+          }
+        }
+
 
         // Si aucune route ne correspond
         return sendJson(res, { error: 'Route API non trouvée' }, 404);

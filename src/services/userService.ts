@@ -14,6 +14,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, UserPermissions> = {
     tabStock: true,
     tabDevis: true,
     tabDocumentation: true,
+    tabParametres: true,
     canCloseOF: true,
     canCancelOF: true,
     canModifyStock: true,
@@ -29,6 +30,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, UserPermissions> = {
     tabStock: true,
     tabDevis: false,
     tabDocumentation: true,
+    tabParametres: false,
     canCloseOF: true,
     canCancelOF: false,
     canModifyStock: true,
@@ -44,6 +46,7 @@ export const DEFAULT_PERMISSIONS_BY_ROLE: Record<UserRole, UserPermissions> = {
     tabStock: false,
     tabDevis: true,
     tabDocumentation: true,
+    tabParametres: false,
     canCloseOF: false,
     canCancelOF: false,
     canModifyStock: false,
@@ -105,7 +108,7 @@ export const ROLE_CONFIG: Record<UserRole, {
     badgeClasses: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
     dotColor: 'bg-purple-400',
     description: 'Accès complet : Supervision globale, cadences, validation, maintenance SQLite et gestion des autorisations.',
-    defaultTabs: ['monitoring', 'ecosysteme', 'encours', 'historique', 'stock', 'devis', 'documentation']
+    defaultTabs: ['monitoring', 'ecosysteme', 'encours', 'historique', 'stock', 'devis', 'documentation', 'parametres']
   },
   ATELIER: {
     label: 'Opérateur Atelier / Découpe',
@@ -260,6 +263,7 @@ class UserService {
       case 'stock': return perms.tabStock;
       case 'devis': return perms.tabDevis;
       case 'documentation': return perms.tabDocumentation;
+      case 'parametres': return perms.tabParametres ?? perms.canManageUsers ?? (user?.role === 'RESPONSABLE');
       default: return true;
     }
   }

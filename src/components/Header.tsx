@@ -1,15 +1,6 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Scissors,
-  Layers,
   FileSpreadsheet,
-  Download,
-  Upload,
-  RotateCcw,
-  Sliders,
-  ShieldCheck,
-  Building2,
-  FileText,
   HelpCircle,
   Calculator,
   Boxes,
@@ -17,12 +8,11 @@ import {
   Terminal,
   ClipboardCheck,
   Activity,
-  Lock
+  Lock,
+  Settings
 } from 'lucide-react';
-import { StorageService } from '../services/storage';
 import { userService } from '../services/userService';
 import { SystemLogsModal } from './common/SystemLogsModal';
-import { ParametresProductionModal } from './common/ParametresProductionModal';
 import { OperatorBadge } from './common/OperatorBadge';
 import { OperatorModal } from './common/OperatorModal';
 import { RealtimeIndicator } from './common/RealtimeIndicator';
@@ -54,11 +44,8 @@ export const Header: React.FC<HeaderProps> = ({
   onRefreshData
 }) => {
   const [isLogsModalOpen, setIsLogsModalOpen] = useState<boolean>(false);
-  const [isProdParamsModalOpen, setIsProdParamsModalOpen] = useState<boolean>(false);
   const [isOperatorModalOpen, setIsOperatorModalOpen] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>(userService.getActiveOperator());
-  const articlesFileInputRef = useRef<HTMLInputElement>(null);
-  const chutesFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const unsub = userService.onOperatorChange(op => {
@@ -66,48 +53,6 @@ export const Header: React.FC<HeaderProps> = ({
     });
     return unsub;
   }, []);
-
-  const handleExportArticles = () => {
-    StorageService.exportArticlesExcel(articles);
-  };
-
-  const handleExportChutes = () => {
-    StorageService.exportChutesExcel(chutesBarres, chutesMaille);
-  };
-
-  const handleImportArticles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      await StorageService.importArticlesFromExcelFile(file);
-      alert('Articles importés avec succès et enregistrés dans la base SQLite !');
-      onRefreshData();
-    } catch (err: any) {
-      alert('Erreur lors de l\'import des articles: ' + err.message);
-    }
-    e.target.value = '';
-  };
-
-  const handleImportChutes = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      await StorageService.importChutesFromExcelFile(file);
-      alert('Stock de chutes importé avec succès et enregistré dans la base SQLite !');
-      onRefreshData();
-    } catch (err: any) {
-      alert('Erreur lors de l\'import des chutes: ' + err.message);
-    }
-    e.target.value = '';
-  };
-
-  const handleResetFactory = async () => {
-    if (confirm('Voulez-vous vraiment réinitialiser toutes les données d\'origine de 3M Atelier dans SQLite ?')) {
-      await StorageService.resetAllToFactory();
-      onRefreshData();
-      alert('Base SQLite réinitialisée aux valeurs initiales d\'usine.');
-    }
-  };
 
   const activeOfCount = suivisOF.filter(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE').length;
   const dossiersActifsCount = (dossiers || []).filter(d => d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE').length;
@@ -132,7 +77,8 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'historique', label: '📜 Historique Commandes', icon: History },
     { id: 'stock', label: '📦 Gestion Stock & Chutes', icon: FileSpreadsheet },
     { id: 'devis', label: '💰 Devis & Coûts', icon: Calculator },
-    { id: 'documentation', label: '📘 Règles Métier', icon: HelpCircle }
+    { id: 'documentation', label: '📘 Règles Métier', icon: HelpCircle },
+    { id: 'parametres', label: '⚙️ Paramètres', icon: Settings }
   ];
 
   // Filtrage selon les autorisations paramétrables via checkboxes de l'utilisateur actif
@@ -189,15 +135,6 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           <button
-            onClick={() => setIsProdParamsModalOpen(true)}
-            title="Configurer les cadences de fabrication par famille et les jours ouvrés de travail"
-            className="px-3 py-1.5 text-xs font-semibold text-sky-300 hover:text-sky-200 bg-sky-950/40 hover:bg-sky-900/60 rounded-lg transition border border-sky-500/40 flex items-center gap-1.5 cursor-pointer shadow"
-          >
-            <Sliders className="w-3.5 h-3.5 text-sky-400" />
-            <span className="hidden sm:inline">⚙️ Délais &amp; Cadences</span>
-            <span className="sm:hidden">⚙️ Cadences</span>
-          </button>
-          <button
             onClick={() => setIsLogsModalOpen(true)}
             title="Ouvrir le journal des logs et la traçabilité système"
             className="px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-amber-200 bg-amber-950/40 hover:bg-amber-900/60 rounded-lg transition border border-amber-500/40 flex items-center gap-1.5 cursor-pointer shadow"
@@ -213,13 +150,6 @@ export const Header: React.FC<HeaderProps> = ({
       <OperatorModal
         isOpen={isOperatorModalOpen}
         onClose={() => setIsOperatorModalOpen(false)}
-      />
-
-      {/* Paramètres Délais & Cadences Modal */}
-      <ParametresProductionModal
-        isOpen={isProdParamsModalOpen}
-        onClose={() => setIsProdParamsModalOpen(false)}
-        onSaved={onRefreshData}
       />
 
       {/* System Logs Modal */}

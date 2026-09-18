@@ -389,17 +389,6 @@ export class StorageService {
     return newChutesBarres;
   }
 
-  static async wipeDatabase(): Promise<void> {
-    try {
-      await this.request('/api/db/wipe', { method: 'POST' });
-      logger.warn('Wipe DB', 'Base SQLite 3m_atelier.db complètement purgée.');
-    } catch (e: any) {
-      console.error('Erreur API wipe:', e);
-      logger.error('Wipe DB', 'Erreur lors du vidage de la base SQLite.', { error: e.message });
-      throw e;
-    }
-  }
-
   static async resetAllToFactory(): Promise<void> {
     try {
       await this.request('/api/sync/initial', {
@@ -1087,6 +1076,64 @@ export class StorageService {
     } catch (e: any) {
       console.error('Erreur suppression fiche transfert:', e);
       logger.error('Fiche Transfert', `Erreur suppression fiche transfert ID ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  // ==========================================
+  // MAINTENANCE & GESTION BASE SQLITE
+  // ==========================================
+  static async wipeDatabase(): Promise<void> {
+    try {
+      await this.request('/api/db/wipe', { method: 'POST' });
+      logger.action('Vidage Base', 'Base de données SQLite vidée avec succès.');
+    } catch (e: any) {
+      console.error('Erreur vidage base SQLite:', e);
+      logger.error('Vidage Base', 'Erreur lors du vidage de la base SQLite.', { error: e.message });
+      throw e;
+    }
+  }
+
+  static async restoreDatabaseFromRawFile(file: File): Promise<void> {
+    try {
+      logger.action('Restauration Base', `Lecture du fichier .db physique : ${file.name} (${file.size} octets)`);
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, Array.from(uint8Array.subarray(i, i + chunkSize)));
+      }
+      const base64 = btoa(binary);
+
+      await this.request('/api/db/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'raw', base64 })
+      });
+      logger.action('Restauration Base', `Base de données SQLite restaurée avec succès depuis ${file.name}`);
+    } catch (e: any) {
+      console.error('Erreur restauration base SQLite:', e);
+      logger.error('Restauration Base', `Échec restauration fichier .db : ${e.message}`);
+      throw e;
+    }
+  }
+
+  static async restoreDatabaseFromJsonFile(file: File): Promise<void> {
+    try {
+      logger.action('Restauration Base', `Lecture du fichier JSON : ${file.name}`);
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      await this.request('/api/db/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'json', data: parsed.data || parsed })
+      });
+      logger.action('Restauration Base', `Données SQLite restaurées avec succès depuis ${file.name}`);
+    } catch (e: any) {
+      console.error('Erreur restauration JSON:', e);
+      logger.error('Restauration Base', `Échec restauration JSON : ${e.message}`);
       throw e;
     }
   }

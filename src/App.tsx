@@ -12,6 +12,7 @@ import { HistoriqueTab } from './components/tabs/HistoriqueTab';
 import { OrdresEnCoursTab } from './components/tabs/OrdresEnCoursTab';
 import { ClotureCockpitTab } from './components/tabs/ClotureCockpitTab';
 import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
+import { ParametresTab } from './components/tabs/ParametresTab';
 import { SecurityLockOverlay } from './components/common/SecurityLockOverlay';
 import { StorageService } from './services/storage';
 import { userService } from './services/userService';
@@ -266,6 +267,17 @@ export default function App() {
         {activeTab === 'devis' && <DevisTab articles={articles} />}
 
         {activeTab === 'documentation' && <DocumentationTab />}
+
+        {activeTab === 'parametres' && (
+          <ParametresTab
+            articles={articles}
+            chutesBarres={chutesBarres}
+            chutesMaille={chutesMaille}
+            mapping={mapping}
+            clientCodifications={clientCodifications}
+            onRefreshData={loadData}
+          />
+        )}
       </main>
 
       {/* Footer */}

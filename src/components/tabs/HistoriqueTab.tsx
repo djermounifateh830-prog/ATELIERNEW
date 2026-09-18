@@ -32,6 +32,8 @@ import { DossierCommandeGlobal, SuiviOF } from '../../types';
 import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
 import { DossierDetailModal } from '../common/DossierDetailModal';
+import { ColumnCustomizerPopover } from '../common/ColumnCustomizerPopover';
+import { columnConfigService } from '../../services/columnConfigService';
 
 interface HistoriqueTabProps {
   dossiers?: DossierCommandeGlobal[];
@@ -60,6 +62,14 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   // Pagination pour confort de défilement sur grands volumes
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
+
+  const [, setColumnsUpdateTrigger] = useState(0);
+
+  useEffect(() => {
+    return columnConfigService.subscribe(() => {
+      setColumnsUpdateTrigger(prev => prev + 1);
+    });
+  }, []);
 
   // Modal Visualisation Complète du Dossier
   const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
@@ -385,6 +395,8 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               <span>Cartes</span>
             </button>
           </div>
+
+          <ColumnCustomizerPopover tableId="historique" />
         </div>
       </div>
 
@@ -451,86 +463,102 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-950 text-slate-300 border-b border-slate-800 font-bold select-none">
                 <tr>
-                  <th
-                    onClick={() => handleSort('refCommande')}
-                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Réf. Commande</span>
-                      {sortColumn === 'refCommande' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort('dateCommande')}
-                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Date Commande</span>
-                      {sortColumn === 'dateCommande' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort('dateLivraison')}
-                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Échéance / Délai</span>
-                      {sortColumn === 'dateLivraison' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort('nomClientFinal')}
-                    className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span>Client Final</span>
-                      {sortColumn === 'nomClientFinal' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th className="py-3 px-3">Donneur d'Ordre</th>
-                  <th
-                    onClick={() => handleSort('nbArticles')}
-                    className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>Articles / Pièces</span>
-                      {sortColumn === 'nbArticles' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th
-                    onClick={() => handleSort('statut')}
-                    className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
-                  >
-                    <div className="flex items-center justify-center gap-1.5">
-                      <span>Statut</span>
-                      {sortColumn === 'statut' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 text-slate-500" />
-                      )}
-                    </div>
-                  </th>
-                  <th className="py-3 px-3 text-right">Actions</th>
+                  {columnConfigService.isColumnVisible('historique', 'refCommande') && (
+                    <th
+                      onClick={() => handleSort('refCommande')}
+                      className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Réf. Commande</span>
+                        {sortColumn === 'refCommande' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'dateCommande') && (
+                    <th
+                      onClick={() => handleSort('dateCommande')}
+                      className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Date Commande</span>
+                        {sortColumn === 'dateCommande' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'dateLivraison') && (
+                    <th
+                      onClick={() => handleSort('dateLivraison')}
+                      className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Échéance / Délai</span>
+                        {sortColumn === 'dateLivraison' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'nomClientFinal') && (
+                    <th
+                      onClick={() => handleSort('nomClientFinal')}
+                      className="py-3 px-3 cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Client Final</span>
+                        {sortColumn === 'nomClientFinal' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'donneurOrdre') && (
+                    <th className="py-3 px-3">Donneur d'Ordre</th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'nbArticles') && (
+                    <th
+                      onClick={() => handleSort('nbArticles')}
+                      className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>Articles / Pièces</span>
+                        {sortColumn === 'nbArticles' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'statut') && (
+                    <th
+                      onClick={() => handleSort('statut')}
+                      className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>Statut</span>
+                        {sortColumn === 'statut' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                        )}
+                      </div>
+                    </th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'actions') && (
+                    <th className="py-3 px-3 text-right">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
@@ -561,175 +589,191 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                       }`}
                     >
                       {/* Réf. Commande */}
-                      <td className="py-2.5 px-3 font-mono">
-                        <div className="flex flex-col gap-1 items-start">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDossierDetail(dossier)}
-                            className="font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1 transition cursor-pointer shadow-xs"
-                            title="Cliquer pour visualiser tous les détails de cette commande"
-                          >
-                            <span>{dossier.refCommande}</span>
-                            <Eye className="w-3 h-3 text-amber-400 opacity-60" />
-                          </button>
-                          {dossier.estPrioritaire && (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
-                              <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
-                              <span>Prioritaire</span>
-                            </span>
-                          )}
-                          {matchedRepere.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {matchedRepere.slice(0, 3).map((r, i) => (
-                                <span key={i} className="text-[10px] bg-purple-950 text-purple-300 border border-purple-500/40 px-1 py-0.2 rounded font-bold">
-                                  {r}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </td>
+                      {columnConfigService.isColumnVisible('historique', 'refCommande') && (
+                        <td className="py-2.5 px-3 font-mono">
+                          <div className="flex flex-col gap-1 items-start">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDossierDetail(dossier)}
+                              className="font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1 transition cursor-pointer shadow-xs"
+                              title="Cliquer pour visualiser tous les détails de cette commande"
+                            >
+                              <span>{dossier.refCommande}</span>
+                              <Eye className="w-3 h-3 text-amber-400 opacity-60" />
+                            </button>
+                            {dossier.estPrioritaire && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                                <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
+                                <span>Prioritaire</span>
+                              </span>
+                            )}
+                            {matchedRepere.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-0.5">
+                                {matchedRepere.slice(0, 3).map((r, i) => (
+                                  <span key={i} className="text-[10px] bg-purple-950 text-purple-300 border border-purple-500/40 px-1 py-0.2 rounded font-bold">
+                                    {r}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
                       {/* Date Commande */}
-                      <td className="py-2.5 px-3 font-mono text-slate-300 text-[11px] whitespace-nowrap">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-slate-500" />
-                          <span>{dossier.dateCommande}</span>
-                        </span>
-                      </td>
+                      {columnConfigService.isColumnVisible('historique', 'dateCommande') && (
+                        <td className="py-2.5 px-3 font-mono text-slate-300 text-[11px] whitespace-nowrap">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-slate-500" />
+                            <span>{dossier.dateCommande}</span>
+                          </span>
+                        </td>
+                      )}
 
                       {/* Échéance */}
-                      <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-bold">
-                          <Clock className="w-3 h-3 text-amber-400" />
-                          <span>{dateLiv}</span>
-                        </span>
-                      </td>
+                      {columnConfigService.isColumnVisible('historique', 'dateLivraison') && (
+                        <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-bold">
+                            <Clock className="w-3 h-3 text-amber-400" />
+                            <span>{dateLiv}</span>
+                          </span>
+                        </td>
+                      )}
 
                       {/* Client Final */}
-                      <td className="py-2.5 px-3 font-semibold text-slate-100 max-w-[180px] truncate" title={dossier.nomClientFinal}>
-                        <div className="flex items-center gap-1.5">
-                          <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                          <span className="truncate">{dossier.nomClientFinal}</span>
-                        </div>
-                      </td>
+                      {columnConfigService.isColumnVisible('historique', 'nomClientFinal') && (
+                        <td className="py-2.5 px-3 font-semibold text-slate-100 max-w-[180px] truncate" title={dossier.nomClientFinal}>
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            <span className="truncate">{dossier.nomClientFinal}</span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* Donneur d'Ordre */}
-                      <td className="py-2.5 px-3 text-sky-300 font-medium max-w-[150px] truncate" title={dossier.donneurOrdre}>
-                        {dossier.donneurOrdre || '—'}
-                      </td>
+                      {columnConfigService.isColumnVisible('historique', 'donneurOrdre') && (
+                        <td className="py-2.5 px-3 text-sky-300 font-medium max-w-[150px] truncate" title={dossier.donneurOrdre}>
+                          {dossier.donneurOrdre || '—'}
+                        </td>
+                      )}
 
                       {/* Articles / Pièces */}
-                      <td className="py-2.5 px-3 text-center">
-                        <div className="inline-flex items-center gap-1 font-mono text-[11px]">
-                          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold" title="Total lignes articles">
-                            {totalArticles} pcs
-                          </span>
-                          {nbCaisson > 0 && (
-                            <span className="px-1 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-[10px]" title={`${nbCaisson} caisson(s)`}>
-                              {nbCaisson}C
+                      {columnConfigService.isColumnVisible('historique', 'nbArticles') && (
+                        <td className="py-2.5 px-3 text-center">
+                          <div className="inline-flex items-center gap-1 font-mono text-[11px]">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold" title="Total lignes articles">
+                              {totalArticles} pcs
                             </span>
-                          )}
-                          {nbTablier > 0 && (
-                            <span className="px-1 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/30 text-[10px]" title={`${nbTablier} volet(s)`}>
-                              {nbTablier}V
-                            </span>
-                          )}
-                          {nbMstq > 0 && (
-                            <span className="px-1 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-500/30 text-[10px]" title={`${nbMstq} moustiquaire(s)`}>
-                              {nbMstq}M
-                            </span>
-                          )}
-                          {nbPrecadre > 0 && (
-                            <span className="px-1 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-500/30 text-[10px]" title={`${nbPrecadre} précadre(s)`}>
-                              {nbPrecadre}P
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                            {nbCaisson > 0 && (
+                              <span className="px-1 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-[10px]" title={`${nbCaisson} caisson(s)`}>
+                                {nbCaisson}C
+                              </span>
+                            )}
+                            {nbTablier > 0 && (
+                              <span className="px-1 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/30 text-[10px]" title={`${nbTablier} volet(s)`}>
+                                {nbTablier}V
+                              </span>
+                            )}
+                            {nbMstq > 0 && (
+                              <span className="px-1 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-500/30 text-[10px]" title={`${nbMstq} moustiquaire(s)`}>
+                                {nbMstq}M
+                              </span>
+                            )}
+                            {nbPrecadre > 0 && (
+                              <span className="px-1 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-500/30 text-[10px]" title={`${nbPrecadre} précadre(s)`}>
+                                {nbPrecadre}P
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
                       {/* Statut */}
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
-                            dossier.statut === 'LIVRE'
-                              ? 'bg-blue-950 text-blue-300 border-blue-500/40'
+                      {columnConfigService.isColumnVisible('historique', 'statut') && (
+                        <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
+                              dossier.statut === 'LIVRE'
+                                ? 'bg-blue-950 text-blue-300 border-blue-500/40'
+                                : dossier.statut === 'CLOTURE'
+                                ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                                : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
+                                ? 'bg-emerald-950 text-emerald-300 border-emerald-500/30'
+                                : dossier.statut === 'EN_COURS'
+                                ? 'bg-amber-950 text-amber-300 border-amber-500/30'
+                                : 'bg-purple-950 text-purple-300 border-purple-500/30'
+                            }`}
+                          >
+                            {dossier.statut === 'LIVRE'
+                              ? '🚚 LIVRÉ'
                               : dossier.statut === 'CLOTURE'
-                              ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                              ? '✅ CLÔTURÉ'
                               : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
-                              ? 'bg-emerald-950 text-emerald-300 border-emerald-500/30'
+                              ? '🏭 FABRIQUÉ'
                               : dossier.statut === 'EN_COURS'
-                              ? 'bg-amber-950 text-amber-300 border-amber-500/30'
-                              : 'bg-purple-950 text-purple-300 border-purple-500/30'
-                          }`}
-                        >
-                          {dossier.statut === 'LIVRE'
-                            ? '🚚 LIVRÉ'
-                            : dossier.statut === 'CLOTURE'
-                            ? '✅ CLÔTURÉ'
-                            : dossier.statut === 'FABRIQUE' || (dossier.statut as string) === 'TERMINE'
-                            ? '🏭 FABRIQUÉ'
-                            : dossier.statut === 'EN_COURS'
-                            ? '⚙️ EN COURS'
-                            : '⏳ EN ATTENTE'}
-                        </span>
-                      </td>
+                              ? '⚙️ EN COURS'
+                              : '⏳ EN ATTENTE'}
+                          </span>
+                        </td>
+                      )}
 
                       {/* Actions */}
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {/* Bouton Visualiser Complète */}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenDossierDetail(dossier)}
-                            className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 hover:text-purple-100 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-purple-700/60 shadow-xs"
-                            title="Visualiser le détail complet de la commande"
-                          >
-                            <Eye className="w-3 h-3 text-purple-400" />
-                            <span>Visualiser</span>
-                          </button>
+                      {columnConfigService.isColumnVisible('historique', 'actions') && (
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Bouton Visualiser Complète */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDossierDetail(dossier)}
+                              className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 hover:text-purple-100 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-purple-700/60 shadow-xs"
+                              title="Visualiser le détail complet de la commande"
+                            >
+                              <Eye className="w-3 h-3 text-purple-400" />
+                              <span>Visualiser</span>
+                            </button>
 
-                          {/* Charger dans Écosystème */}
-                          <button
-                            type="button"
-                            onClick={() => onLoadDossierInEcosysteme(dossier)}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
-                            title="Charger et modifier dans l'Écosystème"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-purple-400" />
-                          </button>
+                            {/* Charger dans Écosystème */}
+                            <button
+                              type="button"
+                              onClick={() => onLoadDossierInEcosysteme(dossier)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                              title="Charger et modifier dans l'Écosystème"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                            </button>
 
-                          {/* Imprimer OF */}
-                          <button
-                            type="button"
-                            onClick={() => handleOpenOFModal(dossier)}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
-                            title="Imprimer Ordre de Fabrication (OF)"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-amber-400" />
-                          </button>
+                            {/* Imprimer OF */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenOFModal(dossier)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                              title="Imprimer Ordre de Fabrication (OF)"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-amber-400" />
+                            </button>
 
-                          {/* Dupliquer */}
-                          <button
-                            type="button"
-                            onClick={() => handleDupliquerDossier(dossier)}
-                            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
-                            title="Dupliquer le dossier"
-                          >
-                            <Copy className="w-3.5 h-3.5 text-sky-400" />
-                          </button>
+                            {/* Dupliquer */}
+                            <button
+                              type="button"
+                              onClick={() => handleDupliquerDossier(dossier)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                              title="Dupliquer le dossier"
+                            >
+                              <Copy className="w-3.5 h-3.5 text-sky-400" />
+                            </button>
 
-                          {/* Supprimer */}
-                          <button
-                            type="button"
-                            onClick={() => handleSupprimerDossier(dossier.id, dossier.refCommande)}
-                            className="p-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer"
-                            title="Supprimer définitivement"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
+                            {/* Supprimer */}
+                            <button
+                              type="button"
+                              onClick={() => handleSupprimerDossier(dossier.id, dossier.refCommande)}
+                              className="p-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer"
+                              title="Supprimer définitivement"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

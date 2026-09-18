@@ -4382,17 +4382,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* BOUTON GESTION DES CODIFICATIONS CLIENTS & AGENCES */}
-            <button
-              type="button"
-              onClick={() => setModalCodificationOpen(true)}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-sky-500/30 hover:border-sky-400 shadow-md transition active:scale-95 cursor-pointer"
-              title="Configurer les règles de codification, préfixes de commande et repères automatiques"
-            >
-              <Settings2 className="w-4 h-4 text-sky-400" />
-              <span>⚙️ Codification Clients</span>
-            </button>
-
             {(totalLignesEnCours > 0 || editingDossierId) && (
               <button
                 type="button"

@@ -13,6 +13,8 @@ import { ImportArticlesModal } from '../stock/ImportArticlesModal';
 import { ImportChutesModal } from '../stock/ImportChutesModal';
 import { OperationsStockModal, OperationStockType } from '../stock/OperationsStockModal';
 import { InventaireStockView } from '../stock/InventaireStockView';
+import { ColumnCustomizerPopover } from '../common/ColumnCustomizerPopover';
+import { columnConfigService } from '../../services/columnConfigService';
 import {
   FileSpreadsheet,
   Plus,
@@ -116,6 +118,14 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   }, [chutesMaille]);
 
   const [subTab, setSubTab] = useState<'articles' | 'chutes' | 'inventaire' | 'mapping' | 'historique'>('articles');
+  const [, setColumnsTick] = useState(0);
+
+  useEffect(() => {
+    const unsub = columnConfigService.subscribe(() => {
+      setColumnsTick(t => t + 1);
+    });
+    return unsub;
+  }, []);
 
   // --- MODALS IMPORT INTEL ---
   const [isImportArticlesModalOpen, setIsImportArticlesModalOpen] = useState<boolean>(false);
@@ -1034,23 +1044,6 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           </button>
 
           <button
-            onClick={() => setSubTab('mapping')}
-            className={`px-3.5 py-2 text-xs font-bold rounded-lg transition flex items-center gap-2 ${
-              subTab === 'mapping'
-                ? 'bg-emerald-500 text-slate-950 shadow-md'
-                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <Link className="w-4 h-4" />
-            <span>Correspondance Mapping</span>
-            {countUnmappedArticles > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-bold">
-                {countUnmappedArticles} non liés
-              </span>
-            )}
-          </button>
-
-          <button
             onClick={() => { setSubTab('historique'); onStockUpdated(); }}
             className={`px-3.5 py-2 text-xs font-bold rounded-lg transition flex items-center gap-2 ${
               subTab === 'historique'
@@ -1060,34 +1053,6 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           >
             <History className="w-4 h-4" />
             <span>Historique Mouvements ({mouvements.length})</span>
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => StorageService.downloadSqliteDb()}
-            title="Télécharger une copie de sauvegarde du fichier 3m_atelier.db"
-            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5 text-amber-400" />
-            <span>Sauvegarder .DB (SQLite)</span>
-          </button>
-
-          <button
-            onClick={async () => {
-              if (confirm("⚠️ ATTENTION : Voulez-vous vraiment VIDER COMPLÈTEMENT la base de données 3m_atelier.db (0 article, 0 chute, 0 dossier) ?")) {
-                if (confirm("Dernière confirmation : TOUTES les données seront définitivement effacées.")) {
-                  await StorageService.wipeDatabase();
-                  onStockUpdated();
-                  alert("✅ La base de données 3m_atelier.db a été entièrement vidée.");
-                }
-              }
-            }}
-            title="Vider entièrement toutes les tables de la base de données 3m_atelier.db"
-            className="px-2.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 hover:text-rose-100 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-          >
-            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>Vider la Base SQLite</span>
           </button>
         </div>
       </div>
@@ -1318,15 +1283,18 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           {/* Tableau des Articles */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="relative w-72">
-                <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder="Rechercher désignation ou code..."
-                  value={searchArticle}
-                  onChange={e => setSearchArticle(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
-                />
+              <div className="flex items-center gap-2">
+                <div className="relative w-72">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Rechercher désignation ou code..."
+                    value={searchArticle}
+                    onChange={e => setSearchArticle(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <ColumnCustomizerPopover tableId="articles" />
               </div>
               <div className="text-xs text-slate-400">
                 Total : <span className="font-bold text-slate-200">{filteredArticles.length}</span> articles
@@ -1337,63 +1305,79 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold">
                   <tr>
-                    <th
-                      className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'code_art' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('code_art')}
-                      onDoubleClick={() => handleArtSort('code_art')}
-                      title="Cliquer pour trier par Code Article"
-                    >
-                      Code <SortIcon col="code_art" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'designation' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('designation')}
-                      onDoubleClick={() => handleArtSort('designation')}
-                      title="Cliquer pour trier par Désignation"
-                    >
-                      Désignation <SortIcon col="designation" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'longeur' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('longeur')}
-                      onDoubleClick={() => handleArtSort('longeur')}
-                      title="Cliquer pour trier par Longueur Barre"
-                    >
-                      Longueur <SortIcon col="longeur" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'lame' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('lame')}
-                      onDoubleClick={() => handleArtSort('lame')}
-                      title="Cliquer pour trier par Épaisseur de Lame"
-                    >
-                      Lame <SortIcon col="lame" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'debordement' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('debordement')}
-                      onDoubleClick={() => handleArtSort('debordement')}
-                      title="Cliquer pour trier par Débordement"
-                    >
-                      Débord. <SortIcon col="debordement" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'stock_physique' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('stock_physique')}
-                      onDoubleClick={() => handleArtSort('stock_physique')}
-                      title="Cliquer pour trier par Stock Physique"
-                    >
-                      Stock Phys. <SortIcon col="stock_physique" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'prix_unitaire' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleArtSort('prix_unitaire')}
-                      onDoubleClick={() => handleArtSort('prix_unitaire')}
-                      title="Cliquer pour trier par Prix Unitaire"
-                    >
-                      Prix (DZD) <SortIcon col="prix_unitaire" currentKey={artSortKey} currentDir={artSortDir} />
-                    </th>
-                    <th className="py-2.5 px-3 text-center w-36">Actions</th>
+                    {columnConfigService.isColumnVisible('articles', 'code_art') && (
+                      <th
+                        className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'code_art' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('code_art')}
+                        onDoubleClick={() => handleArtSort('code_art')}
+                        title="Cliquer pour trier par Code Article"
+                      >
+                        Code <SortIcon col="code_art" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'designation') && (
+                      <th
+                        className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'designation' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('designation')}
+                        onDoubleClick={() => handleArtSort('designation')}
+                        title="Cliquer pour trier par Désignation"
+                      >
+                        Désignation <SortIcon col="designation" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'longeur') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'longeur' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('longeur')}
+                        onDoubleClick={() => handleArtSort('longeur')}
+                        title="Cliquer pour trier par Longueur Barre"
+                      >
+                        Longueur <SortIcon col="longeur" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'lame') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'lame' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('lame')}
+                        onDoubleClick={() => handleArtSort('lame')}
+                        title="Cliquer pour trier par Épaisseur de Lame"
+                      >
+                        Lame <SortIcon col="lame" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'debordement') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'debordement' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('debordement')}
+                        onDoubleClick={() => handleArtSort('debordement')}
+                        title="Cliquer pour trier par Débordement"
+                      >
+                        Débord. <SortIcon col="debordement" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'stock_physique') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'stock_physique' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('stock_physique')}
+                        onDoubleClick={() => handleArtSort('stock_physique')}
+                        title="Cliquer pour trier par Stock Physique"
+                      >
+                        Stock Phys. <SortIcon col="stock_physique" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'prix_unitaire') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${artSortKey === 'prix_unitaire' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleArtSort('prix_unitaire')}
+                        onDoubleClick={() => handleArtSort('prix_unitaire')}
+                        title="Cliquer pour trier par Prix Unitaire"
+                      >
+                        Prix (DZD) <SortIcon col="prix_unitaire" currentKey={artSortKey} currentDir={artSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('articles', 'actions') && (
+                      <th className="py-2.5 px-3 text-center w-36">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1403,60 +1387,76 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                       className="hover:bg-slate-800/40 transition cursor-pointer"
                       onClick={() => handleSelectArticleRow(art)}
                     >
-                      <td className="py-2 px-3 font-bold text-amber-300">{art.code_art}</td>
-                      <td className="py-2 px-3 font-sans text-slate-200 font-medium">{art.designation}</td>
-                      <td className="py-2 px-3 text-center text-slate-300">{art.longeur} mm</td>
-                      <td className="py-2 px-3 text-center text-slate-400">{art.lame} mm</td>
-                      <td className="py-2 px-3 text-center text-slate-400">{art.debordement} mm</td>
-                      <td className="py-2 px-3 text-center">
-                        <span className={`px-2 py-0.5 rounded font-bold ${
-                          art.stock_physique <= (art.stock_min || 5)
-                            ? 'bg-rose-950/60 text-rose-400 border border-rose-800/50'
-                            : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
-                        }`}>
-                          {art.stock_physique}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-center text-amber-400">{art.prix_unitaire}</td>
-                      <td className="py-2 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => ouvrirOperationStock('RECEPTION', art)}
-                            className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 rounded"
-                            title="Réception Marchandise (+)"
-                          >
-                            <PackagePlus className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => ouvrirOperationStock('SORTIE', art)}
-                            className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded"
-                            title="Sortie Manuelle (-)"
-                          >
-                            <PackageMinus className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => ouvrirOperationStock('INVENTAIRE', art)}
-                            className="p-1 text-sky-400 hover:text-sky-300 hover:bg-sky-950/60 rounded"
-                            title="Inventaire & Ajustement Réel"
-                          >
-                            <ClipboardCheck className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleSelectArticleRow(art)}
-                            className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded"
-                            title="Modifier la fiche"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleSupprimerArticle(art.code_art)}
-                            className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
-                            title="Supprimer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
+                      {columnConfigService.isColumnVisible('articles', 'code_art') && (
+                        <td className="py-2 px-3 font-bold text-amber-300">{art.code_art}</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'designation') && (
+                        <td className="py-2 px-3 font-sans text-slate-200 font-medium">{art.designation}</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'longeur') && (
+                        <td className="py-2 px-3 text-center text-slate-300">{art.longeur} mm</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'lame') && (
+                        <td className="py-2 px-3 text-center text-slate-400">{art.lame} mm</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'debordement') && (
+                        <td className="py-2 px-3 text-center text-slate-400">{art.debordement} mm</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'stock_physique') && (
+                        <td className="py-2 px-3 text-center">
+                          <span className={`px-2 py-0.5 rounded font-bold ${
+                            art.stock_physique <= (art.stock_min || 5)
+                              ? 'bg-rose-950/60 text-rose-400 border border-rose-800/50'
+                              : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
+                          }`}>
+                            {art.stock_physique}
+                          </span>
+                        </td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'prix_unitaire') && (
+                        <td className="py-2 px-3 text-center text-amber-400">{art.prix_unitaire}</td>
+                      )}
+                      {columnConfigService.isColumnVisible('articles', 'actions') && (
+                        <td className="py-2 px-3 text-center">
+                          <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => ouvrirOperationStock('RECEPTION', art)}
+                              className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 rounded"
+                              title="Réception Marchandise (+)"
+                            >
+                              <PackagePlus className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => ouvrirOperationStock('SORTIE', art)}
+                              className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded"
+                              title="Sortie Manuelle (-)"
+                            >
+                              <PackageMinus className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => ouvrirOperationStock('INVENTAIRE', art)}
+                              className="p-1 text-sky-400 hover:text-sky-300 hover:bg-sky-950/60 rounded"
+                              title="Inventaire & Ajustement Réel"
+                            >
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleSelectArticleRow(art)}
+                              className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded"
+                              title="Modifier la fiche"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleSupprimerArticle(art.code_art)}
+                              className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
+                              title="Supprimer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -1568,6 +1568,8 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                   <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
                   <span>⚙️ Gestion Famille</span>
                 </button>
+
+                <ColumnCustomizerPopover tableId="chutes" />
               </div>
             </div>
 
@@ -1615,26 +1617,34 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold">
                   <tr>
-                    <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th
-                      className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${chuteSortKey === 'longueur' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleChuteSort('longueur')}
-                      onDoubleClick={() => handleChuteSort('longueur')}
-                      title="Cliquer ou double-cliquer pour trier par Longueur / Dimension"
-                    >
-                      {selectedSheet === 'MAILLE MSTQ' ? 'Dimension Fixe' : 'Longueur'}{' '}
-                      <SortIcon col="longueur" currentKey={chuteSortKey} currentDir={chuteSortDir} />
-                    </th>
-                    <th
-                      className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${chuteSortKey === 'quantite' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
-                      onClick={() => handleChuteSort('quantite')}
-                      onDoubleClick={() => handleChuteSort('quantite')}
-                      title="Cliquer ou double-cliquer pour trier par Quantité / Plis"
-                    >
-                      {selectedSheet === 'MAILLE MSTQ' ? 'Nombre de Plis Disponibles' : 'Quantité en Stock'}{' '}
-                      <SortIcon col="quantite" currentKey={chuteSortKey} currentDir={chuteSortDir} />
-                    </th>
-                    <th className="py-2.5 px-3 w-28 text-center">Actions</th>
+                    {columnConfigService.isColumnVisible('chutes', 'id') && (
+                      <th className="py-2.5 px-3 w-12 text-center">#</th>
+                    )}
+                    {columnConfigService.isColumnVisible('chutes', 'longueur') && (
+                      <th
+                        className={`py-2.5 px-3 cursor-pointer select-none transition group hover:bg-slate-900 ${chuteSortKey === 'longueur' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleChuteSort('longueur')}
+                        onDoubleClick={() => handleChuteSort('longueur')}
+                        title="Cliquer ou double-cliquer pour trier par Longueur / Dimension"
+                      >
+                        {selectedSheet === 'MAILLE MSTQ' ? 'Dimension Fixe' : 'Longueur'}{' '}
+                        <SortIcon col="longueur" currentKey={chuteSortKey} currentDir={chuteSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('chutes', 'quantite') && (
+                      <th
+                        className={`py-2.5 px-3 text-center cursor-pointer select-none transition group hover:bg-slate-900 ${chuteSortKey === 'quantite' ? 'text-amber-300 bg-slate-900/60' : 'hover:text-amber-300'}`}
+                        onClick={() => handleChuteSort('quantite')}
+                        onDoubleClick={() => handleChuteSort('quantite')}
+                        title="Cliquer ou double-cliquer pour trier par Quantité / Plis"
+                      >
+                        {selectedSheet === 'MAILLE MSTQ' ? 'Nombre de Plis Disponibles' : 'Quantité en Stock'}{' '}
+                        <SortIcon col="quantite" currentKey={chuteSortKey} currentDir={chuteSortDir} />
+                      </th>
+                    )}
+                    {columnConfigService.isColumnVisible('chutes', 'actions') && (
+                      <th className="py-2.5 px-3 w-28 text-center">Actions</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1657,7 +1667,117 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                         const isEditingThis = editingChuteId === chuteId;
                         return (
                           <tr key={chuteId} className="hover:bg-slate-800/30">
+                            {columnConfigService.isColumnVisible('chutes', 'id') && (
+                              <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
+                            )}
+                            {columnConfigService.isColumnVisible('chutes', 'longueur') && (
+                              <td className="py-2 px-3 font-bold text-amber-400">
+                                {isEditingThis ? (
+                                  <input
+                                    type="number"
+                                    value={editChuteLongueur}
+                                    onChange={e => setEditChuteLongueur(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                      if (e.key === 'Escape') setEditingChuteId(null);
+                                    }}
+                                    className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                    autoFocus
+                                  />
+                                ) : (
+                                  `${m.dimension_fixe} mm`
+                                )}
+                              </td>
+                            )}
+                            {columnConfigService.isColumnVisible('chutes', 'quantite') && (
+                              <td className="py-2 px-3 text-center">
+                                {isEditingThis ? (
+                                  <input
+                                    type="number"
+                                    value={editChuteQte}
+                                    onChange={e => setEditChuteQte(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') handleSaveEditChute(chuteId);
+                                      if (e.key === 'Escape') setEditingChuteId(null);
+                                    }}
+                                    className="bg-slate-950 border border-sky-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-sky-300 text-center focus:outline-none focus:ring-1 focus:ring-sky-400"
+                                  />
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                    <span className={`font-bold ${m.plis <= 0 ? 'text-rose-400' : 'text-sky-400'}`}>
+                                      {m.plis} plis
+                                    </span>
+                                    {(m.plisReserve ?? 0) > 0 && (
+                                      <span
+                                        className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/80 px-1.5 py-0.5 rounded font-sans font-medium"
+                                        title={`🔒 ${m.plisReserve} plis réservés pour des Ordres de Fabrication en cours (Stock physique total : ${m.plisPhysique ?? (m.plis + (m.plisReserve ?? 0))} plis)`}
+                                      >
+                                        🔒 {m.plisReserve} rés.
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            )}
+                            {columnConfigService.isColumnVisible('chutes', 'actions') && (
+                              <td className="py-2 px-3 text-center">
+                                {isEditingThis ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleSaveEditChute(chuteId)}
+                                      className="p-1 text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                                      title="Enregistrer (ou Entrée)"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingChuteId(null)}
+                                      className="p-1 text-slate-500 hover:text-slate-300 cursor-pointer"
+                                      title="Annuler (ou Échap)"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      onClick={() => handleStartEditChute(chuteId, m.dimension_fixe, m.plis)}
+                                      className="p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
+                                      title="Modifier"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleSupprimerChute(chuteId)}
+                                      className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
+                                      title="Supprimer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )
+                  ) : sortedChutesBarresList.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-slate-500 font-sans italic text-xs">
+                        Aucune chute disponible dans la famille « {selectedSheet} ». Ajoutez une première chute ci-dessus.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedChutesBarresList.map((c, idx) => {
+                      const chuteId = c.id || `c-${selectedSheet}-${idx}-${c.longueur}`;
+                      const isEditingThis = editingChuteId === chuteId;
+                      return (
+                        <tr key={chuteId} className="hover:bg-slate-800/30">
+                          {columnConfigService.isColumnVisible('chutes', 'id') && (
                             <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
+                          )}
+                          {columnConfigService.isColumnVisible('chutes', 'longueur') && (
                             <td className="py-2 px-3 font-bold text-amber-400">
                               {isEditingThis ? (
                                 <input
@@ -1672,9 +1792,11 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                   autoFocus
                                 />
                               ) : (
-                                `${m.dimension_fixe} mm`
+                                `${c.longueur} mm`
                               )}
                             </td>
+                          )}
+                          {columnConfigService.isColumnVisible('chutes', 'quantite') && (
                             <td className="py-2 px-3 text-center">
                               {isEditingThis ? (
                                 <input
@@ -1685,24 +1807,26 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                     if (e.key === 'Enter') handleSaveEditChute(chuteId);
                                     if (e.key === 'Escape') setEditingChuteId(null);
                                   }}
-                                  className="bg-slate-950 border border-sky-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-sky-300 text-center focus:outline-none focus:ring-1 focus:ring-sky-400"
+                                  className="bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-emerald-300 text-center focus:outline-none focus:ring-1 focus:ring-emerald-400"
                                 />
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                  <span className={`font-bold ${m.plis <= 0 ? 'text-rose-400' : 'text-sky-400'}`}>
-                                    {m.plis} plis
+                                  <span className={`font-bold ${c.quantite <= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                    {c.quantite}
                                   </span>
-                                  {(m.plisReserve ?? 0) > 0 && (
+                                  {(c.reserve ?? 0) > 0 && (
                                     <span
                                       className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/80 px-1.5 py-0.5 rounded font-sans font-medium"
-                                      title={`🔒 ${m.plisReserve} plis réservés pour des Ordres de Fabrication en cours (Stock physique total : ${m.plisPhysique ?? (m.plis + (m.plisReserve ?? 0))} plis)`}
+                                      title={`🔒 ${c.reserve} unité(s) réservée(s) pour des Ordres de Fabrication en cours (Stock physique en atelier : ${c.quantitePhysique ?? (c.quantite + (c.reserve ?? 0))})`}
                                     >
-                                      🔒 {m.plisReserve} rés.
+                                      🔒 {c.reserve} rés.
                                     </span>
                                   )}
                                 </div>
                               )}
                             </td>
+                          )}
+                          {columnConfigService.isColumnVisible('chutes', 'actions') && (
                             <td className="py-2 px-3 text-center">
                               {isEditingThis ? (
                                 <div className="flex items-center justify-center gap-1">
@@ -1724,7 +1848,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5">
                                   <button
-                                    onClick={() => handleStartEditChute(chuteId, m.dimension_fixe, m.plis)}
+                                    onClick={() => handleStartEditChute(chuteId, c.longueur, c.quantite)}
                                     className="p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
                                     title="Modifier"
                                   >
@@ -1740,105 +1864,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                 </div>
                               )}
                             </td>
-                          </tr>
-                        );
-                      })
-                    )
-                  ) : sortedChutesBarresList.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-slate-500 font-sans italic text-xs">
-                        Aucune chute disponible dans la famille « {selectedSheet} ». Ajoutez une première chute ci-dessus.
-                      </td>
-                    </tr>
-                  ) : (
-                    sortedChutesBarresList.map((c, idx) => {
-                      const chuteId = c.id || `c-${selectedSheet}-${idx}-${c.longueur}`;
-                      const isEditingThis = editingChuteId === chuteId;
-                      return (
-                        <tr key={chuteId} className="hover:bg-slate-800/30">
-                          <td className="py-2 px-3 text-center text-slate-500">{idx + 1}</td>
-                          <td className="py-2 px-3 font-bold text-amber-400">
-                            {isEditingThis ? (
-                              <input
-                                type="number"
-                                value={editChuteLongueur}
-                                onChange={e => setEditChuteLongueur(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleSaveEditChute(chuteId);
-                                  if (e.key === 'Escape') setEditingChuteId(null);
-                                }}
-                                className="bg-slate-950 border border-amber-500 rounded px-2 py-0.5 w-24 text-xs font-mono text-amber-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                autoFocus
-                              />
-                            ) : (
-                              `${c.longueur} mm`
-                            )}
-                          </td>
-                          <td className="py-2 px-3 text-center">
-                            {isEditingThis ? (
-                              <input
-                                type="number"
-                                value={editChuteQte}
-                                onChange={e => setEditChuteQte(e.target.value)}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleSaveEditChute(chuteId);
-                                  if (e.key === 'Escape') setEditingChuteId(null);
-                                }}
-                                className="bg-slate-950 border border-emerald-500 rounded px-2 py-0.5 w-16 text-xs font-mono text-emerald-300 text-center focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                              />
-                            ) : (
-                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                <span className={`font-bold ${c.quantite <= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                  {c.quantite}
-                                </span>
-                                {(c.reserve ?? 0) > 0 && (
-                                  <span
-                                    className="text-[10px] bg-amber-950/80 text-amber-300 border border-amber-800/80 px-1.5 py-0.5 rounded font-sans font-medium"
-                                    title={`🔒 ${c.reserve} unité(s) réservée(s) pour des Ordres de Fabrication en cours (Stock physique en atelier : ${c.quantitePhysique ?? (c.quantite + (c.reserve ?? 0))})`}
-                                  >
-                                    🔒 {c.reserve} rés.
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 text-center">
-                            {isEditingThis ? (
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={() => handleSaveEditChute(chuteId)}
-                                  className="p-1 text-emerald-400 hover:text-emerald-300 cursor-pointer"
-                                  title="Enregistrer (ou Entrée)"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => setEditingChuteId(null)}
-                                  className="p-1 text-slate-500 hover:text-slate-300 cursor-pointer"
-                                  title="Annuler (ou Échap)"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-center gap-1.5">
-                                <button
-                                  onClick={() => handleStartEditChute(chuteId, c.longueur, c.quantite)}
-                                  className="p-1 text-slate-400 hover:text-amber-300 cursor-pointer"
-                                  title="Modifier"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleSupprimerChute(chuteId)}
-                                  className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
-                                  title="Supprimer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )}
-                          </td>
+                          )}
                         </tr>
                       );
                     })
