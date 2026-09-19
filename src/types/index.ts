@@ -13,6 +13,8 @@ export interface Article {
   prix_unitaire: number;    // DZD
   stock_min: number;        // seuil d'alerte stock
   categorie?: string;
+  actif?: boolean;          // true par défaut, false si désactivé (archivé / référence commande clôturée)
+  dateDesactivation?: string;
 }
 
 export interface ChuteItem {
@@ -247,6 +249,8 @@ export type FamilleProduit = 'TABLIER' | 'MOUSTIQUAIRE' | 'CAISSON' | 'PRECADRE'
 
 export type StatutDossier = 'BROUILLON' | 'EN_ATTENTE' | 'EN_COURS' | 'EN_PAUSE' | 'OPTIMISE' | 'FABRIQUE' | 'CLOTURE' | 'LIVRE' | 'TERMINE';
 
+export type TypePrioriteCommande = 'NORMAL' | 'INSTANTANE' | 'DIFFERE';
+
 export interface DossierCommandeGlobal {
   id: string;
   donneurOrdre: string; // ex: "SOMADAL Alger", "CRISTAL Alger", "ATELIER Alger"
@@ -272,6 +276,7 @@ export interface DossierCommandeGlobal {
   dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
   estPrioritaire?: boolean;  // Commande prioritaire / urgente
+  typePriorite?: TypePrioriteCommande; // 'NORMAL' | 'INSTANTANE' (immédiate en tête) | 'DIFFERE' (planifié)
   motifPriorite?: string;    // Motif de la priorité (ex: "Chantier urgent", "VIP", etc.)
   nomChauffeur?: string;     // Nom du chauffeur transporteur
   estEnPause?: boolean;      // Commande suspendue temporairement (ex: rupture matière, attente client)
@@ -620,6 +625,33 @@ export interface EstimationLivraisonDossier {
   joursOuvresMax: number;
   familleGoulot?: FamilleProduit;     // Famille déterminante imposant la date la plus éloignée
   detailsParFamille: Record<string, EstimationDelaiDetail>;
+}
+
+export interface PropositionHeuresSup {
+  famille: FamilleProduit;
+  libelleFamille: string;
+  heuresSupMinutes: number; // 120 (2h)
+  piecesSupPossibles: number; // ex: 24 pour caissons, 20 pour précadres...
+  estSouhaitable: boolean;
+  motif: string;
+  commandesAvanceesAujourdhui: string[];
+}
+
+export interface ResultatPlanningItem {
+  id: string;
+  refCommande: string;
+  nomClient: string;
+  nbPieces: number;
+  estPrioritaire: boolean;
+  estEnPause: boolean;
+  motifPause?: string;
+  dateLivraisonEstimee: Date;
+  dateLivraisonISO: string;
+  texteLivraison: string;
+  joursOuvresRequis: number;
+  minutesProduction: number;
+  jourIndex: number; // 0 = aujourd'hui
+  heureFinEstimee: string; // ex: "11:35"
 }
 
 export type StatutRespectDelai =

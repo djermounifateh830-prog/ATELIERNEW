@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Article,
   ChuteItem,
   ChuteMaille,
   MappingChutes,
   SuiviOF,
+  DossierCommandeGlobal,
   MouvementStock
 } from '../../types';
 import { INITIAL_MAPPING } from '../../data/initialData';
@@ -14,6 +15,7 @@ import { ImportChutesModal } from '../stock/ImportChutesModal';
 import { OperationsStockModal, OperationStockType } from '../stock/OperationsStockModal';
 import { InventaireStockView } from '../stock/InventaireStockView';
 import { ColumnCustomizerPopover } from '../common/ColumnCustomizerPopover';
+import { ConfirmationModal, ConfirmationType } from '../common/ConfirmationModal';
 import { columnConfigService } from '../../services/columnConfigService';
 import {
   FileSpreadsheet,
@@ -44,7 +46,14 @@ import {
   ChevronRight,
   PackagePlus,
   PackageMinus,
-  Wand2
+  Wand2,
+  ArrowDown,
+  ArrowUp,
+  RotateCcw,
+  Power,
+  PowerOff,
+  Eye,
+  CornerDownRight
 } from 'lucide-react';
 
 interface GestionStockTabProps {
@@ -53,6 +62,7 @@ interface GestionStockTabProps {
   chutesMaille: ChuteMaille[];
   mapping: MappingChutes;
   suivisOF?: SuiviOF[];
+  dossiers?: DossierCommandeGlobal[];
   mouvements?: MouvementStock[];
   onStockUpdated: () => void;
 }
@@ -93,10 +103,36 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   chutesMaille = [],
   mapping = {},
   suivisOF = [],
+  dossiers = [],
   mouvements = [],
   onStockUpdated
 }) => {
   const safeArticles = Array.isArray(articles) ? articles : [];
+
+  // Référence formulaire pour auto-scroll et navigation
+  const formArticleRef = useRef<HTMLDivElement>(null);
+  const [lastSelectedArticleCode, setLastSelectedArticleCode] = useState<string | null>(null);
+  const [highlightedRowCode, setHighlightedRowCode] = useState<string | null>(null);
+  const [articleStatusFilter, setArticleStatusFilter] = useState<'ACTIFS' | 'DESACTIVES' | 'TOUS'>('ACTIFS');
+  const [feedbackAction, setFeedbackAction] = useState<string | null>(null);
+
+  // État générique du Modal de Confirmation
+  const [confirmModalState, setConfirmModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string | React.ReactNode;
+    type?: ConfirmationType;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    details?: string[];
+    isProcessing?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
   const safeChutesBarres = useMemo(() => {
     if (!chutesBarres || typeof chutesBarres !== 'object') return {};
     const res: Record<string, ChuteItem[]> = {};
@@ -251,11 +287,45 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     }
   }, [availableSheetsForSelectedArt, selectedArtForMapping, mapping]);
 
-  // --- HANDLERS ARTICLES ---
+  // --- AUTO-SCROLL ET NAVIGATION DE SÉLECTION ---
   const handleSelectArticleRow = (art: Article) => {
     setSelectedArticleCode(art.code_art);
+    setLastSelectedArticleCode(art.code_art);
     setArtForm({ ...art });
     setIsEditingArticle(true);
+
+    // Auto-scroll instantané et fluide vers le formulaire en haut
+    setTimeout(() => {
+      formArticleRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 40);
+  };
+
+  const handleScrollBackToSelectedRow = () => {
+    if (!lastSelectedArticleCode) return;
+    const targetId = `article-row-${lastSelectedArticleCode}`;
+    const el = document.getElementById(targetId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedRowCode(lastSelectedArticleCode);
+      setTimeout(() => {
+        setHighlightedRowCode(null);
+      }, 3500);
+    }
+  };
+
+  const handleAnnulerEtRevenir = () => {
+    const code = lastSelectedArticleCode;
+    handleViderFormArticle();
+    if (code) {
+      setTimeout(() => {
+        const el = document.getElementById(`article-row-${code}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setHighlightedRowCode(code);
+          setTimeout(() => setHighlightedRowCode(null), 3500);
+        }
+      }, 100);
+    }
   };
 
   const handleViderFormArticle = () => {
@@ -285,15 +355,174 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
     }));
   };
 
-  const handleEnregistrerArticle = async () => {
+  // Détecter si un article est déjà saisi dans des commandes déjà clôturées / archivées
+  const isArticleInClosedOrders = (codeArt: string): { inClosed: boolean; refs: string[] } => {
+    const codeUpper = (codeArt || '').trim().toUpperCase();
+    if (!codeUpper) return { inClosed: false, refs: [] };
+
+    const closedDossiers = (dossiers || []).filter(d =>
+      d && (d.statut === 'CLOTURE' || d.statut === 'LIVRE' || d.statut === 'TERMINE')
+    );
+    const matchingRefs: string[] = [];
+
+    closedDossiers.forEach(d => {
+      const ref = d.refCommande || d.id;
+      let found = false;
+
+      // Tabliers
+      if (d.articlesTabliers?.some(t =>
+        t.articleCode?.toUpperCase() === codeUpper ||
+        t.lfArticleCode?.toUpperCase() === codeUpper ||
+        t.glArticleCode?.toUpperCase() === codeUpper
+      )) {
+        found = true;
+      }
+
+      // Moustiquaires
+      if (d.articlesMoustiquaires?.some(m =>
+        m.articleCodeMaille?.toUpperCase() === codeUpper ||
+        m.articleCodeCadre?.toUpperCase() === codeUpper ||
+        m.articleCodeCoulisse?.toUpperCase() === codeUpper ||
+        m.articleCodeBarreInf?.toUpperCase() === codeUpper
+      )) {
+        found = true;
+      }
+
+      // Caissons
+      if (d.articlesCaissons?.some(c =>
+        c.articleCode?.toUpperCase() === codeUpper ||
+        c.sfArticleCode?.toUpperCase() === codeUpper
+      )) {
+        found = true;
+      }
+
+      // Précadres
+      if (d.articlesPrecadres?.some(p =>
+        p.articleCode?.toUpperCase() === codeUpper ||
+        p.bouchonArticleCode?.toUpperCase() === codeUpper
+      )) {
+        found = true;
+      }
+
+      if (found && !matchingRefs.includes(ref)) {
+        matchingRefs.push(ref);
+      }
+    });
+
+    // Vérifier également dans les Ordres de Fabrication déjà clôturés
+    (suivisOF || []).forEach(o => {
+      if (o.statut === 'CLOTURE') {
+        const matchesArticle = (o.lignesRetour || []).some(l => l.articleCode?.toUpperCase() === codeUpper) ||
+          (o.titreSection || '').toUpperCase().includes(codeUpper);
+        if (matchesArticle) {
+          const ref = o.numCommande || o.codeOF || o.id;
+          if (!matchingRefs.includes(ref)) matchingRefs.push(ref);
+        }
+      }
+    });
+
+    return { inClosed: matchingRefs.length > 0, refs: matchingRefs };
+  };
+
+  // Désactivation sécurisée d'un article
+  const handleDeactivateArticle = async (code: string) => {
+    try {
+      const updated = articles.map(a => {
+        if (a.code_art === code) {
+          return {
+            ...a,
+            actif: false,
+            statut: 'DESACTIVE',
+            dateDesactivation: new Date().toLocaleDateString('fr-FR')
+          };
+        }
+        return a;
+      });
+      await StorageService.saveArticles(updated);
+      onStockUpdated();
+      handleViderFormArticle();
+      setFeedbackAction(`L'article ${code} a été désactivé et classé dans « Articles désactivés ». Vous pouvez le réactiver à tout moment.`);
+      setTimeout(() => setFeedbackAction(null), 5000);
+    } catch (e: any) {
+      alert('Erreur lors de la désactivation : ' + e.message);
+    }
+  };
+
+  // Réactivation d'un article désactivé
+  const handleReactivateArticle = async (code: string) => {
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Confirmation de Réactivation',
+      type: 'info',
+      message: `Voulez-vous réactiver l'article "${code}" et le réintégrer dans le catalogue actif de l'atelier ?`,
+      confirmLabel: 'Réactiver l\'article',
+      cancelLabel: 'Annuler',
+      onConfirm: async () => {
+        setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+        try {
+          const updated = articles.map(a => {
+            if (a.code_art === code) {
+              return {
+                ...a,
+                actif: true,
+                statut: 'NORMAL',
+                dateDesactivation: undefined
+              };
+            }
+            return a;
+          });
+          await StorageService.saveArticles(updated);
+          onStockUpdated();
+          setFeedbackAction(`L'article ${code} a été réactivé avec succès !`);
+          setTimeout(() => setFeedbackAction(null), 4000);
+        } catch (e: any) {
+          alert('Erreur lors de la réactivation : ' + e.message);
+        }
+      }
+    });
+  };
+
+  // Enregistrement d'un article avec Confirmation obligatoire
+  const handleDemandeEnregistrerArticle = () => {
     if (!artForm.code_art || !artForm.designation) {
       alert('Code article et Désignation sont obligatoires.');
       return;
     }
 
+    const isModif = isEditingArticle && selectedArticleCode;
+    const targetCode = artForm.code_art.trim().toUpperCase();
+
+    if (!isModif && articles.some(a => a.code_art.toUpperCase() === targetCode)) {
+      alert(`Le code article ${targetCode} existe déjà dans le stock.`);
+      return;
+    }
+
+    setConfirmModalState({
+      isOpen: true,
+      title: isModif ? 'Confirmation de Modification' : 'Confirmation d\'Enregistrement',
+      type: 'save',
+      message: isModif
+        ? `Confirmez-vous l'enregistrement des modifications apportées à l'article ${targetCode} (${artForm.designation}) ?`
+        : `Confirmez-vous la création et l'ajout du nouvel article ${targetCode} (${artForm.designation}) dans la base de données ?`,
+      details: [
+        `Code : ${targetCode}`,
+        `Désignation : ${artForm.designation}`,
+        `Longueur : ${artForm.longeur ?? 0} mm | Lame scie : ${artForm.lame ?? 0} mm`,
+        `Stock physique : ${artForm.stock_physique ?? 0} barres | Prix : ${artForm.prix_unitaire ?? 0} DZD`
+      ],
+      confirmLabel: isModif ? 'Oui, Mettre à jour' : 'Oui, Enregistrer',
+      cancelLabel: 'Annuler',
+      onConfirm: async () => {
+        setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+        await executerEnregistrementArticle();
+      }
+    });
+  };
+
+  const executerEnregistrementArticle = async () => {
     const newArt: Article = {
-      code_art: artForm.code_art.trim(),
-      designation: artForm.designation.trim(),
+      code_art: artForm.code_art!.trim().toUpperCase(),
+      designation: artForm.designation!.trim(),
       statut: artForm.statut || 'NORMAL',
       hauteur: artForm.hauteur ?? 0,
       longeur: artForm.longeur ?? 0,
@@ -304,32 +533,88 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
       stock_physique: artForm.stock_physique ?? 0,
       quantite_reservee: artForm.quantite_reservee ?? 0,
       prix_unitaire: artForm.prix_unitaire ?? 0,
-      stock_min: artForm.stock_min ?? 0
+      stock_min: artForm.stock_min ?? 0,
+      actif: artForm.actif !== undefined ? artForm.actif : true
     };
 
     let updatedList: Article[];
     if (isEditingArticle && selectedArticleCode) {
       updatedList = articles.map(a => (a.code_art === selectedArticleCode ? newArt : a));
     } else {
-      if (articles.some(a => a.code_art === newArt.code_art)) {
-        alert(`Le code article ${newArt.code_art} existe déjà.`);
-        return;
-      }
       updatedList = [...articles, newArt];
     }
 
-    await StorageService.saveArticles(updatedList);
-    onStockUpdated();
-    handleViderFormArticle();
-    alert(`Article ${newArt.code_art} enregistré avec succès !`);
-  };
-
-  const handleSupprimerArticle = async (code: string) => {
-    if (confirm(`Êtes-vous sûr de vouloir supprimer définitivement l'article ${code} ?`)) {
-      const updated = articles.filter(a => a.code_art !== code);
-      await StorageService.saveArticles(updated);
+    try {
+      await StorageService.saveArticles(updatedList);
       onStockUpdated();
       handleViderFormArticle();
+      setFeedbackAction(`Article ${newArt.code_art} enregistré avec succès en base SQLite !`);
+      setTimeout(() => setFeedbackAction(null), 4000);
+    } catch (e: any) {
+      alert('Erreur lors de la sauvegarde : ' + e.message);
+    }
+  };
+
+  // Demande de suppression avec Détection stricte des Commandes Clôturées
+  const handleDemandeSupprimerArticle = (code: string) => {
+    const art = articles.find(a => a.code_art === code);
+    const designation = art?.designation || '';
+    const { inClosed, refs } = isArticleInClosedOrders(code);
+
+    if (inClosed) {
+      // Suppression formellement impossible -> Proposition de désactivation
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Suppression Impossible — Commandes Clôturées',
+        type: 'warning',
+        message: (
+          <div className="space-y-2.5 text-xs leading-relaxed">
+            <p className="text-amber-200 font-semibold">
+              Cet article est déjà saisi dans des lignes de commandes déjà clôturées ou archivées.
+            </p>
+            <p className="text-slate-300">
+              Conformément aux règles de traçabilité industrielle, <strong className="text-rose-400 font-bold">sa suppression définitive est formellement impossible</strong> afin de garantir l'intégrité des historiques d'atelier.
+            </p>
+            <div className="p-2.5 rounded-lg bg-slate-950 border border-amber-500/30 text-[11px] text-amber-300">
+              💡 Solution recommandée : vous pouvez <strong className="underline font-bold">désactiver</strong> cet article. Il sera retiré du catalogue actif et placé dans « Articles désactivés », avec la possibilité d'une réactivation à tout moment.
+            </div>
+          </div>
+        ),
+        details: refs.slice(0, 4).map(r => `Commande / Dossier clôturé : ${r}`),
+        confirmLabel: 'Désactiver l\'article',
+        cancelLabel: 'Annuler',
+        onConfirm: () => {
+          setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+          handleDeactivateArticle(code);
+        }
+      });
+    } else {
+      // Confirmation de suppression normale
+      setConfirmModalState({
+        isOpen: true,
+        title: 'Confirmation de Suppression Définitive',
+        type: 'danger',
+        message: `Êtes-vous certain de vouloir supprimer définitivement l'article "${code}" (${designation}) ?`,
+        details: [
+          'Cet article sera effacé de la base de données SQLite.',
+          'Cette action est irréversible.'
+        ],
+        confirmLabel: 'Oui, Supprimer définitivement',
+        cancelLabel: 'Annuler',
+        onConfirm: async () => {
+          setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+          try {
+            const updated = articles.filter(a => a.code_art !== code);
+            await StorageService.saveArticles(updated);
+            onStockUpdated();
+            handleViderFormArticle();
+            setFeedbackAction(`Article ${code} supprimé du stock.`);
+            setTimeout(() => setFeedbackAction(null), 3500);
+          } catch (e: any) {
+            alert('Erreur lors de la suppression : ' + e.message);
+          }
+        }
+      });
     }
   };
 
@@ -771,27 +1056,47 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   };
 
   const handleSupprimerChute = async (chuteId: string) => {
-    if (!confirm('Êtes-vous certain de vouloir supprimer cette chute du stock ?')) return;
-    try {
-      if (selectedSheet === 'MAILLE MSTQ') {
-        const updated = safeChutesMaille.filter((m) => m.id !== chuteId);
-        await StorageService.saveChutesMaille(updated);
-      } else {
-        const currentList = safeChutesBarres[selectedSheet] || [];
-        const updatedList = currentList.filter((c) => c.id !== chuteId);
-        await StorageService.saveChutesBarres({ ...safeChutesBarres, [selectedSheet]: updatedList });
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Confirmation de suppression de chute',
+      type: 'danger',
+      message: 'Êtes-vous certain de vouloir supprimer définitivement cette chute du stock ?',
+      details: [`Famille : ${selectedSheet}`, `Identifiant : ${chuteId}`],
+      confirmLabel: 'Oui, Supprimer',
+      cancelLabel: 'Annuler',
+      onConfirm: async () => {
+        setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+        try {
+          if (selectedSheet === 'MAILLE MSTQ') {
+            const updated = safeChutesMaille.filter((m) => m.id !== chuteId);
+            await StorageService.saveChutesMaille(updated);
+          } else {
+            const currentList = safeChutesBarres[selectedSheet] || [];
+            const updatedList = currentList.filter((c) => c.id !== chuteId);
+            await StorageService.saveChutesBarres({ ...safeChutesBarres, [selectedSheet]: updatedList });
+          }
+          await onStockUpdated();
+          setFeedbackAction('Chute supprimée du stock.');
+          setTimeout(() => setFeedbackAction(null), 3000);
+        } catch (err: any) {
+          alert(`Erreur lors de la suppression : ${err?.message || err}`);
+        }
       }
-      await onStockUpdated();
-    } catch (err: any) {
-      alert(`Erreur lors de la suppression : ${err?.message || err}`);
-    }
+    });
   };
 
-  const filteredArticles = articles.filter(
-    a =>
-      a.designation.toLowerCase().includes(searchArticle.toLowerCase()) ||
-      a.code_art.toLowerCase().includes(searchArticle.toLowerCase())
-  );
+  const filteredArticles = articles.filter(a => {
+    // Filtre sur état Actif / Désactivé
+    if (articleStatusFilter === 'ACTIFS' && a.actif === false) return false;
+    if (articleStatusFilter === 'DESACTIVES' && a.actif !== false) return false;
+
+    if (!searchArticle.trim()) return true;
+    const q = searchArticle.toLowerCase().trim();
+    return (
+      (a.designation || '').toLowerCase().includes(q) ||
+      (a.code_art || '').toLowerCase().includes(q)
+    );
+  });
 
   // --- TRI PAR DOUBLE-CLIC SUR LES EN-TÊTES ---
   // 1. Articles
@@ -1113,19 +1418,45 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           </div>
 
           {/* Formulaire Article (Ajouter / Modifier) */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm text-slate-100 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+          <div ref={formArticleRef} className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm text-slate-100 space-y-4">
+            {feedbackAction && (
+              <div className="p-3 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-xs text-emerald-200 flex items-center justify-between">
+                <span>{feedbackAction}</span>
+                <button type="button" onClick={() => setFeedbackAction(null)} className="text-emerald-400 hover:text-white ml-2 text-xs font-bold">✕</button>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-2">
+              <div className="flex items-center gap-2">
                 <Edit2 className="w-4 h-4 text-amber-400" />
-                {isEditingArticle ? `Modifier l'article (${artForm.code_art})` : 'Ajouter un Nouvel Article'}
-              </h3>
+                <h3 className="font-bold text-sm text-slate-100">
+                  {isEditingArticle ? `Modifier l'article (${artForm.code_art})` : 'Ajouter un Nouvel Article'}
+                </h3>
+                {isEditingArticle && artForm.actif === false && (
+                  <span className="text-[10px] bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full font-bold border border-rose-500/30">
+                    Article Désactivé
+                  </span>
+                )}
+              </div>
               {isEditingArticle && (
-                <button
-                  onClick={handleViderFormArticle}
-                  className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
-                >
-                  Annuler / Nouvel Article
-                </button>
+                <div className="flex items-center gap-2">
+                  {lastSelectedArticleCode && (
+                    <button
+                      type="button"
+                      onClick={handleScrollBackToSelectedRow}
+                      className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                      title="Revenir directement vers cet article dans la liste en bas de page"
+                    >
+                      <span>↓ Revenir à la sélection</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAnnulerEtRevenir}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs rounded-lg border border-slate-700 transition cursor-pointer"
+                  >
+                    Annuler &amp; Revenir
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1270,7 +1601,8 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
 
               <div className="flex items-end">
                 <button
-                  onClick={handleEnregistrerArticle}
+                  type="button"
+                  onClick={handleDemandeEnregistrerArticle}
                   className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
                 >
                   <Save className="w-3.5 h-3.5" />
@@ -1283,7 +1615,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           {/* Tableau des Articles */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-3">
                 <div className="relative w-72">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
                   <input
@@ -1295,9 +1627,59 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                   />
                 </div>
                 <ColumnCustomizerPopover tableId="articles" />
+
+                {/* Filtre d'état des Articles (Actifs / Désactivés / Tous) */}
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setArticleStatusFilter('ACTIFS')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      articleStatusFilter === 'ACTIFS'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>Articles Actifs</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      articleStatusFilter === 'ACTIFS' ? 'bg-slate-950/20 text-slate-950 font-black' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {articles.filter(a => a.actif !== false).length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArticleStatusFilter('DESACTIVES')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      articleStatusFilter === 'DESACTIVES'
+                        ? 'bg-rose-600 text-white font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>Désactivés</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      articleStatusFilter === 'DESACTIVES' ? 'bg-white/20 text-white font-black' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {articles.filter(a => a.actif === false).length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArticleStatusFilter('TOUS')}
+                    className={`px-2.5 py-1 rounded-md font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                      articleStatusFilter === 'TOUS'
+                        ? 'bg-slate-800 text-slate-200 font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>Tous</span>
+                    <span className="text-[10px] bg-slate-800 px-1.5 py-0.2 rounded-full text-slate-400">
+                      {articles.length}
+                    </span>
+                  </button>
+                </div>
               </div>
               <div className="text-xs text-slate-400">
-                Total : <span className="font-bold text-slate-200">{filteredArticles.length}</span> articles
+                Affichés : <span className="font-bold text-slate-200">{filteredArticles.length}</span> articles
               </div>
             </div>
 
@@ -1381,84 +1763,123 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {sortedArticles.map(art => (
-                    <tr
-                      key={art.code_art}
-                      className="hover:bg-slate-800/40 transition cursor-pointer"
-                      onClick={() => handleSelectArticleRow(art)}
-                    >
-                      {columnConfigService.isColumnVisible('articles', 'code_art') && (
-                        <td className="py-2 px-3 font-bold text-amber-300">{art.code_art}</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'designation') && (
-                        <td className="py-2 px-3 font-sans text-slate-200 font-medium">{art.designation}</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'longeur') && (
-                        <td className="py-2 px-3 text-center text-slate-300">{art.longeur} mm</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'lame') && (
-                        <td className="py-2 px-3 text-center text-slate-400">{art.lame} mm</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'debordement') && (
-                        <td className="py-2 px-3 text-center text-slate-400">{art.debordement} mm</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'stock_physique') && (
-                        <td className="py-2 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded font-bold ${
-                            art.stock_physique <= (art.stock_min || 5)
-                              ? 'bg-rose-950/60 text-rose-400 border border-rose-800/50'
-                              : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
-                          }`}>
-                            {art.stock_physique}
-                          </span>
-                        </td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'prix_unitaire') && (
-                        <td className="py-2 px-3 text-center text-amber-400">{art.prix_unitaire}</td>
-                      )}
-                      {columnConfigService.isColumnVisible('articles', 'actions') && (
-                        <td className="py-2 px-3 text-center">
-                          <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
-                            <button
-                              onClick={() => ouvrirOperationStock('RECEPTION', art)}
-                              className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 rounded"
-                              title="Réception Marchandise (+)"
-                            >
-                              <PackagePlus className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => ouvrirOperationStock('SORTIE', art)}
-                              className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded"
-                              title="Sortie Manuelle (-)"
-                            >
-                              <PackageMinus className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => ouvrirOperationStock('INVENTAIRE', art)}
-                              className="p-1 text-sky-400 hover:text-sky-300 hover:bg-sky-950/60 rounded"
-                              title="Inventaire & Ajustement Réel"
-                            >
-                              <ClipboardCheck className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleSelectArticleRow(art)}
-                              className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded"
-                              title="Modifier la fiche"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleSupprimerArticle(art.code_art)}
-                              className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
-                              title="Supprimer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
+                  {sortedArticles.map(art => {
+                    const isRowHighlighted = highlightedRowCode === art.code_art;
+                    const isDeactivated = art.actif === false;
+
+                    return (
+                      <tr
+                        id={`article-row-${art.code_art}`}
+                        key={art.code_art}
+                        className={`transition cursor-pointer ${
+                          isRowHighlighted
+                            ? 'bg-amber-500/25 ring-2 ring-amber-400 font-bold'
+                            : isDeactivated
+                            ? 'bg-rose-950/15 opacity-75 hover:bg-rose-950/30'
+                            : 'hover:bg-slate-800/40'
+                        }`}
+                        onClick={() => handleSelectArticleRow(art)}
+                      >
+                        {columnConfigService.isColumnVisible('articles', 'code_art') && (
+                          <td className="py-2 px-3 font-bold text-amber-300">
+                            <div className="flex items-center gap-1.5">
+                              <span>{art.code_art}</span>
+                              {isDeactivated && (
+                                <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded border border-rose-500/30 font-sans font-bold">
+                                  Désactivé
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'designation') && (
+                          <td className="py-2 px-3 font-sans text-slate-200 font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <span className={isDeactivated ? 'line-through text-slate-400' : ''}>{art.designation}</span>
+                            </div>
+                          </td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'longeur') && (
+                          <td className="py-2 px-3 text-center text-slate-300">{art.longeur} mm</td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'lame') && (
+                          <td className="py-2 px-3 text-center text-slate-400">{art.lame} mm</td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'debordement') && (
+                          <td className="py-2 px-3 text-center text-slate-400">{art.debordement} mm</td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'stock_physique') && (
+                          <td className="py-2 px-3 text-center">
+                            <span className={`px-2 py-0.5 rounded font-bold ${
+                              art.stock_physique <= (art.stock_min || 5)
+                                ? 'bg-rose-950/60 text-rose-400 border border-rose-800/50'
+                                : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
+                            }`}>
+                              {art.stock_physique}
+                            </span>
+                          </td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'prix_unitaire') && (
+                          <td className="py-2 px-3 text-center text-amber-400">{art.prix_unitaire}</td>
+                        )}
+                        {columnConfigService.isColumnVisible('articles', 'actions') && (
+                          <td className="py-2 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                              {isDeactivated ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReactivateArticle(art.code_art)}
+                                  className="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-[11px] font-bold rounded flex items-center gap-1 border border-emerald-500/30 transition cursor-pointer"
+                                  title="Réactiver cet article et le remettre dans le stock actif"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Réactiver</span>
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => ouvrirOperationStock('RECEPTION', art)}
+                                    className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 rounded"
+                                    title="Réception Marchandise (+)"
+                                  >
+                                    <PackagePlus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => ouvrirOperationStock('SORTIE', art)}
+                                    className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded"
+                                    title="Sortie Manuelle (-)"
+                                  >
+                                    <PackageMinus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => ouvrirOperationStock('INVENTAIRE', art)}
+                                    className="p-1 text-sky-400 hover:text-sky-300 hover:bg-sky-950/60 rounded"
+                                    title="Inventaire & Ajustement Réel"
+                                  >
+                                    <ClipboardCheck className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleSelectArticleRow(art)}
+                                    className="p-1 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded"
+                                    title="Modifier la fiche"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDemandeSupprimerArticle(art.code_art)}
+                                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded"
+                                    title="Supprimer (ou désactiver si utilisé en commande clôturée)"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2538,6 +2959,20 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Générique de Confirmation pour Deletion / Sauvegarde / Alertes */}
+      <ConfirmationModal
+        isOpen={confirmModalState.isOpen}
+        title={confirmModalState.title}
+        message={confirmModalState.message}
+        type={confirmModalState.type}
+        confirmLabel={confirmModalState.confirmLabel}
+        cancelLabel={confirmModalState.cancelLabel}
+        details={confirmModalState.details}
+        isProcessing={confirmModalState.isProcessing}
+        onConfirm={confirmModalState.onConfirm}
+        onClose={() => setConfirmModalState(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };

@@ -6,7 +6,9 @@ import {
   EstimationLivraisonDossier,
   EstimationDelaiDetail,
   InfoStatutDelai,
-  StatutRespectDelai
+  StatutRespectDelai,
+  PropositionHeuresSup,
+  ResultatPlanningItem
 } from '../types';
 
 export const NOMS_JOURS_SEMAINE = [
@@ -400,9 +402,9 @@ export class DelaisProductionService {
   }
 
   /**
-   * Détermine le nombre de pièces associées à un OF
+   * Détermine le nombre réel de pièces à usiner/fabriquer associées à un OF (quantité réelle de pièces, non de lignes)
    */
-  static compterPiecesOF(of: SuiviOF): number {
+  static compterPiecesOF(of: SuiviOF, dossiers?: DossierCommandeGlobal[]): number {
     // 1. Si déjà explicitement compté ou enregistré dans l'OF
     if ((of as any).nombrePieces && Number((of as any).nombrePieces) > 0) {
       return Number((of as any).nombrePieces);
@@ -411,16 +413,33 @@ export class DelaisProductionService {
       return Number((of as any).totalPieces);
     }
 
-    // 2. D'après les lignes de retour (source principale après optimisation)
+    // 2. Recherche dans le dossier parent si disponible (source de vérité absolue des quantités)
+    if (dossiers && dossiers.length > 0 && of.numCommande) {
+      const ofCmd = of.numCommande.toLowerCase().trim();
+      const parent = dossiers.find(d => {
+        const refs = [d.refCommande, d.numCommandeCaisson, d.numCommandeTablier, d.numCommandeMoustiquaire, d.numCommandePrecadre]
+          .filter(Boolean).map(r => r!.toLowerCase().trim());
+        return refs.some(r => r === ofCmd || (r.length >= 3 && ofCmd.length >= 3 && (r.startsWith(ofCmd) || ofCmd.startsWith(r))));
+      });
+      if (parent) {
+        const famCounts = this.compterPiecesDossierParFamille(parent);
+        const famKey = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) as FamilleProduit;
+        if (famCounts[famKey] && famCounts[famKey] > 0) {
+          return famCounts[famKey];
+        }
+      }
+    }
+
+    // 3. D'après les lignes de retour (source principale après optimisation)
     if (of.lignesRetour && of.lignesRetour.length > 0) {
       let count = 0;
-      let countNonAccessoires = 0;
       of.lignesRetour.forEach(lr => {
         const rep = (lr.repere || '').toUpperCase().trim();
         const isAccessoire = rep.startsWith('ACCESSOIRE') || rep.startsWith('JOUE') || rep.startsWith('BOUCHON');
         if (!isAccessoire) {
-          countNonAccessoires++;
-          if (lr.repere) {
+          if ((lr as any).quantite && Number((lr as any).quantite) > 0) {
+            count += Number((lr as any).quantite);
+          } else if (lr.repere) {
             const reps = lr.repere.split(',').filter(Boolean);
             count += reps.length || 1;
           } else if (lr.piecesInfoStr) {
@@ -432,26 +451,18 @@ export class DelaisProductionService {
         }
       });
       if (count > 0) return count;
-      // Si toutes les lignes étaient des accessoires ou sans repère
       return of.lignesRetour.length;
     }
 
-    // 3. D'après les sections si attachées
-    if (Array.isArray((of as any).sections) && (of as any).sections.length > 0) {
-      let countSec = 0;
-      (of as any).sections.forEach((sec: any) => {
-        if (sec?.resultat?.barres_neuves) {
-          sec.resultat.barres_neuves.forEach((b: any) => {
-            countSec += Array.isArray(b?.pieces) ? b.pieces.length : 1;
-          });
-        }
-      });
-      if (countSec > 0) return countSec;
+    // 4. Extraction depuis le titre ou la section si mentionné (ex: "15 caissons")
+    const matchTitre = (of.titreSection || '').match(/(\d+)\s*(?:pcs?|pi[eè]ces?|caissons?|tabliers?|pr[eé]cadres?|moustiquaires?)/i);
+    if (matchTitre && parseInt(matchTitre[1], 10) > 0) {
+      return parseInt(matchTitre[1], 10);
     }
 
-    // 4. D'après le nombre de barres neuves prévues (estimation standard de 2 pièces de débit par barre)
+    // 5. Fallback d'après le nombre de barres neuves
     if (of.totalBarresNeuvesPrevu && of.totalBarresNeuvesPrevu > 0) {
-      return Math.max(1, of.totalBarresNeuvesPrevu * 2);
+      return Math.max(1, of.totalBarresNeuvesPrevu);
     }
 
     // Fallback minimal
@@ -561,11 +572,15 @@ export class DelaisProductionService {
     }
 
     const piecesTarget = this.compterPiecesOF(targetOF);
-    const capaciteJour = configFam.capaciteJournalierePieces || (famKey === 'CAISSON' ? 120 : famKey === 'PRECADRE' ? 80 : famKey === 'MOUSTIQUAIRE' ? 50 : 35);
+    const cadenceMin = configFam.tempsUnitaireMinutes || (famKey === 'CAISSON' ? 5 : famKey === 'PRECADRE' ? 6 : famKey === 'MOUSTIQUAIRE' ? 10 : 15);
+    const heuresJour = params.heuresTravailParJour || 8;
+    const minutesJour = heuresJour * 60;
+    const capaciteJour = Math.max(1, Math.floor(minutesJour / cadenceMin));
 
-    // Calcul du délai requis en jours ouvrés basé sur le volume et la cadence journalière de la famille
+    // Calcul du délai requis en minutes puis conversion en jours ouvrés
     const totalChargePieces = targetOF.estPrioritaire ? piecesTarget : (piecesEnFileAttente + piecesTarget);
-    const joursProduction = Math.max(1, Math.ceil(totalChargePieces / capaciteJour));
+    const totalMinutesCharge = totalChargePieces * cadenceMin;
+    const joursProduction = Math.max(1, Math.ceil(totalMinutesCharge / minutesJour));
     const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
 
     // Si 1 jour de travail : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
@@ -908,4 +923,229 @@ export class DelaisProductionService {
       detailsParFamille
     };
   }
+
+  /**
+   * Moteur de file d'attente et ordonnancement par famille
+   * - Équipes 100% dédiées et indépendantes par famille
+   * - Cadences réelles en minutes et heures
+   * - Remplissage de la journée (ex: 8h = 480 min) puis bascule automatique vers le jour ouvré suivant
+   * - Si commande 1 caisson (5 min) => finalisée dans la journée (l'équipe produit plusieurs commandes par jour)
+   * - Si commande 200 caissons (1000 min) => étalée sur 2+ jours ouvrés
+   * - Les commandes en pause libèrent immédiatement leur créneau machine : toutes les commandes suivantes avancent !
+   * - Calcul automatique de proposition d'heures supplémentaires (+2h / 120 min) pour absorber les retards ou commandes prioritaires
+   */
+  static simulerPlanningFamille(
+    famille: FamilleProduit,
+    items: PlanningItemSimulation[],
+    paramsCustom?: ParametresProductionAtelier,
+    bonusMinutesAujourdhui: number = 0,
+    dateDepart?: Date
+  ): ResultatSimulationPlanningFamille {
+    const params = paramsCustom || this.getParametres();
+    const configFam = params.familles[famille] || params.familles.CAISSON;
+    const cadence = configFam.tempsUnitaireMinutes || (famille === 'CAISSON' ? 5 : famille === 'PRECADRE' ? 6 : famille === 'MOUSTIQUAIRE' ? 10 : 15);
+    const heuresStandard = params.heuresTravailParJour || 8;
+    const minutesStandard = heuresStandard * 60; // ex: 480 min pour 8h
+
+    const today = dateDepart ? new Date(dateDepart) : new Date();
+    today.setHours(8, 0, 0, 0); // Début atelier 08h00
+
+    let currentBaseDate = new Date(today);
+    if (!params.joursOuvres.includes(currentBaseDate.getDay())) {
+      currentBaseDate = this.ajouterJoursOuvres(currentBaseDate, 1, params.joursOuvres);
+      currentBaseDate.setHours(8, 0, 0, 0);
+    }
+
+    const enPauseItems: ResultatPlanningItem[] = [];
+    const actives: PlanningItemSimulation[] = [];
+
+    items.forEach(it => {
+      if (it.estEnPause) {
+        enPauseItems.push({
+          id: it.id,
+          refCommande: it.refCommande,
+          nomClient: it.nomClient,
+          nbPieces: it.nbPieces,
+          estPrioritaire: !!it.estPrioritaire,
+          estEnPause: true,
+          motifPause: it.motifPause || 'En pause atelier / rupture',
+          dateLivraisonEstimee: new Date(currentBaseDate),
+          dateLivraisonISO: this.toISODateString(currentBaseDate),
+          texteLivraison: `⏸️ EN PAUSE : ${it.motifPause || 'Rupture matière'}`,
+          joursOuvresRequis: 0,
+          minutesProduction: 0,
+          jourIndex: -1,
+          heureFinEstimee: '—'
+        });
+      } else {
+        actives.push(it);
+      }
+    });
+
+    // Ordonnancement de la file active :
+    // 1. Commandes prioritaires en tête
+    // 2. FIFO (date d'émission la plus ancienne en premier)
+    actives.sort((a, b) => {
+      if (a.estPrioritaire && !b.estPrioritaire) return -1;
+      if (!a.estPrioritaire && b.estPrioritaire) return 1;
+      const dateA = a.dateEmission ? this.parseDateString(a.dateEmission).getTime() : 0;
+      const dateB = b.dateEmission ? this.parseDateString(b.dateEmission).getTime() : 0;
+      return dateA - dateB;
+    });
+
+    let currentDayOffset = 0;
+    let usedMinutesInDay = 0;
+    const planifiees: ResultatPlanningItem[] = [];
+
+    let totalPiecesActives = 0;
+    let totalMinutesActives = 0;
+
+    actives.forEach(it => {
+      const nbPieces = Math.max(1, it.nbPieces);
+      totalPiecesActives += nbPieces;
+      let neededMinutes = nbPieces * cadence;
+      totalMinutesActives += neededMinutes;
+
+      let orderFinishDay = currentDayOffset;
+      let orderFinishMinutesOfDay = 0;
+
+      while (neededMinutes > 0) {
+        const capacityThisDay = (currentDayOffset === 0)
+          ? (minutesStandard + bonusMinutesAujourdhui)
+          : minutesStandard;
+        const availableThisDay = Math.max(0, capacityThisDay - usedMinutesInDay);
+
+        if (neededMinutes <= availableThisDay) {
+          usedMinutesInDay += neededMinutes;
+          orderFinishDay = currentDayOffset;
+          orderFinishMinutesOfDay = 8 * 60 + usedMinutesInDay;
+          neededMinutes = 0;
+        } else {
+          neededMinutes -= availableThisDay;
+          currentDayOffset += 1;
+          usedMinutesInDay = 0;
+        }
+      }
+
+      const dateLivraison = this.ajouterJoursOuvres(currentBaseDate, orderFinishDay, params.joursOuvres);
+      const finHour = Math.floor(orderFinishMinutesOfDay / 60);
+      const finMin = Math.floor(orderFinishMinutesOfDay % 60);
+      const heureFinStr = `${String(finHour).padStart(2, '0')}:${String(finMin).padStart(2, '0')}`;
+
+      let texteLiv = '';
+      if (orderFinishDay === 0) {
+        texteLiv = `AUJOURD'HUI (${heureFinStr})`;
+      } else if (orderFinishDay === 1) {
+        texteLiv = `DEMAIN (${this.formaterDateLivraison(dateLivraison).replace('LIVRAISON : ', '')} ${heureFinStr})`;
+      } else {
+        texteLiv = `${this.formaterDateLivraison(dateLivraison).replace('LIVRAISON : ', '')} (~${heureFinStr})`;
+      }
+
+      if (it.estPrioritaire) {
+        texteLiv = `⚡ PRIORITAIRE : ${texteLiv}`;
+      }
+
+      planifiees.push({
+        id: it.id,
+        refCommande: it.refCommande,
+        nomClient: it.nomClient,
+        nbPieces,
+        estPrioritaire: !!it.estPrioritaire,
+        estEnPause: false,
+        dateLivraisonEstimee: dateLivraison,
+        dateLivraisonISO: this.toISODateString(dateLivraison),
+        texteLivraison: texteLiv,
+        joursOuvresRequis: orderFinishDay + 1,
+        minutesProduction: nbPieces * cadence,
+        jourIndex: orderFinishDay,
+        heureFinEstimee: heureFinStr
+      });
+    });
+
+    const dateFinGlobale = planifiees.length > 0
+      ? planifiees[planifiees.length - 1].dateLivraisonEstimee
+      : currentBaseDate;
+
+    // Simulation avec 2 heures supplémentaires (120 minutes) pour évaluer si c'est souhaitable
+    let propHS: PropositionHeuresSup = {
+      famille,
+      libelleFamille: configFam.libelle,
+      heuresSupMinutes: 120,
+      piecesSupPossibles: Math.floor(120 / cadence),
+      estSouhaitable: false,
+      motif: '',
+      commandesAvanceesAujourdhui: []
+    };
+
+    if (actives.length > 0 && bonusMinutesAujourdhui === 0) {
+      // Exécuter la simulation avec +120 minutes aujourd'hui
+      const simHS = this.simulerPlanningFamille(famille, items, params, 120, dateDepart);
+      const commandesGagneesAujourdhui: string[] = [];
+      planifiees.forEach(cmdStd => {
+        if (cmdStd.jourIndex > 0) {
+          const matchHS = simHS.commandesPlanifiees.find(c => c.id === cmdStd.id);
+          if (matchHS && matchHS.jourIndex === 0) {
+            commandesGagneesAujourdhui.push(cmdStd.refCommande);
+          }
+        }
+      });
+
+      const piecesSup = Math.floor(120 / cadence);
+      const hasPrioritairesOuRetard = actives.some(a => a.estPrioritaire);
+
+      if (commandesGagneesAujourdhui.length > 0 || hasPrioritairesOuRetard) {
+        const gainCount = commandesGagneesAujourdhui.length;
+        propHS.estSouhaitable = true;
+        propHS.commandesAvanceesAujourdhui = commandesGagneesAujourdhui;
+        propHS.motif = gainCount > 0
+          ? `+2h sup (+120 min) permet de produire ${piecesSup} pièces de plus et de finaliser ${gainCount} commande(s) (${commandesGagneesAujourdhui.slice(0, 3).join(', ')}${gainCount > 3 ? '...' : ''}) AUJOURD'HUI même au lieu de demain.`
+          : `+2h sup (+120 min) permet d'absorber ${piecesSup} pièces de plus aujourd'hui et de sécuriser les délais des commandes prioritaires de l'atelier.`;
+      }
+    }
+
+    return {
+      famille,
+      libelleFamille: configFam.libelle,
+      capaciteJourMinutes: minutesStandard,
+      cadenceUnitaireMinutes: cadence,
+      totalPiecesActives,
+      totalMinutesActives,
+      chargeHeuresTotale: Math.round((totalMinutesActives / 60) * 10) / 10,
+      chargeJoursTotal: Math.max(1, Math.ceil(totalMinutesActives / minutesStandard)),
+      dateFinGlobale,
+      dateFinGlobaleFormattee: this.formaterDateLivraison(dateFinGlobale),
+      commandesPlanifiees: planifiees,
+      commandesEnPause: enPauseItems,
+      propositionHeuresSup: propHS
+    };
+  }
+}
+
+export interface PlanningItemSimulation {
+  id: string;
+  refCommande: string;
+  nomClient: string;
+  nbPieces: number;
+  estPrioritaire?: boolean;
+  estEnPause?: boolean;
+  motifPause?: string;
+  dateEmission?: string;
+  statutOF?: string;
+  dossierId?: string;
+}
+
+export interface ResultatSimulationPlanningFamille {
+  famille: FamilleProduit;
+  libelleFamille: string;
+  capaciteJourMinutes: number;
+  cadenceUnitaireMinutes: number;
+  totalPiecesActives: number;
+  totalMinutesActives: number;
+  chargeHeuresTotale: number;
+  chargeJoursTotal: number;
+  dateFinGlobale: Date;
+  dateFinGlobaleFormattee: string;
+  commandesPlanifiees: ResultatPlanningItem[];
+  commandesEnPause: ResultatPlanningItem[];
+  propositionHeuresSup: PropositionHeuresSup;
 }

@@ -8,10 +8,14 @@ import {
 import {
   MonitoringService,
   DonneesMonitoringAtelier,
-  LigneCommandeMonitoring
+  LigneCommandeMonitoring,
+  ClientMonitoringGroup,
+  DetailFamilleClient,
+  DetailTypeClient
 } from '../../services/monitoringService';
 import { StorageService } from '../../services/storage';
 import { ParametresProductionModal } from '../common/ParametresProductionModal';
+import { DossierDetailModal } from '../common/DossierDetailModal';
 import {
   Activity,
   Layers,
@@ -31,15 +35,23 @@ import {
   AlertCircle,
   AlertTriangle,
   Flag,
-  ShieldAlert,
   TrendingUp,
   FileSpreadsheet,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   ArrowRight,
-  Flame,
   Info,
   Trash2,
-  PlusCircle
+  Building2,
+  Users,
+  LayoutGrid,
+  ExternalLink,
+  ShieldCheck,
+  Check,
+  FolderOpen,
+  FileText,
+  Eye
 } from 'lucide-react';
 
 interface MonitoringAtelierTabProps {
@@ -48,6 +60,7 @@ interface MonitoringAtelierTabProps {
   articles?: Article[];
   onRefreshData: () => void;
   onNavigateToTab: (tabId: string) => void;
+  onLoadDossierInEcosysteme?: (dossier: DossierCommandeGlobal) => void;
 }
 
 export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
@@ -55,48 +68,136 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
   suivisOF = [],
   articles = [],
   onRefreshData,
-  onNavigateToTab
+  onNavigateToTab,
+  onLoadDossierInEcosysteme
 }) => {
+  // Mode d'affichage strict et exclusif : POSTES D'USINAGE, PORTEFEUILLE CLIENTS, ou FILE DE FABRICATION
+  const [modeVue, setModeVue] = useState<'FAMILLES' | 'CLIENTS' | 'COMMANDES'>('FAMILLES');
+
+  // État modale dossier détail complet
+  const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
+  const [isDossierDetailOpen, setIsDossierDetailOpen] = useState<boolean>(false);
+
+  // Recherche du dossier associé à une ligne monitoring
+  const getLinkedDossierForCmd = (cmd: LigneCommandeMonitoring): DossierCommandeGlobal | null => {
+    if (!cmd) return null;
+    const cmdRef = (cmd.refCommande || '').toLowerCase().trim();
+    const cmdId = cmd.dossierId;
+
+    if (cmdId) {
+      const found = dossiers.find(d => d.id === cmdId);
+      if (found) return found;
+    }
+
+    if (cmdRef) {
+      const found = dossiers.find(d => {
+        const ref = (d.refCommande || '').toLowerCase().trim();
+        if (ref && (ref === cmdRef || ref.includes(cmdRef) || cmdRef.includes(ref))) return true;
+        const subRefs = [
+          d.numCommandeCaisson,
+          d.numCommandeSousFace,
+          d.numCommandeTablier,
+          d.numCommandeMoustiquaire,
+          d.numCommandePrecadre
+        ].filter(Boolean) as string[];
+        return subRefs.some(s => {
+          const sub = s.toLowerCase().trim();
+          return sub === cmdRef || cmdRef.includes(sub) || sub.includes(cmdRef);
+        });
+      });
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  const handleRechargerDossier = (cmd: LigneCommandeMonitoring) => {
+    const dossier = getLinkedDossierForCmd(cmd);
+    if (dossier && onLoadDossierInEcosysteme) {
+      onLoadDossierInEcosysteme(dossier);
+    } else if (onNavigateToTab) {
+      onNavigateToTab('ecosysteme');
+    }
+  };
+
+  const handleVisualiserDossier = (cmd: LigneCommandeMonitoring) => {
+    const dossier = getLinkedDossierForCmd(cmd);
+    if (dossier) {
+      setSelectedDossierToView(dossier);
+      setIsDossierDetailOpen(true);
+    }
+  };
+
+  // Filtres file commandes
   const [recherche, setRecherche] = useState<string>('');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
   const [filtreSousType, setFiltreSousType] = useState<string>('TOUS');
   const [filtreRetard, setFiltreRetard] = useState<'TOUS' | 'RETARD_CRITIQUE' | 'TOUT_RETARD'>('TOUS');
+
+  // Filtres et état vue clients
+  const [rechercheClient, setRechercheClient] = useState<string>('');
+  const [clientsDeplies, setClientsDeplies] = useState<Record<string, boolean>>({});
+
+  // Modale paramètres
   const [isParamsModalOpen, setIsParamsModalOpen] = useState<boolean>(false);
-  const [isInjectingDemo, setIsInjectingDemo] = useState<boolean>(false);
-  const [feedbackDemo, setFeedbackDemo] = useState<string | null>(null);
 
   // Calcul du monitoring en temps réel
   const monitoringData: DonneesMonitoringAtelier = useMemo(() => {
     return MonitoringService.calculerMonitoring(dossiers, suivisOF, articles);
   }, [dossiers, suivisOF, articles]);
 
-  // Filtrage du tableau de commandes en cours
-  const commandesFiltrees = useMemo(() => {
-    return monitoringData.commandesActives.filter(cmd => {
-      // Filtre respect des délais et retard atelier
-      if (filtreRetard === 'RETARD_CRITIQUE' && !cmd.alerteDelai?.estRetardCritique) {
-        return false;
-      }
-      if (filtreRetard === 'TOUT_RETARD' && !cmd.alerteDelai?.estDepasse) {
-        return false;
-      }
+  const { caissons, tabliers, precadres, moustiquaires } = monitoringData;
 
-      // Filtre famille
-      if (filtreFamille !== 'TOUTES' && cmd.famille !== filtreFamille) {
-        return false;
-      }
-      // Filtre sous-type précis (ex: 25, 30, 40, 43, 55, Précadre 36/50, Moustiquaires)
+  // Clients filtrés
+  const clientsFiltres = useMemo(() => {
+    const list = monitoringData.clientsMonitoring || [];
+    if (!rechercheClient.trim()) return list;
+    const q = rechercheClient.toLowerCase().trim();
+    return list.filter(c =>
+      (c.nomClient || '').toLowerCase().includes(q) ||
+      (c.donneurOrdre || '').toLowerCase().includes(q) ||
+      (c.familles || []).some(f =>
+        (f.labelFamille || '').toLowerCase().includes(q) ||
+        (f.types || []).some(t => (t.label || '').toLowerCase().includes(q))
+      ) ||
+      (c.commandes || []).some(cmd => (cmd.refCommande || '').toLowerCase().includes(q))
+    );
+  }, [monitoringData.clientsMonitoring, rechercheClient]);
+
+  const isClientDeplie = (nomClient: string) => {
+    return clientsDeplies[nomClient] !== false; // Déplié par défaut
+  };
+
+  const toggleClientDeplie = (nomClient: string) => {
+    setClientsDeplies(prev => ({
+      ...prev,
+      [nomClient]: prev[nomClient] !== undefined ? !prev[nomClient] : false
+    }));
+  };
+
+  const setToutDeplier = (deplier: boolean) => {
+    const next: Record<string, boolean> = {};
+    (monitoringData.clientsMonitoring || []).forEach(c => {
+      next[c.nomClient] = deplier;
+    });
+    setClientsDeplies(next);
+  };
+
+  // Commandes filtrées
+  const commandesFiltrees = useMemo(() => {
+    return (monitoringData.commandesActives || []).filter(cmd => {
+      if (filtreRetard === 'RETARD_CRITIQUE' && !cmd.alerteDelai?.estRetardCritique) return false;
+      if (filtreRetard === 'TOUT_RETARD' && !cmd.alerteDelai?.estDepasse) return false;
+      if (filtreFamille !== 'TOUTES' && cmd.famille !== filtreFamille) return false;
+
       if (filtreSousType !== 'TOUS') {
         const cles: string[] = (cmd.sousTypesCles && cmd.sousTypesCles.length > 0)
           ? cmd.sousTypesCles
           : (cmd.sousTypeCle ? [cmd.sousTypeCle] : []);
 
         if (cles.length > 0) {
-          if (!cles.includes(filtreSousType)) {
-            return false;
-          }
+          if (!cles.includes(filtreSousType)) return false;
         } else {
-          // Fallback uniquement sur typePrecision (JAMAIS sur detailArticles pour éviter les longueurs comme 1300mm, 2300mm)
           const p = (cmd.typePrecision || '').toUpperCase();
           if (filtreSousType === 'CAISSON_30' && !(/\b30\b|CAISSON\s*30/i.test(p))) return false;
           if (filtreSousType === 'CAISSON_25' && !(/\b25\b|CAISSON\s*25/i.test(p))) return false;
@@ -107,11 +208,9 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
           if (filtreSousType === 'PRECADRE_50' && !(/\b50\b|PRECADRE\s*50/i.test(p))) return false;
           if (filtreSousType === 'MSTQ_PORTE_FENETRE' && !(p.includes('PORTE') || p.includes('PF'))) return false;
           if (filtreSousType === 'MSTQ_FENETRE' && (p.includes('PORTE') || !(p.includes('FENETRE') || p.includes('FENÊTRE') || p.includes('1 VANTAIL')))) return false;
-          if (filtreSousType === 'MSTQ_DOUBLE_VANTAUX' && !(p.includes('DOUBLE') || p.includes('VENTO') || p.includes('VANTAUX') || p.includes('DV'))) return false;
-          if (filtreSousType === 'MSTQ_FIXE' && !(p.includes('FIX') || p.includes('FIXE'))) return false;
         }
       }
-      // Filtre recherche textuelle
+
       if (recherche.trim()) {
         const q = recherche.toLowerCase().trim();
         const matchRef = (cmd.refCommande || '').toLowerCase().includes(q);
@@ -128,1569 +227,1140 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
     });
   }, [monitoringData.commandesActives, filtreFamille, filtreSousType, filtreRetard, recherche]);
 
-  // Handler pour injecter les données de simulation
-  const handleInjecterDemo = async () => {
-    setIsInjectingDemo(true);
-    try {
-      const demo = MonitoringService.genererCommandesAtelierExemple();
-      await StorageService.saveDossiers(demo.dossiers);
-      await StorageService.saveSuivisOF(demo.suivisOF);
-      onRefreshData();
-      setFeedbackDemo('Carnet de commandes de simulation injecté avec succès dans SQLite !');
-      setTimeout(() => setFeedbackDemo(null), 5000);
-    } catch (e: any) {
-      alert('Erreur lors de l\'injection de la démo: ' + e.message);
-    } finally {
-      setIsInjectingDemo(false);
-    }
-  };
-
-  // Handler pour vider les commandes de test
-  const handleViderDemo = async () => {
-    if (confirm('Voulez-vous supprimer les dossiers et ordres de fabrication enregistrés ?')) {
-      await StorageService.saveDossiers([]);
-      await StorageService.saveSuivisOF([]);
-      onRefreshData();
-    }
+  // Basculer vers la file des commandes filtrée sur une famille
+  const basculerVersCommandesFamille = (familleKey: string, sousTypeKey: string = 'TOUS') => {
+    setFiltreFamille(familleKey);
+    setFiltreSousType(sousTypeKey);
+    setModeVue('COMMANDES');
   };
 
   const handlePrint = () => {
     window.print();
   };
 
-  const { caissons, tabliers, precadres, moustiquaires } = monitoringData;
-
   return (
-    <div className="space-y-6">
-      {/* ── 1. BANDEAU DE MONITORING EN DIRECT ── */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-4 relative z-10">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black shadow-lg shadow-emerald-500/20">
-              <Activity className="w-6 h-6 animate-pulse" />
+    <div className="space-y-4">
+      {/* ── 1. LES 4 INDICATEURS CLÉS ESSENTIELS DE L'ATELIER (KPIS NETS) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* KPI 1 : Commandes en Cours */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col justify-between">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+            <span>Commandes Actives</span>
+            <Boxes className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="mt-2">
+            <div className="text-3xl font-black text-slate-100 font-mono tracking-tight">
+              {monitoringData.totalCommandesActives}
             </div>
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-xl font-bold text-slate-50 tracking-tight">
-                  Tableau de Bord de Monitoring Atelier
-                </h2>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  En direct de l'Atelier
-                </span>
-                <span className="text-xs text-slate-400 font-mono">
-                  {monitoringData.dateHeureCalcul}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Suivi précis des volumes en fabrication : Caissons (25, 30, 40), Tabliers (43, 55), Précadres (Type 36, Type 50) et Moustiquaires (Porte-Fenêtre, Fenêtre, Double Vantaux, Fixe) avec échéancier prévisionnel de livraison.
-              </p>
+            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap font-medium">
+              <span className="text-amber-400 font-bold">{caissons.nbCommandesEnCours} Cais.</span> •{' '}
+              <span className="text-sky-400 font-bold">{tabliers.nbCommandesEnCours} Tabl.</span> •{' '}
+              <span className="text-purple-400 font-bold">{precadres.nbCommandesEnCours} Préc.</span> •{' '}
+              <span className="text-emerald-400 font-bold">{moustiquaires.nbCommandesEnCours} Mstq.</span>
             </div>
           </div>
+        </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+        {/* KPI 2 : Total Pièces Réelles à Fabriquer */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col justify-between">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+            <span>Total Pièces à Fabriquer</span>
+            <Scissors className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="mt-2">
+            <div className="text-3xl font-black text-emerald-400 font-mono tracking-tight">
+              {monitoringData.totalPiecesEnFabrication} <span className="text-base font-normal text-emerald-400/70">pcs</span>
+            </div>
+            <div className="text-xs text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+              <span className="text-amber-400 font-semibold">{caissons.totalPiecesEnCours} Cais.</span> •{' '}
+              <span className="text-sky-400 font-semibold">{tabliers.totalPiecesEnCours} Tabl.</span> •{' '}
+              <span className="text-purple-400 font-semibold">{precadres.totalPiecesEnCours} Préc.</span> •{' '}
+              <span className="text-emerald-400 font-semibold">{moustiquaires.totalPiecesEnCours} Mstq.</span>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 3 : Clients en File */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col justify-between">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+            <span>Clients en Production</span>
+            <Building2 className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="mt-2">
+            <div className="text-3xl font-black text-amber-300 font-mono tracking-tight">
+              {monitoringData.clientsMonitoring?.length || 0}
+            </div>
+            <div className="text-xs text-slate-400 mt-1 truncate">
+              {monitoringData.clientsMonitoring && monitoringData.clientsMonitoring.length > 0
+                ? `Principal : ${monitoringData.clientsMonitoring[0].nomClient} (${monitoringData.clientsMonitoring[0].totalPieces} pcs)`
+                : 'Aucune commande en attente'}
+            </div>
+          </div>
+        </div>
+
+        {/* KPI 4 : Charge Globale & Respect des Délais */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg flex flex-col justify-between">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+            <span>Charge &amp; Délais Atelier</span>
+            <Clock className="w-4 h-4 text-sky-400" />
+          </div>
+          <div className="mt-2">
+            <div className="text-2xl font-black text-sky-300 font-mono tracking-tight">
+              {monitoringData.chargeTotaleHeures} h
+            </div>
+            <div className="text-xs text-slate-300 mt-1 flex items-center justify-between">
+              <span className="truncate font-medium">{monitoringData.dateLivraisonGlobaleJusquAu}</span>
+              {monitoringData.totalRetardCritiqueAVerifier > 0 ? (
+                <span
+                  onClick={() => {
+                    setFiltreRetard('RETARD_CRITIQUE');
+                    setModeVue('COMMANDES');
+                  }}
+                  className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-700 cursor-pointer hover:bg-rose-900 transition"
+                  title="Cliquez pour filtrer les commandes avec retard > 3j"
+                >
+                  🚨 {monitoringData.totalRetardCritiqueAVerifier} retard(s)
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
+                  ✓ Dans les délais
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 3. SÉLECTEUR DE VUE EXCLUSIF (CLARTÉ & SÉPARATION TOTALE) ── */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider pl-1">
+            Mode d'Affichage :
+          </span>
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
             <button
-              onClick={() => setIsParamsModalOpen(true)}
-              className="px-3.5 py-2 text-xs font-semibold text-sky-300 bg-sky-950/50 hover:bg-sky-900/60 rounded-xl transition border border-sky-500/40 flex items-center gap-1.5 cursor-pointer shadow-sm"
-              title="Ajuster les cadences par famille et les jours ouvrés"
+              onClick={() => setModeVue('FAMILLES')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                modeVue === 'FAMILLES'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
             >
-              <Sliders className="w-3.5 h-3.5 text-sky-400" />
-              <span>Paramètres Cadences</span>
+              <Boxes className="w-3.5 h-3.5" />
+              <span>🏭 Postes &amp; Familles d'Usinage</span>
             </button>
 
             <button
-              onClick={handlePrint}
-              className="px-3.5 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 flex items-center gap-1.5 cursor-pointer shadow-sm print:hidden"
-              title="Imprimer le rapport de monitoring A4 pour l'atelier"
+              onClick={() => setModeVue('CLIENTS')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                modeVue === 'CLIENTS'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
             >
-              <Printer className="w-3.5 h-3.5 text-amber-400" />
-              <span>Imprimer A4</span>
+              <Building2 className="w-3.5 h-3.5" />
+              <span>🏢 Suivi par Client</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                modeVue === 'CLIENTS' ? 'bg-slate-950 text-amber-400' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {monitoringData.clientsMonitoring?.length || 0}
+              </span>
             </button>
 
             <button
-              onClick={onRefreshData}
-              className="px-3.5 py-2 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 flex items-center gap-1.5 cursor-pointer shadow-sm"
+              onClick={() => setModeVue('COMMANDES')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                modeVue === 'COMMANDES'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
             >
-              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Actualiser</span>
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>📋 File de Fabrication des Commandes</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                modeVue === 'COMMANDES' ? 'bg-slate-950 text-amber-400' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {commandesFiltrees.length}
+              </span>
             </button>
           </div>
         </div>
 
-        {/* Message d'aide si base vide */}
-        {monitoringData.totalCommandesActives === 0 && (
-          <div className="mt-4 p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 text-amber-200 text-xs">
-            <div className="flex items-center gap-2.5">
-              <Info className="w-5 h-5 text-amber-400 shrink-0" />
-              <div>
-                <p className="font-semibold text-amber-100">Aucune commande actuellement en cours dans l'atelier.</p>
-                <p className="text-amber-300/80">
-                  Vous pouvez enregistrer des commandes depuis l'onglet « Écosystème &amp; Commandes », ou injecter un jeu d'essai réaliste pour visualiser instantanément le monitoring.
-                </p>
-              </div>
-            </div>
-            <button
-              disabled={isInjectingDemo}
-              onClick={handleInjecterDemo}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg transition shadow flex items-center gap-1.5 cursor-pointer shrink-0"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>{isInjectingDemo ? 'Injection en cours...' : '🧪 Charger Commandes d\'Exemple Atelier'}</span>
-            </button>
+        <div className="flex items-center gap-2 flex-wrap ml-auto">
+          <div className="text-xs text-slate-400 pr-2 hidden xl:flex items-center gap-1.5">
+            <strong className="text-emerald-400 font-mono font-bold">{monitoringData.totalPiecesEnFabrication} pcs</strong>
+            <span>•</span>
+            <strong className="text-amber-300 font-mono font-bold">{monitoringData.totalCommandesActives} cmd</strong>
           </div>
-        )}
 
-        {feedbackDemo && (
-          <div className="mt-3 p-3 rounded-lg bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>{feedbackDemo}</span>
-          </div>
-        )}
+          <button
+            onClick={() => setIsParamsModalOpen(true)}
+            className="px-2.5 py-1.5 text-xs font-semibold text-sky-300 bg-sky-950/50 hover:bg-sky-900/60 rounded-xl transition border border-sky-500/40 flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Ajuster les cadences journalières de coupe et les jours ouvrés"
+          >
+            <Sliders className="w-3.5 h-3.5 text-sky-400" />
+            <span className="hidden sm:inline">Cadences</span>
+          </button>
+
+          <button
+            onClick={handlePrint}
+            className="px-2.5 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 flex items-center gap-1.5 cursor-pointer shadow-sm print:hidden"
+            title="Imprimer le rapport de monitoring A4"
+          >
+            <Printer className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Imprimer</span>
+          </button>
+
+          <button
+            onClick={onRefreshData}
+            className="px-2.5 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Actualiser les données"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Actualiser</span>
+          </button>
+        </div>
       </div>
 
-      {/* ── BANNIÈRE D'ALERTE : COMMANDES EN DÉPASSEMENT > 3 JOURS (À VÉRIFIER EN ATELIER) ── */}
-      {monitoringData.totalRetardCritiqueAVerifier > 0 && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-950/90 via-red-950/80 to-slate-900 border-2 border-rose-500 shadow-2xl flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-300">
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-xl bg-rose-600 text-white flex items-center justify-center font-black shadow-lg shadow-rose-600/50 shrink-0 ring-4 ring-rose-500/30">
-              <AlertTriangle className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full bg-rose-600 text-white font-mono font-black text-xs uppercase tracking-wider shadow">
-                  🚩 Alerte Atelier : Délai non respecté
-                </span>
-                <span className="text-sm font-bold text-rose-200">
-                  {monitoringData.totalRetardCritiqueAVerifier} commande{monitoringData.totalRetardCritiqueAVerifier > 1 ? 's dépassent' : ' dépasse'} leur délai de plus de 3 jours
-                </span>
-              </div>
-              <p className="text-xs text-rose-200/90 mt-1">
-                La date prévisionnelle calculée lors de la saisie est expirée depuis plus de 3 jours :
-                <strong className="text-white ml-1 font-semibold underline decoration-rose-400">
-                  cette commande doit être vérifiée dans l'atelier car son délai n'est pas respecté.
-                </strong>
-              </p>
-            </div>
-          </div>
+      {/* ========================================================================= */}
+      {/* VUE 1 : POSTES & FAMILLES D'USINAGE (LE CŒUR INDUSTRIEL DE L'ATELIER)   */}
+      {/* ========================================================================= */}
+      {modeVue === 'FAMILLES' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* 📦 POSTE 1 : CAISSONS & COFFRES */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between hover:border-amber-500/40 transition">
+              <div>
+                {/* Entête Poste */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">
+                      📦
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>Poste Caissons &amp; Sous-Faces</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-mono font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                          {caissons.nbCommandesEnCours} cmd(s)
+                        </span>
+                      </h3>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        Échéance prévisionnelle : <strong className="text-amber-300 font-mono">{caissons.dateLivraisonJusquAu}</strong>
+                      </div>
+                    </div>
+                  </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setFiltreRetard(filtreRetard === 'RETARD_CRITIQUE' ? 'TOUS' : 'RETARD_CRITIQUE')}
-              className={`px-4 py-2 text-xs font-bold rounded-xl cursor-pointer transition shadow-lg flex items-center gap-2 ${
-                filtreRetard === 'RETARD_CRITIQUE'
-                  ? 'bg-white text-rose-950 ring-2 ring-rose-300 font-black'
-                  : 'bg-rose-600 hover:bg-rose-500 text-white'
-              }`}
-            >
-              <Flag className="w-4 h-4 text-rose-300 fill-current" />
-              <span>{filtreRetard === 'RETARD_CRITIQUE' ? 'Afficher Tout l\'Atelier' : 'Isoler les Commandes à Vérifier'}</span>
-            </button>
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-amber-300 font-mono">
+                      {caissons.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Charge : {caissons.chargeHeuresEstimee}h ({caissons.capaciteJournaliere} pcs/j)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Décomposition par Type de Caisson */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 my-4">
+                  <div
+                    onClick={() => basculerVersCommandesFamille('CAISSON', 'CAISSON_30')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-amber-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Caisson 30 (300mm)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {caissons.detailsCaissons?.c30.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-amber-400/80 mt-0.5 font-mono">
+                      {caissons.detailsCaissons?.c30.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('CAISSON', 'CAISSON_25')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-amber-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Caisson 25 (250mm)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {caissons.detailsCaissons?.c25.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-amber-400/80 mt-0.5 font-mono">
+                      {caissons.detailsCaissons?.c25.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('CAISSON', 'CAISSON_40')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-amber-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Caisson 40 (400mm)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {caissons.detailsCaissons?.c40.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-amber-400/80 mt-0.5 font-mono">
+                      {caissons.detailsCaissons?.c40.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('CAISSON', 'AUTRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-amber-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Sous-Faces &amp; Autres</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {caissons.detailsCaissons?.autres.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-amber-400/80 mt-0.5 font-mono">
+                      {caissons.detailsCaissons?.autres.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions Poste Caissons */}
+              <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => basculerVersCommandesFamille('CAISSON')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Voir les commandes Caissons</span>
+                </button>
+
+                <button
+                  onClick={() => onNavigateToTab('caisson')}
+                  className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Accéder au module Caisson</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 🪟 POSTE 2 : TABLIERS VOLETS */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between hover:border-sky-500/40 transition">
+              <div>
+                {/* Entête Poste */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+                      🪟
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>Poste Tabliers de Volet</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-mono font-bold bg-sky-950 text-sky-300 border border-sky-800">
+                          {tabliers.nbCommandesEnCours} cmd(s)
+                        </span>
+                      </h3>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        Échéance prévisionnelle : <strong className="text-sky-300 font-mono">{tabliers.dateLivraisonJusquAu}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-sky-300 font-mono">
+                      {tabliers.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Charge : {tabliers.chargeHeuresEstimee}h ({tabliers.capaciteJournaliere} pcs/j)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Décomposition par Type de Lame */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 my-4">
+                  <div
+                    onClick={() => basculerVersCommandesFamille('TABLIER', 'TABLIER_43')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-sky-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Lame 43 (DP43)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {tabliers.detailsTabliers?.l43.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-sky-400/80 mt-0.5 font-mono">
+                      {tabliers.detailsTabliers?.l43.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('TABLIER', 'TABLIER_55')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-sky-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Lame 55 (DP55)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {tabliers.detailsTabliers?.l55.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-sky-400/80 mt-0.5 font-mono">
+                      {tabliers.detailsTabliers?.l55.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('TABLIER', 'AUTRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-sky-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Autres Profilés Tablier</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {tabliers.detailsTabliers?.autres.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-sky-400/80 mt-0.5 font-mono">
+                      {tabliers.detailsTabliers?.autres.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions Poste Tabliers */}
+              <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => basculerVersCommandesFamille('TABLIER')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Voir les commandes Tabliers</span>
+                </button>
+
+                <button
+                  onClick={() => onNavigateToTab('tablier')}
+                  className="px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Accéder au module Tablier</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 🚪 POSTE 3 : PRÉCADRES ALUMINIUM */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between hover:border-purple-500/40 transition">
+              <div>
+                {/* Entête Poste */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">
+                      🚪
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>Poste Précadres Aluminium</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-mono font-bold bg-purple-950 text-purple-300 border border-purple-800">
+                          {precadres.nbCommandesEnCours} cmd(s)
+                        </span>
+                      </h3>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        Échéance prévisionnelle : <strong className="text-purple-300 font-mono">{precadres.dateLivraisonJusquAu}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-purple-300 font-mono">
+                      {precadres.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Charge : {precadres.chargeHeuresEstimee}h ({precadres.capaciteJournaliere} pcs/j)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Décomposition par Type de Précadre */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 my-4">
+                  <div
+                    onClick={() => basculerVersCommandesFamille('PRECADRE', 'PRECADRE_36')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-purple-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Précadre 36 mm (P36)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {precadres.detailsPrecadres?.p36.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-purple-400/80 mt-0.5 font-mono">
+                      {precadres.detailsPrecadres?.p36.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('PRECADRE', 'PRECADRE_50')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-purple-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Précadre 50 mm (P50)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {precadres.detailsPrecadres?.p50.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-purple-400/80 mt-0.5 font-mono">
+                      {precadres.detailsPrecadres?.p50.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('PRECADRE', 'AUTRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-purple-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Autres Profilés</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {precadres.detailsPrecadres?.autres.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-purple-400/80 mt-0.5 font-mono">
+                      {precadres.detailsPrecadres?.autres.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions Poste Précadres */}
+              <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => basculerVersCommandesFamille('PRECADRE')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Voir les commandes Précadres</span>
+                </button>
+
+                <button
+                  onClick={() => onNavigateToTab('precadre')}
+                  className="px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Accéder au module Précadre</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* 🦟 POSTE 4 : MOUSTIQUAIRES */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between hover:border-emerald-500/40 transition">
+              <div>
+                {/* Entête Poste */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">
+                      🦟
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <span>Poste Moustiquaires</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                          {moustiquaires.nbCommandesEnCours} cmd(s)
+                        </span>
+                      </h3>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        Échéance prévisionnelle : <strong className="text-emerald-300 font-mono">{moustiquaires.dateLivraisonJusquAu}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-2xl font-black text-emerald-300 font-mono">
+                      {moustiquaires.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Charge : {moustiquaires.chargeHeuresEstimee}h ({moustiquaires.capaciteJournaliere} pcs/j)
+                    </div>
+                  </div>
+                </div>
+
+                {/* Décomposition par Type de Moustiquaire */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 my-4">
+                  <div
+                    onClick={() => basculerVersCommandesFamille('MOUSTIQUAIRE', 'MSTQ_FENETRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-emerald-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Fenêtre (1 Vantail)</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {moustiquaires.detailsMoustiquaires?.fenetre.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-400/80 mt-0.5 font-mono">
+                      {moustiquaires.detailsMoustiquaires?.fenetre.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('MOUSTIQUAIRE', 'MSTQ_PORTE_FENETRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-emerald-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Porte-Fenêtre</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {moustiquaires.detailsMoustiquaires?.porteFenetre.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-400/80 mt-0.5 font-mono">
+                      {moustiquaires.detailsMoustiquaires?.porteFenetre.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => basculerVersCommandesFamille('MOUSTIQUAIRE', 'AUTRE')}
+                    className="p-3 bg-slate-950 rounded-xl border border-slate-800/90 hover:border-emerald-500/50 cursor-pointer transition"
+                  >
+                    <div className="text-[11px] font-semibold text-slate-400 truncate">Autres Modèles</div>
+                    <div className="text-xl font-bold text-slate-100 font-mono mt-1">
+                      {moustiquaires.detailsMoustiquaires?.autres.totalPieces || 0} <span className="text-[10px] font-normal text-slate-400">pcs</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-400/80 mt-0.5 font-mono">
+                      {moustiquaires.detailsMoustiquaires?.autres.nbCommandes || 0} cmd(s)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions Poste Moustiquaires */}
+              <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => basculerVersCommandesFamille('MOUSTIQUAIRE')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Voir les commandes Moustiquaires</span>
+                </button>
+
+                <button
+                  onClick={() => onNavigateToTab('moustiquaire')}
+                  className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Accéder au module Moustiquaire</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ── 2. KPIS GLOBAUX DE L'ATELIER (6 CARTES AVEC OFS CLÔTURÉS & RESPECT DES DÉLAIS) ── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-        {/* Total Commandes Actives */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
-          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>Commandes en Cours</span>
-            <Boxes className="w-4 h-4 text-amber-400" />
-          </div>
-          <div className="text-3xl font-black text-slate-50 font-mono mt-1">
-            {monitoringData.totalCommandesActives}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
-            <span className="text-amber-400 font-bold">{caissons.nbCommandesEnCours}</span> Cais. •{' '}
-            <span className="text-sky-400 font-bold">{tabliers.nbCommandesEnCours}</span> Tabl. •{' '}
-            <span className="text-purple-400 font-bold">{precadres.nbCommandesEnCours}</span> Préc. •{' '}
-            <span className="text-emerald-400 font-bold">{moustiquaires.nbCommandesEnCours}</span> Mstq.
-          </div>
-        </div>
+      {/* ========================================================================= */}
+      {/* VUE 2 : PORTEFEUILLE PAR CLIENT (VENTILATION CLAIRE, PROPRE, SANS DOUBLON) */}
+      {/* ========================================================================= */}
+      {modeVue === 'CLIENTS' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Barre de Recherche & Contrôles Clients */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[260px]">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={rechercheClient}
+                onChange={e => setRechercheClient(e.target.value)}
+                placeholder="Rechercher par client, donneur d'ordre, référence commande..."
+                className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+              />
+            </div>
 
-        {/* Total Pièces en Fabrication */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
-          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>Pièces en Attente / Coupe</span>
-            <Scissors className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="text-3xl font-black text-emerald-400 font-mono mt-1">
-            {monitoringData.totalPiecesEnFabrication}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
-            <span className="text-amber-400 font-semibold">{caissons.totalPiecesEnCours}</span> Cais. •{' '}
-            <span className="text-sky-400 font-semibold">{tabliers.totalPiecesEnCours}</span> Tabl. •{' '}
-            <span className="text-purple-400 font-semibold">{precadres.totalPiecesEnCours}</span> Préc. •{' '}
-            <span className="text-emerald-400 font-semibold">{moustiquaires.totalPiecesEnCours}</span> Mstq.
-          </div>
-        </div>
-
-        {/* Total OFs Clôturés */}
-        <div className="bg-slate-900 border border-emerald-900/40 rounded-xl p-4 shadow">
-          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>OFs Clôturés (Fabriqués)</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="text-3xl font-black text-emerald-300 font-mono mt-1">
-            {monitoringData.totalOFsClotures || 0}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            <span className="text-emerald-400 font-semibold">{monitoringData.totalPiecesCloturees || 0}</span> pièces terminées
-          </div>
-        </div>
-
-        {/* Charge Globale Heures */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow">
-          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
-            <span>Charge Atelier Restante</span>
-            <Clock className="w-4 h-4 text-sky-400" />
-          </div>
-          <div className="text-3xl font-black text-sky-400 font-mono mt-1">
-            {monitoringData.chargeTotaleHeures} <span className="text-sm font-sans font-normal text-slate-400">h</span>
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
-            <span className="text-amber-400 font-semibold">{caissons.chargeHeuresEstimee}h</span> Cais. •{' '}
-            <span className="text-sky-400 font-semibold">{tabliers.chargeHeuresEstimee}h</span> Tabl.
-          </div>
-        </div>
-
-        {/* Échéance Atelier Globale (Jusqu'au) */}
-        <div className="bg-gradient-to-br from-indigo-950/70 to-slate-900 border border-indigo-500/40 rounded-xl p-4 shadow">
-          <div className="flex items-center justify-between text-xs text-indigo-300 font-medium">
-            <span>Échéance Atelier Globale</span>
-            <Truck className="w-4 h-4 text-indigo-400" />
-          </div>
-          <div className="text-base font-bold text-indigo-200 font-mono mt-1 leading-tight">
-            {monitoringData.totalPiecesEnFabrication > 0
-              ? monitoringData.dateLivraisonGlobaleJusquAu
-              : 'Capacité 100% disponible'}
-          </div>
-          <div className="text-[11px] text-indigo-400/80 mt-1">
-            Date maximale d'absorption de la file
-          </div>
-        </div>
-
-        {/* Respect des Délais & Alertes Atelier */}
-        <div
-          onClick={() => {
-            if (monitoringData.totalRetardCritiqueAVerifier > 0) {
-              setFiltreRetard(filtreRetard === 'RETARD_CRITIQUE' ? 'TOUS' : 'RETARD_CRITIQUE');
-            }
-          }}
-          className={`rounded-xl p-4 shadow transition cursor-pointer border ${
-            monitoringData.totalRetardCritiqueAVerifier > 0
-              ? 'bg-rose-950/40 border-rose-500/80 hover:bg-rose-950/60 ring-1 ring-rose-500/50'
-              : monitoringData.totalEnRetard > 0
-              ? 'bg-amber-950/30 border-amber-500/50 hover:bg-amber-950/50'
-              : 'bg-slate-900 border-slate-800'
-          }`}
-        >
-          <div className="flex items-center justify-between text-xs font-medium">
-            <span className={monitoringData.totalRetardCritiqueAVerifier > 0 ? 'text-rose-300 font-bold' : 'text-slate-400'}>
-              Respect Délais Atelier
-            </span>
-            <Flag className={`w-4 h-4 ${monitoringData.totalRetardCritiqueAVerifier > 0 ? 'text-rose-400 fill-current' : 'text-slate-500'}`} />
-          </div>
-          <div className="text-3xl font-black font-mono mt-1 flex items-baseline gap-2">
-            <span className={monitoringData.totalRetardCritiqueAVerifier > 0 ? 'text-rose-400' : 'text-emerald-400'}>
-              {monitoringData.totalRetardCritiqueAVerifier > 0 ? `${monitoringData.totalRetardCritiqueAVerifier}` : '100%'}
-            </span>
-            {monitoringData.totalRetardCritiqueAVerifier > 0 && (
-              <span className="text-xs font-bold text-rose-300 uppercase">à vérifier (&gt;3j)</span>
-            )}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            {monitoringData.totalRetardCritiqueAVerifier > 0
-              ? 'Cliquez pour isoler ces commandes'
-              : monitoringData.totalEnRetard > 0
-              ? `${monitoringData.totalEnRetard} en léger retard (≤3j)`
-              : 'Aucun retard critique détecté'}
-          </div>
-        </div>
-      </div>
-
-      {/* ── 2.1 SYNTHÈSE GLOBALE DES 4 FAMILLES & ACCÈS DIRECT ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Carte Caissons */}
-        <div
-          id="card-synthese-caissons"
-          onClick={() => {
-            const el = document.getElementById('section-monitoring-caissons');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className="bg-slate-900/90 border border-amber-500/40 hover:border-amber-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-amber-500/10 group"
-        >
-          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-base">📦</span>
-              <span className="font-bold text-xs text-amber-200 group-hover:text-amber-300">Caissons &amp; Sous-Faces</span>
-            </div>
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
-              {caissons.nbCommandesEnCours} cmd(s)
-            </span>
-          </div>
-          <div className="flex items-baseline justify-between mt-2 font-mono">
-            <span className="text-lg font-black text-slate-100">{caissons.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
-            <span className="text-xs font-bold text-amber-400">{caissons.chargeHeuresEstimee}h ({caissons.capaciteJournaliere} pcs/j)</span>
-          </div>
-          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-            <span>Échéance :</span>
-            <span className="font-mono font-bold text-amber-300 truncate">{caissons.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
-          </div>
-        </div>
-
-        {/* Carte Tabliers */}
-        <div
-          id="card-synthese-tabliers"
-          onClick={() => {
-            const el = document.getElementById('section-monitoring-tabliers');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className="bg-slate-900/90 border border-sky-500/40 hover:border-sky-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-sky-500/10 group"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🪟</span>
-              <span className="font-bold text-xs text-sky-200 group-hover:text-sky-300">Tabliers Volets</span>
-            </div>
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-sky-950 text-sky-300 border border-sky-800">
-              {tabliers.nbCommandesEnCours} cmd(s)
-            </span>
-          </div>
-          <div className="flex items-baseline justify-between mt-2 font-mono">
-            <span className="text-lg font-black text-slate-100">{tabliers.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
-            <span className="text-xs font-bold text-sky-400">{tabliers.chargeHeuresEstimee}h ({tabliers.capaciteJournaliere} pcs/j)</span>
-          </div>
-          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-            <span>Échéance :</span>
-            <span className="font-mono font-bold text-sky-300 truncate">{tabliers.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
-          </div>
-        </div>
-
-        {/* Carte Précadres */}
-        <div
-          id="card-synthese-precadres"
-          onClick={() => {
-            const el = document.getElementById('section-monitoring-precadres');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className="bg-slate-900/90 border border-purple-500/40 hover:border-purple-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-purple-500/10 group"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🚪</span>
-              <span className="font-bold text-xs text-purple-200 group-hover:text-purple-300">Précadres Aluminium</span>
-            </div>
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-purple-950 text-purple-300 border border-purple-800">
-              {precadres.nbCommandesEnCours} cmd(s)
-            </span>
-          </div>
-          <div className="flex items-baseline justify-between mt-2 font-mono">
-            <span className="text-lg font-black text-slate-100">{precadres.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
-            <span className="text-xs font-bold text-purple-400">{precadres.chargeHeuresEstimee}h ({precadres.capaciteJournaliere} pcs/j)</span>
-          </div>
-          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-            <span>Échéance :</span>
-            <span className="font-mono font-bold text-purple-300 truncate">{precadres.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
-          </div>
-        </div>
-
-        {/* Carte Moustiquaires */}
-        <div
-          id="card-synthese-moustiquaires"
-          onClick={() => {
-            const el = document.getElementById('section-monitoring-moustiquaires');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className="bg-slate-900/90 border border-emerald-500/40 hover:border-emerald-400 p-3.5 rounded-xl cursor-pointer transition shadow-md hover:shadow-emerald-500/10 group"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🦟</span>
-              <span className="font-bold text-xs text-emerald-200 group-hover:text-emerald-300">Moustiquaires</span>
-            </div>
-            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
-              {moustiquaires.nbCommandesEnCours} cmd(s)
-            </span>
-          </div>
-          <div className="flex items-baseline justify-between mt-2 font-mono">
-            <span className="text-lg font-black text-slate-100">{moustiquaires.totalPiecesEnCours} <span className="text-xs font-normal text-slate-400">pcs</span></span>
-            <span className="text-xs font-bold text-emerald-400">{moustiquaires.chargeHeuresEstimee}h ({moustiquaires.capaciteJournaliere} pcs/j)</span>
-          </div>
-          <div className="mt-1.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-            <span>Échéance :</span>
-            <span className="font-mono font-bold text-emerald-300 truncate">{moustiquaires.dateLivraisonJusquAu.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 3. FOCUS MAJEUR : CAISSONS (30, 25, 40 & LIVRAISON JUSQU'AU) ── */}
-      <div id="section-monitoring-caissons" className="bg-slate-900 border-2 border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
-        {/* Entête Caissons */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30 font-bold">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-amber-100">
-                  Monitoring des Caissons &amp; Sous-Faces
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-950 border border-amber-800 text-amber-300">
-                  {caissons.nbCommandesEnCours} Commande{caissons.nbCommandesEnCours > 1 ? 's' : ''}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-200">
-                  {caissons.totalPiecesEnCours} Pièce{caissons.totalPiecesEnCours > 1 ? 's' : ''} au total
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Ventilation détaillée par section de caisson tunnel et suivi de la file de fabrication.
-              </p>
-            </div>
-          </div>
-
-          {/* Badge Estimation Livraison Caissons Jusqu'au */}
-          <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 rounded-xl px-4 py-2 flex items-center gap-3 shadow-inner">
-            <div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
-              <Truck className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
-                Livraison Prévisionnelle Caissons Jusqu'au :
-              </div>
-              <div className="text-sm font-black text-amber-100 font-mono">
-                {caissons.totalPiecesEnCours > 0
-                  ? caissons.dateLivraisonJusquAu
-                  : 'Aucune commande en attente'}
-              </div>
-              <div className="text-[10px] text-amber-300/80">
-                Cadence : {caissons.capaciteJournaliere} pcs/j • {caissons.chargeHeuresEstimee}h de charge ({caissons.joursOuvresRequis} jour{caissons.joursOuvresRequis > 1 ? 's' : ''} ouvré{caissons.joursOuvresRequis > 1 ? 's' : ''})
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Grille des Tailles 30, 25, 40 et Autres */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {/* Caisson 30 (300 mm) */}
-          <div
-            onClick={() => {
-              setFiltreFamille('CAISSON');
-              setFiltreSousType(filtreSousType === 'CAISSON_30' ? 'TOUS' : 'CAISSON_30');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'CAISSON_30'
-                ? 'bg-amber-950/70 border-amber-400 shadow-lg ring-1 ring-amber-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-amber-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-amber-300">Caisson 30 (300 mm)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {caissons.detailsCaissons?.c30.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {caissons.detailsCaissons?.c30.totalPieces || 0}
-              </div>
-              <span className="text-xs text-amber-400/90 font-semibold">
-                {caissons.detailsCaissons?.c30.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-amber-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${caissons.detailsCaissons?.c30.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              CT SOMO 30 BL / Arrondi / Fibraglo
-            </div>
-          </div>
-
-          {/* Caisson 25 (250 mm) */}
-          <div
-            onClick={() => {
-              setFiltreFamille('CAISSON');
-              setFiltreSousType(filtreSousType === 'CAISSON_25' ? 'TOUS' : 'CAISSON_25');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'CAISSON_25'
-                ? 'bg-amber-950/70 border-amber-400 shadow-lg ring-1 ring-amber-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-amber-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-amber-300">Caisson 25 (250 mm)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {caissons.detailsCaissons?.c25.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {caissons.detailsCaissons?.c25.totalPieces || 0}
-              </div>
-              <span className="text-xs text-amber-400/90 font-semibold">
-                {caissons.detailsCaissons?.c25.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${caissons.detailsCaissons?.c25.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              CT SOMO 25 Arrondi / Carré
-            </div>
-          </div>
-
-          {/* Caisson 40 (400 mm) */}
-          <div
-            onClick={() => {
-              setFiltreFamille('CAISSON');
-              setFiltreSousType(filtreSousType === 'CAISSON_40' ? 'TOUS' : 'CAISSON_40');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'CAISSON_40'
-                ? 'bg-amber-950/70 border-amber-400 shadow-lg ring-1 ring-amber-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-amber-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-amber-300">Caisson 40 (400 mm)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {caissons.detailsCaissons?.c40.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {caissons.detailsCaissons?.c40.totalPieces || 0}
-              </div>
-              <span className="text-xs text-amber-400/90 font-semibold">
-                {caissons.detailsCaissons?.c40.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-orange-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${caissons.detailsCaissons?.c40.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              CT SOMO 40*35 / Grand Gabarit
-            </div>
-          </div>
-
-          {/* Sous-faces & Autres */}
-          <div className="p-4 rounded-xl border bg-slate-950/60 border-slate-800">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-300">Sous-Faces &amp; Autres</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {caissons.detailsCaissons?.autres.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {caissons.detailsCaissons?.autres.totalPieces || 0}
-              </div>
-              <span className="text-xs text-slate-400 font-semibold">
-                {caissons.detailsCaissons?.autres.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-slate-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${caissons.detailsCaissons?.autres.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              SF 200, 250, 300 &amp; Joues
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 4. FOCUS : TABLIERS (43, 55 & ESTIMATION LIVRAISON) ── */}
-      <div id="section-monitoring-tabliers" className="bg-slate-900 border-2 border-sky-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
-        {/* Entête Tabliers */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center border border-sky-500/30 font-bold">
-              <Scissors className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-sky-100">
-                  Monitoring des Tabliers de Volets Roulants
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-sky-950 border border-sky-800 text-sky-300">
-                  {tabliers.nbCommandesEnCours} Commande{tabliers.nbCommandesEnCours > 1 ? 's' : ''}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-200">
-                  {tabliers.totalPiecesEnCours} Pièce{tabliers.totalPiecesEnCours > 1 ? 's' : ''} au total
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Ventilation par type de profilé de lame (Lame 43 mm, Lame 55 mm) et suivi des délais.
-              </p>
-            </div>
-          </div>
-
-          {/* Badge Estimation Livraison Tabliers Jusqu'au */}
-          <div className="bg-gradient-to-r from-sky-500/20 to-blue-500/20 border border-sky-500/40 rounded-xl px-4 py-2 flex items-center gap-3 shadow-inner">
-            <div className="w-8 h-8 rounded-lg bg-sky-500 text-slate-950 flex items-center justify-center font-black">
-              <Truck className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-sky-400 uppercase tracking-wider">
-                Livraison Prévisionnelle Tabliers Jusqu'au :
-              </div>
-              <div className="text-sm font-black text-sky-100 font-mono">
-                {tabliers.totalPiecesEnCours > 0
-                  ? tabliers.dateLivraisonJusquAu
-                  : 'Aucune commande en attente'}
-              </div>
-              <div className="text-[10px] text-sky-300/80">
-                Cadence : {tabliers.capaciteJournaliere} pcs/j • {tabliers.chargeHeuresEstimee}h de charge ({tabliers.joursOuvresRequis} jour{tabliers.joursOuvresRequis > 1 ? 's' : ''} ouvré{tabliers.joursOuvresRequis > 1 ? 's' : ''})
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Grille Lames 43 et 55 */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          {/* Lame 43 mm */}
-          <div
-            onClick={() => {
-              setFiltreFamille('TABLIER');
-              setFiltreSousType(filtreSousType === 'TABLIER_43' ? 'TOUS' : 'TABLIER_43');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'TABLIER_43'
-                ? 'bg-sky-950/70 border-sky-400 shadow-lg ring-1 ring-sky-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-sky-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-sky-300">Lame 43 mm (ALU / PVC)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {tabliers.detailsTabliers?.l43.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {tabliers.detailsTabliers?.l43.totalPieces || 0}
-              </div>
-              <span className="text-xs text-sky-400/90 font-semibold">
-                {tabliers.detailsTabliers?.l43.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-sky-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${tabliers.detailsTabliers?.l43.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              TAB 43 7024 / BL / 9007 / NR
-            </div>
-          </div>
-
-          {/* Lame 55 mm */}
-          <div
-            onClick={() => {
-              setFiltreFamille('TABLIER');
-              setFiltreSousType(filtreSousType === 'TABLIER_55' ? 'TOUS' : 'TABLIER_55');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'TABLIER_55'
-                ? 'bg-sky-950/70 border-sky-400 shadow-lg ring-1 ring-sky-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-sky-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-sky-300">Lame 55 mm (ALU / PVC)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {tabliers.detailsTabliers?.l55.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {tabliers.detailsTabliers?.l55.totalPieces || 0}
-              </div>
-              <span className="text-xs text-sky-400/90 font-semibold">
-                {tabliers.detailsTabliers?.l55.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-blue-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${tabliers.detailsTabliers?.l55.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              TAB 55 7024 / BL / 9007 (Grandes Baies)
-            </div>
-          </div>
-
-          {/* Autres Lames */}
-          <div className="p-4 rounded-xl border bg-slate-950/60 border-slate-800">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-300">Autres Lames (39, 77...)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {tabliers.detailsTabliers?.autres.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {tabliers.detailsTabliers?.autres.totalPieces || 0}
-              </div>
-              <span className="text-xs text-slate-400 font-semibold">
-                {tabliers.detailsTabliers?.autres.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-slate-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${tabliers.detailsTabliers?.autres.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Lames spécifiques extrudées ou isolées
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 5. FOCUS : PRÉCADRES (TYPE 36 & TYPE 50) ── */}
-      <div id="section-monitoring-precadres" className="bg-slate-900 border-2 border-purple-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
-        {/* Entête Précadres */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center border border-purple-500/30 font-bold">
-              <Boxes className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-purple-100">
-                  Monitoring des Précadres Aluminium
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-purple-950 border border-purple-800 text-purple-300">
-                  {precadres.nbCommandesEnCours} Commande{precadres.nbCommandesEnCours > 1 ? 's' : ''}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-200">
-                  {precadres.totalPiecesEnCours} Pièce{precadres.totalPiecesEnCours > 1 ? 's' : ''} au total
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Ventilation détaillée par type de profilé : Type 36 (36 mm standard) et Type 50 (50 mm renforcé/grand gabarit).
-              </p>
-            </div>
-          </div>
-
-          {/* Badge Estimation Livraison Précadres Jusqu'au */}
-          <div className="bg-gradient-to-r from-purple-500/20 to-indigo-500/20 border border-purple-500/40 rounded-xl px-4 py-2 flex items-center gap-3 shadow-inner">
-            <div className="w-8 h-8 rounded-lg bg-purple-500 text-slate-950 flex items-center justify-center font-black">
-              <Truck className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">
-                Livraison Prévisionnelle Précadres Jusqu'au :
-              </div>
-              <div className="text-sm font-black text-purple-100 font-mono">
-                {precadres.totalPiecesEnCours > 0
-                  ? precadres.dateLivraisonJusquAu
-                  : 'Aucune commande en attente'}
-              </div>
-              <div className="text-[10px] text-purple-300/80">
-                Cadence : {precadres.capaciteJournaliere} pcs/j • {precadres.chargeHeuresEstimee}h de charge ({precadres.joursOuvresRequis} jour{precadres.joursOuvresRequis > 1 ? 's' : ''} ouvré{precadres.joursOuvresRequis > 1 ? 's' : ''})
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Grille Type 36, Type 50 et Profils Spéciaux */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          {/* Précadre Type 36 */}
-          <div
-            onClick={() => {
-              setFiltreFamille('PRECADRE');
-              setFiltreSousType(filtreSousType === 'PRECADRE_36' ? 'TOUS' : 'PRECADRE_36');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'PRECADRE_36'
-                ? 'bg-purple-950/70 border-purple-400 shadow-lg ring-1 ring-purple-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-purple-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-purple-300">Précadre Type 36 (36 mm Standard)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {precadres.detailsPrecadres?.p36.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {precadres.detailsPrecadres?.p36.totalPieces || 0}
-              </div>
-              <span className="text-xs text-purple-400/90 font-semibold">
-                {precadres.detailsPrecadres?.p36.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-purple-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${precadres.detailsPrecadres?.p36.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Profilé 36mm • Fenêtres &amp; baies standard
-            </div>
-          </div>
-
-          {/* Précadre Type 50 */}
-          <div
-            onClick={() => {
-              setFiltreFamille('PRECADRE');
-              setFiltreSousType(filtreSousType === 'PRECADRE_50' ? 'TOUS' : 'PRECADRE_50');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'PRECADRE_50'
-                ? 'bg-purple-950/70 border-purple-400 shadow-lg ring-1 ring-purple-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-purple-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-purple-300">Précadre Type 50 (50 mm Renforcé)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {precadres.detailsPrecadres?.p50.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {precadres.detailsPrecadres?.p50.totalPieces || 0}
-              </div>
-              <span className="text-xs text-purple-400/90 font-semibold">
-                {precadres.detailsPrecadres?.p50.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-indigo-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${precadres.detailsPrecadres?.p50.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Profilé 50mm • Portes-fenêtres &amp; haute inertie
-            </div>
-          </div>
-
-          {/* Autres Précadres */}
-          <div className="p-4 rounded-xl border bg-slate-950/60 border-slate-800">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-300">Autres Profilés Spéciaux</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {precadres.detailsPrecadres?.autres.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {precadres.detailsPrecadres?.autres.totalPieces || 0}
-              </div>
-              <span className="text-xs text-slate-400 font-semibold">
-                {precadres.detailsPrecadres?.autres.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-slate-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${precadres.detailsPrecadres?.autres.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Bouchons &amp; pièces sur-mesure
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 6. FOCUS : MOUSTIQUAIRES (PORTE-FENÊTRE, FENÊTRE, DOUBLE VANTAUX, FIXE) ── */}
-      <div id="section-monitoring-moustiquaires" className="bg-slate-900 border-2 border-emerald-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
-        {/* Entête Moustiquaires */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 font-bold">
-              <Maximize2 className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-bold text-emerald-100">
-                  Monitoring des Moustiquaires Plissées &amp; Cadres
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-950 border border-emerald-800 text-emerald-300">
-                  {moustiquaires.nbCommandesEnCours} Commande{moustiquaires.nbCommandesEnCours > 1 ? 's' : ''}
-                </span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-200">
-                  {moustiquaires.totalPiecesEnCours} Pièce{moustiquaires.totalPiecesEnCours > 1 ? 's' : ''} au total
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                Ventilation détaillée par typologie : Porte-Fenêtre, Fenêtre (1 vantail), Double Vantaux (Double Vento) et Cadre Fixe.
-              </p>
-            </div>
-          </div>
-
-          {/* Badge Estimation Livraison Moustiquaires Jusqu'au */}
-          <div className="bg-gradient-to-r from-emerald-500/20 to-teal-500/20 border border-emerald-500/40 rounded-xl px-4 py-2 flex items-center gap-3 shadow-inner">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black">
-              <Truck className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
-                Livraison Prévisionnelle Moustiquaires Jusqu'au :
-              </div>
-              <div className="text-sm font-black text-emerald-100 font-mono">
-                {moustiquaires.totalPiecesEnCours > 0
-                  ? moustiquaires.dateLivraisonJusquAu
-                  : 'Aucune commande en attente'}
-              </div>
-              <div className="text-[10px] text-emerald-300/80">
-                Cadence : {moustiquaires.capaciteJournaliere} pcs/j • {moustiquaires.chargeHeuresEstimee}h de charge ({moustiquaires.joursOuvresRequis} jour{moustiquaires.joursOuvresRequis > 1 ? 's' : ''} ouvré{moustiquaires.joursOuvresRequis > 1 ? 's' : ''})
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Grille 4 Types : Porte-Fenêtre, Fenêtre, Double Vantaux, Fixe */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {/* Porte-Fenêtre */}
-          <div
-            onClick={() => {
-              setFiltreFamille('MOUSTIQUAIRE');
-              setFiltreSousType(filtreSousType === 'MSTQ_PORTE_FENETRE' ? 'TOUS' : 'MSTQ_PORTE_FENETRE');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'MSTQ_PORTE_FENETRE'
-                ? 'bg-emerald-950/70 border-emerald-400 shadow-lg ring-1 ring-emerald-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-emerald-300">Porte-Fenêtre</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {moustiquaires.detailsMoustiquaires?.porteFenetre.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {moustiquaires.detailsMoustiquaires?.porteFenetre.totalPieces || 0}
-              </div>
-              <span className="text-xs text-emerald-400/90 font-semibold">
-                {moustiquaires.detailsMoustiquaires?.porteFenetre.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-emerald-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${moustiquaires.detailsMoustiquaires?.porteFenetre.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Passage grande hauteur • Seuil plat / chenille
-            </div>
-          </div>
-
-          {/* Fenêtre (1 Vantail) */}
-          <div
-            onClick={() => {
-              setFiltreFamille('MOUSTIQUAIRE');
-              setFiltreSousType(filtreSousType === 'MSTQ_FENETRE' ? 'TOUS' : 'MSTQ_FENETRE');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'MSTQ_FENETRE'
-                ? 'bg-emerald-950/70 border-emerald-400 shadow-lg ring-1 ring-emerald-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-emerald-300">Fenêtre (1 Vantail)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {moustiquaires.detailsMoustiquaires?.fenetre.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {moustiquaires.detailsMoustiquaires?.fenetre.totalPieces || 0}
-              </div>
-              <span className="text-xs text-emerald-400/90 font-semibold">
-                {moustiquaires.detailsMoustiquaires?.fenetre.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-teal-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${moustiquaires.detailsMoustiquaires?.fenetre.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Coulissement latéral 1 vantail standard
-            </div>
-          </div>
-
-          {/* Double Vantaux */}
-          <div
-            onClick={() => {
-              setFiltreFamille('MOUSTIQUAIRE');
-              setFiltreSousType(filtreSousType === 'MSTQ_DOUBLE_VANTAUX' ? 'TOUS' : 'MSTQ_DOUBLE_VANTAUX');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'MSTQ_DOUBLE_VANTAUX'
-                ? 'bg-emerald-950/70 border-emerald-400 shadow-lg ring-1 ring-emerald-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-emerald-300">Double Vantaux (Double Vento)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {moustiquaires.detailsMoustiquaires?.doubleVantaux.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {moustiquaires.detailsMoustiquaires?.doubleVantaux.totalPieces || 0}
-              </div>
-              <span className="text-xs text-emerald-400/90 font-semibold">
-                {moustiquaires.detailsMoustiquaires?.doubleVantaux.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-cyan-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${moustiquaires.detailsMoustiquaires?.doubleVantaux.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Fermeture centrale magnétique 2 vantaux
-            </div>
-          </div>
-
-          {/* Cadre Fixe */}
-          <div
-            onClick={() => {
-              setFiltreFamille('MOUSTIQUAIRE');
-              setFiltreSousType(filtreSousType === 'MSTQ_FIXE' ? 'TOUS' : 'MSTQ_FIXE');
-            }}
-            className={`p-4 rounded-xl border transition cursor-pointer select-none ${
-              filtreSousType === 'MSTQ_FIXE'
-                ? 'bg-emerald-950/70 border-emerald-400 shadow-lg ring-1 ring-emerald-400'
-                : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/50'
-            }`}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-emerald-300">Cadre Fixe (Fix)</span>
-              <span className="text-[11px] font-mono text-slate-400">
-                {moustiquaires.detailsMoustiquaires?.fixe.nbCommandes || 0} cmd(s)
-              </span>
-            </div>
-            <div className="mt-2 flex items-baseline justify-between">
-              <div className="text-3xl font-black font-mono text-slate-50">
-                {moustiquaires.detailsMoustiquaires?.fixe.totalPieces || 0}
-              </div>
-              <span className="text-xs text-emerald-400/90 font-semibold">
-                {moustiquaires.detailsMoustiquaires?.fixe.pourcentage || 0}% du total
-              </span>
-            </div>
-            <div className="w-full bg-slate-800 h-2 rounded-full mt-2.5 overflow-hidden">
-              <div
-                className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${moustiquaires.detailsMoustiquaires?.fixe.pourcentage || 0}%` }}
-              />
-            </div>
-            <div className="text-[10px] text-slate-500 mt-2">
-              Cadre fixe clipsable ou vissé
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 7. VUE DIRECTE : CE QUI SE FAIT RÉELLEMENT DANS L'ATELIER (TABLEAU) ── */}
-      <div id="section-commandes-atelier" className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <span>Vue Directe de l'Atelier — Commandes &amp; Lignes en Cours</span>
-              <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-slate-800 text-slate-300">
-                {commandesFiltrees.length} affichée(s)
-              </span>
-            </h3>
-            <p className="text-xs text-slate-400">
-              Liste complète de chaque commande en fabrication avec son statut machine et son échéance de livraison calculée.
-            </p>
-          </div>
-
-          {/* Filtres Rapides */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => {
-                setFiltreFamille('TOUTES');
-                setFiltreSousType('TOUS');
-              }}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreFamille === 'TOUTES' && filtreSousType === 'TOUS'
-                  ? 'bg-amber-500 text-slate-950 font-bold'
-                  : 'bg-slate-800 text-slate-300 hover:text-white'
-              }`}
-            >
-              Tous
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('CAISSON');
-                setFiltreSousType('TOUS');
-              }}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreFamille === 'CAISSON' && filtreSousType === 'TOUS'
-                  ? 'bg-amber-500 text-slate-950 font-bold'
-                  : 'bg-slate-800 text-amber-400 hover:bg-slate-700'
-              }`}
-            >
-              🗄️ Caissons ({caissons.nbCommandesEnCours})
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('CAISSON');
-                setFiltreSousType(filtreSousType === 'CAISSON_30' ? 'TOUS' : 'CAISSON_30');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'CAISSON_30'
-                  ? 'bg-amber-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-amber-300 hover:bg-slate-700'
-              }`}
-            >
-              Caisson 30
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('CAISSON');
-                setFiltreSousType(filtreSousType === 'CAISSON_25' ? 'TOUS' : 'CAISSON_25');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'CAISSON_25'
-                  ? 'bg-amber-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-amber-300 hover:bg-slate-700'
-              }`}
-            >
-              Caisson 25
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('CAISSON');
-                setFiltreSousType(filtreSousType === 'CAISSON_40' ? 'TOUS' : 'CAISSON_40');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'CAISSON_40'
-                  ? 'bg-amber-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-amber-300 hover:bg-slate-700'
-              }`}
-            >
-              Caisson 40
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('TABLIER');
-                setFiltreSousType('TOUS');
-              }}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreFamille === 'TABLIER' && filtreSousType === 'TOUS'
-                  ? 'bg-sky-500 text-slate-950 font-bold'
-                  : 'bg-slate-800 text-sky-400 hover:bg-slate-700'
-              }`}
-            >
-              🪟 Tabliers ({tabliers.nbCommandesEnCours})
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('TABLIER');
-                setFiltreSousType(filtreSousType === 'TABLIER_43' ? 'TOUS' : 'TABLIER_43');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'TABLIER_43'
-                  ? 'bg-sky-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-sky-300 hover:bg-slate-700'
-              }`}
-            >
-              Lame 43
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('TABLIER');
-                setFiltreSousType(filtreSousType === 'TABLIER_55' ? 'TOUS' : 'TABLIER_55');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'TABLIER_55'
-                  ? 'bg-sky-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-sky-300 hover:bg-slate-700'
-              }`}
-            >
-              Lame 55
-            </button>
-
-            {/* Filtres Précadres 36 & 50 */}
-            <button
-              onClick={() => {
-                setFiltreFamille('PRECADRE');
-                setFiltreSousType('TOUS');
-              }}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreFamille === 'PRECADRE' && filtreSousType === 'TOUS'
-                  ? 'bg-purple-500 text-slate-950 font-bold'
-                  : 'bg-slate-800 text-purple-400 hover:bg-slate-700'
-              }`}
-            >
-              🚪 Précadres ({precadres.nbCommandesEnCours})
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('PRECADRE');
-                setFiltreSousType(filtreSousType === 'PRECADRE_36' ? 'TOUS' : 'PRECADRE_36');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'PRECADRE_36'
-                  ? 'bg-purple-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-purple-300 hover:bg-slate-700'
-              }`}
-            >
-              Précadre 36
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('PRECADRE');
-                setFiltreSousType(filtreSousType === 'PRECADRE_50' ? 'TOUS' : 'PRECADRE_50');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'PRECADRE_50'
-                  ? 'bg-purple-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-purple-300 hover:bg-slate-700'
-              }`}
-            >
-              Précadre 50
-            </button>
-
-            {/* Filtres Moustiquaires : PF, Fenêtre, Double Vantaux, Fixe */}
-            <button
-              onClick={() => {
-                setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType('TOUS');
-              }}
-              className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreFamille === 'MOUSTIQUAIRE' && filtreSousType === 'TOUS'
-                  ? 'bg-emerald-500 text-slate-950 font-bold'
-                  : 'bg-slate-800 text-emerald-400 hover:bg-slate-700'
-              }`}
-            >
-              🦟 Moustiquaires ({moustiquaires.nbCommandesEnCours})
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType(filtreSousType === 'MSTQ_PORTE_FENETRE' ? 'TOUS' : 'MSTQ_PORTE_FENETRE');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'MSTQ_PORTE_FENETRE'
-                  ? 'bg-emerald-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-emerald-300 hover:bg-slate-700'
-              }`}
-            >
-              Porte-Fenêtre
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType(filtreSousType === 'MSTQ_FENETRE' ? 'TOUS' : 'MSTQ_FENETRE');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'MSTQ_FENETRE'
-                  ? 'bg-emerald-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-emerald-300 hover:bg-slate-700'
-              }`}
-            >
-              Fenêtre
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType(filtreSousType === 'MSTQ_DOUBLE_VANTAUX' ? 'TOUS' : 'MSTQ_DOUBLE_VANTAUX');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'MSTQ_DOUBLE_VANTAUX'
-                  ? 'bg-emerald-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-emerald-300 hover:bg-slate-700'
-              }`}
-            >
-              Double Vantaux
-            </button>
-
-            <button
-              onClick={() => {
-                setFiltreFamille('MOUSTIQUAIRE');
-                setFiltreSousType(filtreSousType === 'MSTQ_FIXE' ? 'TOUS' : 'MSTQ_FIXE');
-              }}
-              className={`px-2 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
-                filtreSousType === 'MSTQ_FIXE'
-                  ? 'bg-emerald-400 text-slate-950 font-bold'
-                  : 'bg-slate-800/80 text-emerald-300 hover:bg-slate-700'
-              }`}
-            >
-              Cadre Fixe
-            </button>
-
-            {/* Filtres de Retards & Alertes Délais */}
-            {monitoringData.totalRetardCritiqueAVerifier > 0 && (
               <button
-                onClick={() => {
-                  setFiltreRetard(filtreRetard === 'RETARD_CRITIQUE' ? 'TOUS' : 'RETARD_CRITIQUE');
-                }}
-                className={`px-2.5 py-1 text-xs rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                  filtreRetard === 'RETARD_CRITIQUE'
-                    ? 'bg-rose-600 text-white ring-2 ring-rose-400 shadow-md animate-pulse'
-                    : 'bg-rose-950/80 text-rose-300 border border-rose-700/60 hover:bg-rose-900/60'
-                }`}
-                title="Commandes dépassant leur délai de plus de 3 jours à vérifier en atelier"
+                onClick={() => setToutDeplier(true)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 cursor-pointer flex items-center gap-1.5"
               >
-                <Flag className="w-3 h-3 text-rose-400 fill-current" />
-                <span>🚨 À Vérifier Atelier ({monitoringData.totalRetardCritiqueAVerifier})</span>
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>Tout Déplier</span>
               </button>
-            )}
-
-            {monitoringData.totalEnRetard > 0 && (
               <button
-                onClick={() => {
-                  setFiltreRetard(filtreRetard === 'TOUT_RETARD' ? 'TOUS' : 'TOUT_RETARD');
-                }}
-                className={`px-2.5 py-1 text-xs rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  filtreRetard === 'TOUT_RETARD'
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md'
-                    : 'bg-amber-950/60 text-amber-300 border border-amber-800/60 hover:bg-amber-900/50'
-                }`}
-                title="Toutes les commandes ayant dépassé leur date prévisionnelle de livraison"
+                onClick={() => setToutDeplier(false)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition border border-slate-700 cursor-pointer flex items-center gap-1.5"
               >
-                <AlertTriangle className="w-3 h-3 text-amber-400" />
-                <span>Tous Retards ({monitoringData.totalEnRetard})</span>
+                <ChevronUp className="w-3.5 h-3.5" />
+                <span>Tout Replier</span>
               </button>
-            )}
+            </div>
           </div>
-        </div>
 
-        {/* Barre de Recherche */}
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={recherche}
-            onChange={e => setRecherche(e.target.value)}
-            placeholder="Rechercher par N° Commande, Client, Donneur d'ordre, Article, Section..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
-          />
-        </div>
+          {/* Liste des Cartes Clients */}
+          {clientsFiltres.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 text-xs rounded-2xl bg-slate-900 border border-slate-800">
+              Aucun client ne correspond aux critères de recherche actuels.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {clientsFiltres.map((client, idx) => {
+                const estDeplie = isClientDeplie(client.nomClient);
+                const partPourcentage = monitoringData.totalPiecesEnFabrication > 0
+                  ? Math.round((client.totalPieces / monitoringData.totalPiecesEnFabrication) * 100)
+                  : 0;
 
-        {/* Table interactive */}
-        <div className="overflow-x-auto rounded-xl border border-slate-800">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase tracking-wider font-semibold border-b border-slate-800">
-              <tr>
-                <th className="py-3 px-3.5">Réf. Commande</th>
-                <th className="py-3 px-3.5">Client &amp; Donneur d'ordre</th>
-                <th className="py-3 px-3.5">Famille &amp; Section</th>
-                <th className="py-3 px-3.5">Détail Fabrication</th>
-                <th className="py-3 px-3.5 text-center">Quantité</th>
-                <th className="py-3 px-3.5">Statut Atelier</th>
-                <th className="py-3 px-3.5">Livraison Prévisionnelle</th>
-                <th className="py-3 px-3.5">Respect des Délais</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {commandesFiltrees.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-8 text-slate-500 text-xs">
-                    Aucune commande trouvée avec les filtres sélectionnés.
-                  </td>
-                </tr>
-              ) : (
-                commandesFiltrees.map((cmd, idx) => {
-                  const isCaisson = cmd.famille === 'CAISSON';
-                  const isTablier = cmd.famille === 'TABLIER';
-                  const isPrecadre = cmd.famille === 'PRECADRE';
-                  const isMoustiquaire = cmd.famille === 'MOUSTIQUAIRE';
-                  const estCritique = cmd.alerteDelai?.estRetardCritique;
-                  const estEnRetard = cmd.alerteDelai?.estDepasse;
-
-                  return (
-                    <tr
-                      key={cmd.id || idx}
-                      className={`transition duration-150 ${
-                        estCritique
-                          ? 'bg-rose-950/30 border-l-4 border-l-rose-500 hover:bg-rose-950/50'
-                          : estEnRetard
-                          ? 'bg-amber-950/20 border-l-4 border-l-amber-500 hover:bg-amber-950/40'
-                          : 'hover:bg-slate-800/40'
-                      }`}
+                return (
+                  <div
+                    key={client.nomClient || idx}
+                    className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden shadow-md transition hover:border-slate-700"
+                  >
+                    {/* En-tête Client Synthétique et Impeccable */}
+                    <div
+                      onClick={() => toggleClientDeplie(client.nomClient)}
+                      className="p-4 bg-slate-900 hover:bg-slate-850 cursor-pointer flex flex-wrap items-center justify-between gap-4 select-none"
                     >
-                      {/* Réf Commande */}
-                      <td className="py-3 px-3.5 font-mono font-bold text-slate-100 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span>{cmd.refCommande || 'SANS_REF'}</span>
-                          {cmd.ofCode && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-950 text-blue-300 border border-blue-800">
+                      <div className="flex items-center gap-3">
+                        <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 transition">
+                          {estDeplie ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-base font-bold text-slate-100">
+                              {client.nomClient}
+                            </h4>
+                            <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">
+                              Donneur : {client.donneurOrdre}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400 mt-0.5">
+                            Volume : <strong className="text-amber-300 font-mono">{partPourcentage}%</strong> de la production globale de l'atelier
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {/* Badges de synthèse par famille */}
+                        <div className="hidden lg:flex items-center gap-2">
+                          {client.familles.map(f => (
+                            <span
+                              key={f.famille}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg font-mono font-bold border ${
+                                f.famille === 'CAISSON'
+                                  ? 'bg-amber-950/60 text-amber-300 border-amber-800/80'
+                                  : f.famille === 'TABLIER'
+                                  ? 'bg-sky-950/60 text-sky-300 border-sky-800/80'
+                                  : f.famille === 'PRECADRE'
+                                  ? 'bg-purple-950/60 text-purple-300 border-purple-800/80'
+                                  : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/80'
+                              }`}
+                            >
+                              {f.famille === 'CAISSON' ? '📦 Cais' : f.famille === 'TABLIER' ? '🪟 Tabl' : f.famille === 'PRECADRE' ? '🚪 Préc' : '🦟 Mstq'} : {f.totalPieces} pcs
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Total Commandes */}
+                        <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-right">
+                          <div className="text-[10px] uppercase font-semibold text-slate-400">Commandes</div>
+                          <div className="text-xs font-mono font-bold text-sky-400">
+                            {client.totalCommandesEnCours} cmd
+                          </div>
+                        </div>
+
+                        {/* Total Pièces à Fabriquer */}
+                        <div className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-right">
+                          <div className="text-[10px] uppercase font-bold text-amber-400">Pièces à fabriquer</div>
+                          <div className="text-sm font-mono font-black text-amber-300">
+                            {client.totalPieces} pcs
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Contenu Déplié : Détail par Famille & Tableau des Commandes */}
+                    {estDeplie && (
+                      <div className="p-4 border-t border-slate-800/80 bg-slate-950/50 space-y-4">
+                        {/* 1. Résumé des Besoins par Famille et Sous-Types */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          {client.familles.map(f => (
+                            <div
+                              key={f.famille}
+                              className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-2"
+                            >
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 text-xs">
+                                <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                                  <span>{f.famille === 'CAISSON' ? '📦' : f.famille === 'TABLIER' ? '🪟' : f.famille === 'PRECADRE' ? '🚪' : '🦟'}</span>
+                                  <span>{f.labelFamille}</span>
+                                </span>
+                                <span className="font-mono font-black text-amber-300 text-xs">
+                                  {f.totalPieces} pcs
+                                </span>
+                              </div>
+
+                              <div className="space-y-1 text-xs">
+                                {f.types.map(t => (
+                                  <div key={t.cle} className="flex items-center justify-between text-slate-400 text-[11px]">
+                                    <span className="truncate pr-1">{t.label} :</span>
+                                    <span className="font-mono font-bold text-slate-200 whitespace-nowrap">{t.totalPieces} pcs</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* 2. Liste des Commandes associées à ce Client */}
+                        <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900">
+                          <div className="p-2.5 bg-slate-850 border-b border-slate-800 flex items-center justify-between text-xs font-bold text-slate-300">
+                            <span>Commandes en cours pour {client.nomClient} ({client.commandes.length})</span>
+                            <span className="text-[11px] text-slate-400 font-normal">Triées par date de livraison</span>
+                          </div>
+
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-slate-950 text-slate-400 font-semibold border-b border-slate-800">
+                                <tr>
+                                  <th className="py-2.5 px-3">Réf Commande</th>
+                                  <th className="py-2.5 px-3">Date Émission Commande</th>
+                                  <th className="py-2.5 px-3">Famille &amp; Type</th>
+                                  <th className="py-2.5 px-3 text-right">Qté Pièces</th>
+                                  <th className="py-2.5 px-3">Date Prévue</th>
+                                  <th className="py-2.5 px-3">Statut Délai</th>
+                                  <th className="py-2.5 px-3 text-right">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800/60 font-mono">
+                                {client.commandes.map(cmd => (
+                                  <tr key={cmd.id} className="hover:bg-slate-800/40 transition">
+                                    <td className="py-2 px-3 font-bold text-amber-300">
+                                      {cmd.refCommande}
+                                    </td>
+                                    <td className="py-2 px-3 text-slate-300 font-sans">
+                                      {cmd.dateEmission || cmd.dateCommande || '—'}
+                                    </td>
+                                    <td className="py-2 px-3 font-sans text-slate-200">
+                                      <span className="font-semibold">{cmd.statutBadgeLabel}</span>
+                                      {cmd.typePrecision && (
+                                        <span className="text-slate-400 text-[11px] ml-1.5">({cmd.typePrecision})</span>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-black text-emerald-400">
+                                      {cmd.quantiteTotalPieces} pcs
+                                    </td>
+                                    <td className="py-2 px-3 text-slate-300 font-sans">
+                                      {cmd.dateLivraisonPrevisionnelle}
+                                    </td>
+                                    <td className="py-2 px-3 font-sans">
+                                      {cmd.alerteDelai?.estRetardCritique ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                                          🚨 À Vérifier (+{cmd.alerteDelai.joursDeRetard}j)
+                                        </span>
+                                      ) : cmd.alerteDelai?.estDepasse ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800">
+                                          ⚠️ Retard (+{cmd.alerteDelai.joursDeRetard}j)
+                                        </span>
+                                      ) : (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
+                                          ✓ Dans les délais
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-3 text-right whitespace-nowrap">
+                                      <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRechargerDossier(cmd)}
+                                          className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 text-[11px] font-sans font-bold rounded transition cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                                          title="Recharger cette commande dans l'Écosystème Commandes"
+                                        >
+                                          <FolderOpen className="w-3 h-3 text-amber-400" />
+                                          <span>Écosystème</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (cmd.famille === 'CAISSON') onNavigateToTab('caisson');
+                                            else if (cmd.famille === 'TABLIER') onNavigateToTab('tablier');
+                                            else if (cmd.famille === 'PRECADRE') onNavigateToTab('precadre');
+                                            else if (cmd.famille === 'MOUSTIQUAIRE') onNavigateToTab('moustiquaire');
+                                            else onNavigateToTab('ordres');
+                                          }}
+                                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-sans font-semibold rounded transition cursor-pointer inline-flex items-center gap-1 border border-slate-700"
+                                          title="Ouvrir au poste de fabrication"
+                                        >
+                                          <span>Poste</span>
+                                          <ExternalLink className="w-2.5 h-2.5 text-slate-400" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* VUE 3 : FILE CHRONOLOGIQUE DES COMMANDES (PLANNING & EXÉCUTION ATELIER)    */}
+      {/* ========================================================================= */}
+      {modeVue === 'COMMANDES' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 animate-in fade-in duration-200">
+          {/* Filtres & Recherche de la file */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-bold text-slate-400 uppercase mr-1">Famille :</span>
+              <button
+                onClick={() => {
+                  setFiltreFamille('TOUTES');
+                  setFiltreSousType('TOUS');
+                }}
+                className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
+                  filtreFamille === 'TOUTES'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                Toutes ({monitoringData.totalCommandesActives})
+              </button>
+
+              <button
+                onClick={() => {
+                  setFiltreFamille('CAISSON');
+                  setFiltreSousType('TOUS');
+                }}
+                className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
+                  filtreFamille === 'CAISSON'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-950 text-amber-400 hover:bg-slate-850 border border-slate-800'
+                }`}
+              >
+                📦 Caissons ({caissons.nbCommandesEnCours})
+              </button>
+
+              <button
+                onClick={() => {
+                  setFiltreFamille('TABLIER');
+                  setFiltreSousType('TOUS');
+                }}
+                className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
+                  filtreFamille === 'TABLIER'
+                    ? 'bg-sky-500 text-slate-950 shadow-md shadow-sky-500/20'
+                    : 'bg-slate-950 text-sky-400 hover:bg-slate-850 border border-slate-800'
+                }`}
+              >
+                🪟 Tabliers ({tabliers.nbCommandesEnCours})
+              </button>
+
+              <button
+                onClick={() => {
+                  setFiltreFamille('PRECADRE');
+                  setFiltreSousType('TOUS');
+                }}
+                className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
+                  filtreFamille === 'PRECADRE'
+                    ? 'bg-purple-500 text-slate-950 shadow-md shadow-purple-500/20'
+                    : 'bg-slate-950 text-purple-400 hover:bg-slate-850 border border-slate-800'
+                }`}
+              >
+                🚪 Précadres ({precadres.nbCommandesEnCours})
+              </button>
+
+              <button
+                onClick={() => {
+                  setFiltreFamille('MOUSTIQUAIRE');
+                  setFiltreSousType('TOUS');
+                }}
+                className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
+                  filtreFamille === 'MOUSTIQUAIRE'
+                    ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                    : 'bg-slate-950 text-emerald-400 hover:bg-slate-850 border border-slate-800'
+                }`}
+              >
+                🦟 Moustiquaires ({moustiquaires.nbCommandesEnCours})
+              </button>
+            </div>
+
+            {/* Filtre Délais */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-400 uppercase mr-1">Délais :</span>
+              <button
+                onClick={() => setFiltreRetard('TOUS')}
+                className={`px-2.5 py-1 text-xs rounded-lg font-semibold transition cursor-pointer ${
+                  filtreRetard === 'TOUS'
+                    ? 'bg-slate-200 text-slate-950 font-bold'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                Tous
+              </button>
+              <button
+                onClick={() => setFiltreRetard('RETARD_CRITIQUE')}
+                className={`px-2.5 py-1 text-xs rounded-lg font-semibold transition cursor-pointer ${
+                  filtreRetard === 'RETARD_CRITIQUE'
+                    ? 'bg-rose-600 text-white font-bold'
+                    : 'bg-slate-950 text-rose-400 hover:bg-rose-950/40 border border-slate-800'
+                }`}
+              >
+                🚨 Retard &gt; 3j ({monitoringData.totalRetardCritiqueAVerifier})
+              </button>
+            </div>
+          </div>
+
+          {/* Barre de Recherche rapide dans la table */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[280px]">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={recherche}
+                onChange={e => setRecherche(e.target.value)}
+                placeholder="Rechercher par N° commande, client, code OF, référence d'article..."
+                className="w-full pl-10 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+              />
+            </div>
+
+            <div className="text-xs text-slate-400 font-medium">
+              Affichage de <strong className="text-slate-100">{commandesFiltrees.length}</strong> commande(s)
+            </div>
+          </div>
+
+          {/* Tableau Exhaustif & Structuré */}
+          <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-950 shadow-inner">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-slate-400 font-bold border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-3.5">N° Commande</th>
+                    <th className="py-3 px-3">Date Émission Commande</th>
+                    <th className="py-3 px-3.5">Client &amp; Donneur d'Ordre</th>
+                    <th className="py-3 px-3.5">Famille &amp; Spécification</th>
+                    <th className="py-3 px-3 text-right">Qté Pièces</th>
+                    <th className="py-3 px-3">Code OF</th>
+                    <th className="py-3 px-3.5">Livraison Prévue</th>
+                    <th className="py-3 px-3.5">Statut Atelier</th>
+                    <th className="py-3 px-3.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/80 font-mono">
+                  {commandesFiltrees.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-12 text-center text-slate-500 font-sans italic">
+                        Aucune commande ne correspond aux filtres actifs.
+                      </td>
+                    </tr>
+                  ) : (
+                    commandesFiltrees.map(cmd => (
+                      <tr key={cmd.id} className="hover:bg-slate-900/60 transition">
+                        <td className="py-2.5 px-3.5 font-bold text-amber-300 whitespace-nowrap">
+                          {cmd.refCommande}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-300 font-sans whitespace-nowrap">
+                          {cmd.dateEmission || cmd.dateCommande || '—'}
+                        </td>
+                        <td className="py-2.5 px-3.5 font-sans">
+                          <div className="font-bold text-slate-200">{cmd.client}</div>
+                          <div className="text-[11px] text-slate-500">{cmd.donneurOrdre}</div>
+                        </td>
+                        <td className="py-2.5 px-3.5 font-sans">
+                          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                            <span>{cmd.famille === 'CAISSON' ? '📦' : cmd.famille === 'TABLIER' ? '🪟' : cmd.famille === 'PRECADRE' ? '🚪' : '🦟'}</span>
+                            <span>{cmd.statutBadgeLabel}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono">{cmd.typePrecision}</div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-black text-emerald-400 text-sm whitespace-nowrap">
+                          {cmd.quantiteTotalPieces} pcs
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">
+                          {cmd.ofCode ? (
+                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-sky-300 font-bold">
                               {cmd.ofCode}
                             </span>
+                          ) : (
+                            <span className="text-slate-600">—</span>
                           )}
-                        </div>
-                        <div className="text-[10px] font-normal text-slate-500">
-                          Saisie : {cmd.dateCommande}
-                        </div>
-                        {estCritique && (
-                          <div className="text-[10px] font-bold text-rose-400 mt-1 flex items-center gap-1 animate-pulse">
-                            <Flag className="w-3 h-3 text-rose-400 fill-current" />
-                            <span>À VÉRIFIER EN ATELIER</span>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Client */}
-                      <td className="py-3 px-3.5">
-                        <div className="font-semibold text-slate-200">
-                          {cmd.client}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          Donneur : {cmd.donneurOrdre}
-                        </div>
-                      </td>
-
-                      {/* Famille & Section */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                            isCaisson
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800'
-                              : isTablier
-                              ? 'bg-sky-950 text-sky-300 border border-sky-800'
-                              : isPrecadre
-                              ? 'bg-purple-950 text-purple-300 border border-purple-800'
-                              : isMoustiquaire
-                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                              : 'bg-slate-800 text-slate-300 border border-slate-700'
-                          }`}
-                        >
-                          {isCaisson ? '🗄️ ' : isTablier ? '🪟 ' : isPrecadre ? '🚪 ' : isMoustiquaire ? '🦟 ' : '📦 '}
-                          {cmd.typePrecision}
-                        </span>
-                      </td>
-
-                      {/* Détail Fabrication */}
-                      <td className="py-3 px-3.5 text-slate-300 max-w-xs truncate" title={cmd.detailArticles}>
-                        {cmd.detailArticles}
-                      </td>
-
-                      {/* Quantité */}
-                      <td className="py-3 px-3.5 text-center font-mono font-bold text-slate-100">
-                        <span className="px-2 py-1 rounded-lg bg-slate-800 text-slate-100">
-                          {cmd.quantiteTotalPieces} pcs
-                        </span>
-                      </td>
-
-                      {/* Statut Atelier */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            cmd.statutAtelier === 'OF_EMIS'
-                              ? 'bg-blue-950 text-blue-300 border border-blue-700 animate-pulse'
-                              : cmd.statutAtelier === 'RETOUR_SAISI'
-                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                              : 'bg-slate-800 text-slate-300'
-                          }`}
-                        >
-                          {cmd.statutBadgeLabel}
-                        </span>
-                      </td>
-
-                      {/* Livraison Prévisionnelle (calculée à la saisie) */}
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono font-bold text-xs text-amber-300">
-                        <div className="flex items-center gap-1.5">
-                          <Truck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                          <span>{cmd.dateLivraisonPrevisionnelle}</span>
-                        </div>
-                      </td>
-
-                      {/* Respect des Délais & Flague Couleur Atelier */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        {cmd.alerteDelai ? (
-                          <div className="flex flex-col gap-1">
-                            {estCritique ? (
-                              <div className="space-y-1">
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black bg-rose-600 text-white border border-rose-400 shadow-md shadow-rose-950/80 animate-pulse">
-                                  <Flag className="w-3.5 h-3.5 text-white fill-current shrink-0" />
-                                  <span>À VÉRIFIER EN ATELIER</span>
-                                  <span className="font-mono text-xs">+{cmd.alerteDelai.joursDeRetard}j</span>
-                                </span>
-                                <div className="text-[10px] text-rose-300 font-semibold">
-                                  Délai dépassé &gt; 3 jours !
-                                </div>
-                              </div>
-                            ) : estEnRetard ? (
-                              <div className="space-y-0.5">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-700">
-                                  <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-                                  <span>Retard (+{cmd.alerteDelai.joursDeRetard}j)</span>
-                                </span>
-                                <div className="text-[9px] text-amber-400/80">
-                                  À surveiller
-                                </div>
-                              </div>
-                            ) : cmd.alerteDelai.statutDelai === 'ECHEANCE_AUJOURDHUI' ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-yellow-950 text-yellow-300 border border-yellow-700">
-                                <span>⚡ Échéance aujourd'hui</span>
+                        </td>
+                        <td className="py-2.5 px-3.5 font-sans whitespace-nowrap">
+                          <div className="font-bold text-slate-200">{cmd.dateLivraisonPrevisionnelle}</div>
+                          <div>
+                            {cmd.alerteDelai?.estRetardCritique ? (
+                              <span className="text-[10px] font-bold text-rose-400 flex items-center gap-1">
+                                🚨 À Vérifier (+{cmd.alerteDelai.joursDeRetard}j)
+                              </span>
+                            ) : cmd.alerteDelai?.estDepasse ? (
+                              <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1">
+                                ⚠️ Retard (+{cmd.alerteDelai.joursDeRetard}j)
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                                <span>Dans les délais ({Math.abs(cmd.alerteDelai.joursDeRetard)}j)</span>
+                              <span className="text-[10px] font-medium text-emerald-400 flex items-center gap-1">
+                                ✓ Dans les délais
                               </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-slate-500 text-[11px]">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                        </td>
+                        <td className="py-2.5 px-3.5 font-sans whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                            cmd.statutAtelier === 'OF_CLOTURE'
+                              ? 'bg-slate-800 text-slate-300 border-slate-700'
+                              : cmd.statutAtelier === 'PRET_LIVRAISON'
+                              ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                              : cmd.statutAtelier === 'COUPE_EN_COURS'
+                              ? 'bg-amber-950 text-amber-300 border-amber-800'
+                              : 'bg-sky-950 text-sky-300 border-sky-800'
+                          }`}>
+                            {cmd.statutAtelier}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Recharger dans Écosystème */}
+                            <button
+                              type="button"
+                              onClick={() => handleRechargerDossier(cmd)}
+                              className="px-2.5 py-1.5 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 text-xs font-sans font-bold rounded-lg transition cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                              title="Recharger cette commande dans l'Écosystème Commandes (lignes, articles, délais)"
+                            >
+                              <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Écosystème</span>
+                            </button>
 
-      {/* Modal Paramètres Délais & Cadences */}
+                            {/* Détails modale */}
+                            {getLinkedDossierForCmd(cmd) && (
+                              <button
+                                type="button"
+                                onClick={() => handleVisualiserDossier(cmd)}
+                                className="px-2 py-1.5 bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 text-xs font-sans font-semibold rounded-lg transition cursor-pointer inline-flex items-center gap-1 shadow-xs"
+                                title="Visualiser le dossier complet et ses repères"
+                              >
+                                <FileText className="w-3 h-3 text-purple-400" />
+                                <span className="hidden sm:inline">Détails</span>
+                              </button>
+                            )}
+
+                            {/* Accès poste atelier */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (cmd.famille === 'CAISSON') onNavigateToTab('caisson');
+                                else if (cmd.famille === 'TABLIER') onNavigateToTab('tablier');
+                                else if (cmd.famille === 'PRECADRE') onNavigateToTab('precadre');
+                                else if (cmd.famille === 'MOUSTIQUAIRE') onNavigateToTab('moustiquaire');
+                                else onNavigateToTab('ordres');
+                              }}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-sans font-semibold rounded-lg transition cursor-pointer inline-flex items-center gap-1 border border-slate-700"
+                              title="Ouvrir le poste de fabrication dédié"
+                            >
+                              <span>Poste</span>
+                              <ExternalLink className="w-3 h-3 text-slate-400" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modale de réglage des cadences */}
       <ParametresProductionModal
         isOpen={isParamsModalOpen}
         onClose={() => setIsParamsModalOpen(false)}
         onSaved={onRefreshData}
+      />
+
+      {/* ── Modal Visualisation Commande Complète ── */}
+      <DossierDetailModal
+        isOpen={isDossierDetailOpen}
+        onClose={() => {
+          setIsDossierDetailOpen(false);
+          setSelectedDossierToView(null);
+        }}
+        dossier={selectedDossierToView}
+        onLoadInEcosysteme={(d) => {
+          setIsDossierDetailOpen(false);
+          if (onLoadDossierInEcosysteme) {
+            onLoadDossierInEcosysteme(d);
+          } else if (onNavigateToTab) {
+            onNavigateToTab('ecosysteme');
+          }
+        }}
       />
     </div>
   );

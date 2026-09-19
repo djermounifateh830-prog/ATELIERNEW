@@ -35,10 +35,10 @@ export const DossierDetailModal: React.FC<DossierDetailModalProps> = ({
 
   if (!isOpen || !dossier) return null;
 
-  const nbCaissons = (dossier.articlesCaissons || []).length;
-  const nbTabliers = (dossier.articlesTabliers || []).length;
-  const nbMoustiquaires = (dossier.articlesMoustiquaires || []).length;
-  const nbPrecadres = (dossier.articlesPrecadres || []).length;
+  const nbCaissons = (dossier.articlesCaissons || []).reduce((sum, c) => sum + (Number(c.quantite) || 1), 0);
+  const nbTabliers = (dossier.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
+  const nbMoustiquaires = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+  const nbPrecadres = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
   const totalArticles = nbCaissons + nbTabliers + nbMoustiquaires + nbPrecadres;
 
   return (

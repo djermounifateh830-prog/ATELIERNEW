@@ -51,13 +51,15 @@ import {
   Ban,
   Activity,
   Zap,
-  Scale
+  Scale,
+  FolderOpen
 } from 'lucide-react';
 
 interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
   onRefreshData: () => void;
   onNavigateToTab?: (tabId: string) => void;
+  onLoadDossierInEcosysteme?: (dossier: DossierCommandeGlobal) => void;
   dossiers?: DossierCommandeGlobal[];
   clientCodifications?: ClientCodification[];
   fichesTransfert?: FicheTransfert[];
@@ -70,6 +72,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   suivisOF = [],
   onRefreshData,
   onNavigateToTab,
+  onLoadDossierInEcosysteme,
   dossiers = [],
   clientCodifications = [],
   fichesTransfert = [],
@@ -1099,6 +1102,24 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             </button>
                           )}
 
+                          {/* Bouton Recharger Commande dans Écosystème */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const dossier = getLinkedDossierForOF(of);
+                              if (dossier && onLoadDossierInEcosysteme) {
+                                onLoadDossierInEcosysteme(dossier);
+                              } else if (onNavigateToTab) {
+                                onNavigateToTab('ecosysteme');
+                              }
+                            }}
+                            className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                            title="Recharger cette commande complète dans l'Écosystème pour mise à jour ou consultation"
+                          >
+                            <FolderOpen className="w-3 h-3 text-amber-400" />
+                            <span>Écosystème</span>
+                          </button>
+
                           {/* Bouton Visualiser Commande Complète */}
                           <button
                             type="button"
@@ -1683,9 +1704,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         dossier={selectedDossierToView}
         onLoadInEcosysteme={(d) => {
           setIsDossierDetailOpen(false);
-          if (onNavigateToTab) {
-            localStorage.setItem('3m_selected_dossier_to_load', d.id);
-            onNavigateToTab('commandes');
+          if (onLoadDossierInEcosysteme) {
+            onLoadDossierInEcosysteme(d);
+          } else if (onNavigateToTab) {
+            onNavigateToTab('ecosysteme');
           }
         }}
       />

@@ -4,9 +4,10 @@ import {
   Article,
   FamilleProduit,
   ParametresProductionAtelier,
-  InfoStatutDelai
+  InfoStatutDelai,
+  PropositionHeuresSup
 } from '../types';
-import { DelaisProductionService } from './delaisProductionService';
+import { DelaisProductionService, PlanningItemSimulation } from './delaisProductionService';
 
 // ============================================================================
 // TYPES POUR LE MONITORING ATELIER
@@ -68,20 +69,27 @@ export interface StatsFamilleMonitoring {
   dateLivraisonJusquAu: string; // Ex: "LIVRAISON : MERCREDI 16/09"
   dateFinDate: Date;
   tauxOccupationJour: number; // Pourcentage de la journée courante
+  propositionHeuresSup?: PropositionHeuresSup;
 }
 
 export interface LigneCommandeMonitoring {
   id: string;
+  dossierId?: string;
   refCommande: string;
   client: string;
   donneurOrdre: string;
   dateCommande: string;
+  dateEmission?: string;
+  estPrioritaire?: boolean;
+  estEnPause?: boolean;
+  motifPause?: string;
   famille: FamilleProduit;
-  statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON' | 'OF_CLOTURE' | 'FABRIQUE';
+  statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON' | 'OF_CLOTURE' | 'FABRIQUE' | 'EN_PAUSE';
   statutBadgeLabel: string;
   typePrecision: string; // Ex: "Caisson 30", "Tablier Lame 43", etc.
   sousTypeCle?: string; // Clé normalisée principale pour filtrage rapide (ex: 'CAISSON_30')
   sousTypesCles?: string[]; // Liste de toutes les clés de sous-types contenues dans la commande
+  detailsSousTypes?: { cle: string; label: string; nbPieces: number }[]; // Détail unitaire des pièces par sous-type
   detailArticles: string;
   quantiteTotalPieces: number;
   dateLivraisonPrevisionnelle: string;
@@ -90,6 +98,46 @@ export interface LigneCommandeMonitoring {
   ofStatut?: string;
   // Détection du respect des délais et alerte atelier
   alerteDelai: InfoStatutDelai;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// NOUVEAUX TYPES : VENTILATION PAR CLIENT, FAMILLE & SOUS-TYPE
+// ────────────────────────────────────────────────────────────────────────
+
+export interface DetailTypeClient {
+  typeCle?: string; // Ex: 'CAISSON_30', 'TABLIER_43', 'MSTQ_FENETRE'
+  cle: string; // Ex: 'CAISSON_30'
+  typeLabel?: string;
+  label: string; // Ex: 'Caisson 30 (300 mm)', 'Lame 43 mm'
+  totalPieces: number; // Nombre exact de pièces à fabriquer pour ce type (et NON nombre de lignes)
+  nbPieces?: number; // Alias
+  nbCommandes?: number; // Nombre de commandes concernées
+  commandesRefs?: string[];
+  pourcentageFamille?: number;
+}
+
+export interface DetailFamilleClient {
+  famille: FamilleProduit;
+  familleLabel?: string;
+  labelFamille: string; // Ex: 'Volets Roulants & Tabliers', 'Caissons & Sous-Faces'
+  totalPieces: number; // Nombre total de pièces à fabriquer pour cette famille
+  totalCommandes: number; // Nombre de commandes dans cette famille
+  nbCommandes?: number; // Alias
+  types: DetailTypeClient[]; // Détail par type/sous-type pour cette famille
+}
+
+export interface ClientMonitoringGroup {
+  clientNom?: string; // Alias
+  nomClient: string;
+  donneurOrdre: string;
+  totalCommandes: number; // Total des commandes en cours pour ce client
+  totalCommandesEnCours: number; // Alias explicite
+  totalPieces: number; // Total des pièces à fabriquer pour ce client (toutes familles confondues)
+  familles: DetailFamilleClient[]; // Détail total par famille et nbr de pièces par famille
+  commandes: LigneCommandeMonitoring[]; // Lignes de commandes associées
+  hasRetard?: boolean;
+  hasRetardCritique?: boolean;
+  dateLivraisonLaPlusProche?: string;
 }
 
 export interface DonneesMonitoringAtelier {
@@ -103,15 +151,19 @@ export interface DonneesMonitoringAtelier {
   totalEnRetard: number;
   totalRetardCritiqueAVerifier: number; // >= 3 jours (à vérifier en atelier)
   commandesAVerifier: LigneCommandeMonitoring[];
-  // Statistiques et suivi des OFs clôturés
-  totalOFsClotures: number;
-  totalPiecesCloturees: number;
-  ofsClotures: SuiviOF[];
+  // Statistiques et suivi des OFs clôturés (conservé pour rétrocompatibilité interne)
+  totalOFsClotures?: number;
+  totalPiecesCloturees?: number;
+  ofsClotures?: SuiviOF[];
   caissons: StatsFamilleMonitoring;
   tabliers: StatsFamilleMonitoring;
   precadres: StatsFamilleMonitoring;
   moustiquaires: StatsFamilleMonitoring;
   commandesActives: LigneCommandeMonitoring[];
+  // Synthèse client demandée par l'utilisateur
+  clientsMonitoring: ClientMonitoringGroup[];
+  // Propositions automatiques d'heures supplémentaires pour absorber les retards ou commandes prioritaires
+  propositionsHeuresSup?: PropositionHeuresSup[];
 }
 
 // ============================================================================
@@ -281,82 +333,79 @@ export class MonitoringService {
       o && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')
     );
 
+    // Helpers locaux pour correspondance stricte
+    const normalizeRef = (r?: string): string => {
+      if (!r) return '';
+      return r.trim().toLowerCase().replace(/^(cmd|dossier|of)[-_ ]*/, '');
+    };
+
+    const doesOfMatchDossier = (of: SuiviOF, dossier: DossierCommandeGlobal, famille: FamilleProduit): boolean => {
+      const ofFam = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) as FamilleProduit;
+      if (ofFam !== famille) return false;
+      if (of.dossierId && dossier.id && of.dossierId === dossier.id) return true;
+
+      const ofRef = normalizeRef(of.numCommande);
+      const ofId = normalizeRef(of.id);
+      const ofCode = normalizeRef(of.codeOF);
+
+      const dRefs = [
+        dossier.id,
+        dossier.refCommande,
+        dossier.numCommandeCaisson,
+        dossier.numCommandeTablier,
+        dossier.numCommandePrecadre,
+        dossier.numCommandeMoustiquaire
+      ].filter(Boolean).map(normalizeRef);
+
+      return dRefs.some(d => Boolean(d && (d === ofRef || d === ofId || d === ofCode || (d.length >= 3 && ofRef.length >= 3 && (d.startsWith(ofRef) || ofRef.startsWith(d))))));
+    };
+
     // ────────────────────────────────────────────────────────────────────────
     // 1. EXTRACTION ET VENTILATION DES CAISSONS
     // ────────────────────────────────────────────────────────────────────────
-    const caissonsCommandesSet = new Set<string>();
-    const caissons25CommandesSet = new Set<string>();
-    const caissons30CommandesSet = new Set<string>();
-    const caissons40CommandesSet = new Set<string>();
-    const caissonsAutresCommandesSet = new Set<string>();
-
-    let piecesCaissonsTotal = 0;
-    let piecesCaissons25 = 0;
-    let piecesCaissons30 = 0;
-    let piecesCaissons40 = 0;
-    let piecesCaissonsAutres = 0;
-
     const lignesCommandesCaissons: LigneCommandeMonitoring[] = [];
+    const caissonsCommandesSet = new Set<string>();
 
-    // Parcourir les dossiers actifs contenant des caissons
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesCaissons || dossier.articlesCaissons.length === 0) return;
 
-      const ref = dossier.refCommande || dossier.id;
+      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'CAISSON'));
+      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        return;
+      }
+
+      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
       let totalPiecesCeDossier = 0;
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal: string = '';
       const sousTypesSet = new Set<string>();
+      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
 
       dossier.articlesCaissons.forEach(c => {
         const qte = Number(c.quantite) || 1;
         totalPiecesCeDossier += qte;
-        piecesCaissonsTotal += qte;
-        caissonsCommandesSet.add(ref);
 
         const art = c.articleCode ? articleMap.get(c.articleCode.toUpperCase()) : undefined;
         const classification = this.classifierCaisson(c.articleDesignation, c.sfArticleDesignation, art?.hauteur);
+        const stKey = classification.cle === '25' ? 'CAISSON_25' : classification.cle === '30' ? 'CAISSON_30' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE';
+        
+        const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
+        existingSt.nbPieces += qte;
+        typesCountMap.set(stKey, existingSt);
 
-        if (classification.cle === '25') {
-          piecesCaissons25 += qte;
-          caissons25CommandesSet.add(ref);
-          sousTypesSet.add('CAISSON_25');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 25';
-        } else if (classification.cle === '30') {
-          piecesCaissons30 += qte;
-          caissons30CommandesSet.add(ref);
-          sousTypesSet.add('CAISSON_30');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 30';
-        } else if (classification.cle === '40') {
-          piecesCaissons40 += qte;
-          caissons40CommandesSet.add(ref);
-          sousTypesSet.add('CAISSON_40');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Caisson 40';
-        } else {
-          piecesCaissonsAutres += qte;
-          caissonsAutresCommandesSet.add(ref);
-          sousTypesSet.add('CAISSON_AUTRE');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Caisson Autre';
-        }
+        sousTypesSet.add(stKey);
+        if (!sousTypePrincipal) sousTypePrincipal = classification.label;
 
         const nomProd = c.articleDesignation || c.sfArticleDesignation || 'Caisson';
         detailsDescriptions.push(`${qte}x ${nomProd} (${c.longueur || 0}mm)`);
       });
 
-      // Trouver si un OF existe pour ce caisson (dans tous les suivis OF)
-      const matchingOF = suivisOF.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeCaisson)) &&
-        (o.famille === 'CAISSON' || (o.famille as string) === 'SOUS_FACE')
-      );
+      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
+        totalPiecesCeDossier = matchingOF.nombrePieces;
+      }
 
-      const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
-      const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
-      const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-        dossier.dateLivraisonPrevisionnelle || dateLiv,
-        dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        dossier.dateCommande,
-        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
-      );
+      if (totalPiecesCeDossier <= 0) return;
+      caissonsCommandesSet.add(ref);
 
       const sousTypesList = Array.from(sousTypesSet);
       const primaryKey = sousTypePrincipal.includes('30')
@@ -367,122 +416,184 @@ export class MonitoringService {
         ? 'CAISSON_40'
         : (sousTypesList[0] || 'CAISSON_AUTRE');
 
+      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+
       lignesCommandesCaissons.push({
         id: `DOS-CAISS-${dossier.id}`,
-        refCommande: dossier.refCommande,
-        client: dossier.nomClientFinal || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+        dossierId: dossier.id,
+        refCommande: ref,
+        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'CAISSON',
-        statutAtelier: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? 'OF_CLOTURE'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'RETOUR_SAISI'
-              : 'OF_EMIS')
+        estPrioritaire,
+        estEnPause,
+        motifPause: matchingOF?.motifPause || dossier.motifPause,
+        statutAtelier: estEnPause
+          ? 'EN_PAUSE'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
           : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? '✓ OF Clôturé (Fabriqué)'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'Retour Saisi'
-              : 'OF Émis (En Coupe)')
+        statutBadgeLabel: estEnPause
+          ? 'En Pause'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
           : 'En Attente Découpe',
         typePrecision: sousTypePrincipal || 'Caisson',
         sousTypeCle: primaryKey,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+        detailsSousTypes: Array.from(typesCountMap.values()),
         detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} caissons`,
         quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dateLiv,
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
+        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
         ofCode: matchingOF?.codeOF,
         ofStatut: matchingOF?.statut,
-        alerteDelai
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
       });
     });
 
-    // Vérifier également les OFs Caissons indépendants non rattachés à un dossier
+    // Rapprochement des OFs Caissons actifs (sans doubler les dossiers déjà inclus)
     ofsActifs.forEach(of => {
       if (of.famille !== 'CAISSON' && (of.famille as string) !== 'SOUS_FACE') return;
 
-      const dejaComptabilise = lignesCommandesCaissons.some(l => l.refCommande === of.numCommande);
-      if (!dejaComptabilise) {
-        const nbP = DelaisProductionService.compterPiecesOF(of);
-        const ref = of.numCommande || of.id;
-        piecesCaissonsTotal += nbP;
-        caissonsCommandesSet.add(ref);
+      const matchedLine = lignesCommandesCaissons.find(l => {
+        if (l.dossierId && of.dossierId && l.dossierId === of.dossierId) return true;
+        const r1 = normalizeRef(l.refCommande);
+        const r2 = normalizeRef(of.numCommande);
+        return Boolean(r1 && r2 && (r1 === r2 || (r1.length >= 3 && r2.length >= 3 && (r1.startsWith(r2) || r2.startsWith(r1)))));
+      });
 
-        const classification = this.classifierCaisson(of.titreSection);
-        if (classification.cle === '25') {
-          piecesCaissons25 += nbP;
-          caissons25CommandesSet.add(ref);
-        } else if (classification.cle === '30') {
-          piecesCaissons30 += nbP;
-          caissons30CommandesSet.add(ref);
-        } else if (classification.cle === '40') {
-          piecesCaissons40 += nbP;
-          caissons40CommandesSet.add(ref);
-        } else {
-          piecesCaissonsAutres += nbP;
-          caissonsAutresCommandesSet.add(ref);
+      if (matchedLine) {
+        if (!matchedLine.ofCode && of.codeOF) matchedLine.ofCode = of.codeOF;
+        if (!matchedLine.ofStatut && of.statut) matchedLine.ofStatut = of.statut;
+        if (of.estEnPause) {
+          matchedLine.estEnPause = true;
+          matchedLine.statutAtelier = 'EN_PAUSE';
+          matchedLine.statutBadgeLabel = 'En Pause';
+          matchedLine.motifPause = of.motifPause;
         }
-
-        const delai = DelaisProductionService.estimerDelaiOF(of, ofsActifs, params);
-        const dateLiv = of.dateLivraisonPrevisionnelle || delai.texteFormatte;
-        const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-          dateLiv,
-          of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          of.dateEmission,
-          of.statut
-        );
-
-        lignesCommandesCaissons.push({
-          id: `OF-CAISS-${of.id}`,
-          refCommande: of.numCommande,
-          client: of.nomClient || 'Client',
-          donneurOrdre: of.donneurOrdre || 'Atelier',
-          dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
-          famille: 'CAISSON',
-          statutAtelier: of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
-          statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
-          typePrecision: classification.label,
-          sousTypeCle: classification.cle === '30' ? 'CAISSON_30' : classification.cle === '25' ? 'CAISSON_25' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE',
-          sousTypesCles: [classification.cle === '30' ? 'CAISSON_30' : classification.cle === '25' ? 'CAISSON_25' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE'],
-          detailArticles: `${nbP}x ${of.titreSection || 'Caissons'}`,
-          quantiteTotalPieces: nbP,
-          dateLivraisonPrevisionnelle: dateLiv,
-          dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          ofCode: of.codeOF,
-          ofStatut: of.statut,
-          alerteDelai
-        });
+        if (of.estPrioritaire) matchedLine.estPrioritaire = true;
+        return;
       }
+
+      const nbP = DelaisProductionService.compterPiecesOF(of, dossiers);
+      if (nbP <= 0) return;
+      const ref = of.numCommande || of.id;
+      caissonsCommandesSet.add(ref);
+
+      const classification = this.classifierCaisson(of.titreSection);
+      const stCle = classification.cle === '30' ? 'CAISSON_30' : classification.cle === '25' ? 'CAISSON_25' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE';
+      const estEnPause = Boolean(of.estEnPause);
+
+      lignesCommandesCaissons.push({
+        id: `OF-CAISS-${of.id}`,
+        dossierId: of.dossierId,
+        refCommande: of.numCommande || of.id,
+        client: of.nomClient || 'Client',
+        donneurOrdre: of.donneurOrdre || 'Atelier',
+        dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        famille: 'CAISSON',
+        estPrioritaire: Boolean(of.estPrioritaire),
+        estEnPause,
+        motifPause: of.motifPause,
+        statutAtelier: estEnPause ? 'EN_PAUSE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
+        statutBadgeLabel: estEnPause ? 'En Pause' : of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
+        typePrecision: classification.label,
+        sousTypeCle: stCle,
+        sousTypesCles: [stCle],
+        detailsSousTypes: [{ cle: stCle, label: classification.label, nbPieces: nbP }],
+        detailArticles: `${nbP}x ${of.titreSection || 'Caissons'}`,
+        quantiteTotalPieces: nbP,
+        dateLivraisonPrevisionnelle: of.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO,
+        ofCode: of.codeOF,
+        ofStatut: of.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
     });
 
-    // Calcul de l'échéance prévisionnelle globale pour les Caissons
-    const configCaisson = params.familles.CAISSON;
-    const capaciteJourCaisson = configCaisson.capaciteJournalierePieces || 120;
-    const delaiFixeCaisson = configCaisson.delaiFixeJours || 0;
-    const joursRequisCaisson = piecesCaissonsTotal > 0
-      ? Math.max(1, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson) + delaiFixeCaisson)
-      : 1;
+    // Simulation de planning pour les caissons
+    const simCaissonItems: PlanningItemSimulation[] = lignesCommandesCaissons.map(l => ({
+      id: l.id,
+      refCommande: l.refCommande,
+      nomClient: l.client,
+      nbPieces: l.quantiteTotalPieces,
+      estPrioritaire: l.estPrioritaire,
+      estEnPause: l.estEnPause,
+      motifPause: l.motifPause,
+      dateEmission: l.dateEmission || l.dateCommande,
+      dossierId: l.dossierId
+    }));
+    const simResCaissons = DelaisProductionService.simulerPlanningFamille('CAISSON', simCaissonItems, params);
 
-    const joursAjoutesCaisson = piecesCaissonsTotal > 0 ? Math.max(0, Math.ceil(piecesCaissonsTotal / capaciteJourCaisson) - 1 + delaiFixeCaisson) : 0;
-    const dateFinCaisson = DelaisProductionService.ajouterJoursOuvres(dateRef, joursAjoutesCaisson, params.joursOuvres);
-    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
-    let dateFinCaissonFinale = dateFinCaisson;
+    // Synchronisation des délais simulés
     lignesCommandesCaissons.forEach(l => {
-      if (l.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(l.dateLivraisonPrevisionnelleISO);
-        if (!isNaN(d.getTime()) && d.getTime() > dateFinCaissonFinale.getTime()) {
-          dateFinCaissonFinale = d;
-        }
+      const planItem = simResCaissons.commandesPlanifiees.find(p => p.id === l.id) || simResCaissons.commandesEnPause.find(p => p.id === l.id);
+      if (planItem) {
+        l.dateLivraisonPrevisionnelle = planItem.texteLivraison;
+        l.dateLivraisonPrevisionnelleISO = planItem.dateLivraisonISO;
+      }
+      l.alerteDelai = DelaisProductionService.evaluerStatutDelai(
+        l.dateLivraisonPrevisionnelle,
+        l.dateLivraisonPrevisionnelleISO,
+        l.dateEmission || l.dateCommande,
+        l.ofStatut
+      );
+    });
+
+    // Ventilation des sous-types Caissons calculée sur les lignes réelles
+    let piecesCaissonsTotal = 0;
+    let piecesCaissons25 = 0;
+    let piecesCaissons30 = 0;
+    let piecesCaissons40 = 0;
+    let piecesCaissonsAutres = 0;
+    const caissons25Set = new Set<string>();
+    const caissons30Set = new Set<string>();
+    const caissons40Set = new Set<string>();
+    const caissonsAutreSet = new Set<string>();
+
+    lignesCommandesCaissons.forEach(l => {
+      piecesCaissonsTotal += l.quantiteTotalPieces;
+      if (l.detailsSousTypes && l.detailsSousTypes.length > 0) {
+        l.detailsSousTypes.forEach(dst => {
+          if (dst.cle === 'CAISSON_25') { piecesCaissons25 += dst.nbPieces; caissons25Set.add(l.refCommande); }
+          else if (dst.cle === 'CAISSON_30') { piecesCaissons30 += dst.nbPieces; caissons30Set.add(l.refCommande); }
+          else if (dst.cle === 'CAISSON_40') { piecesCaissons40 += dst.nbPieces; caissons40Set.add(l.refCommande); }
+          else { piecesCaissonsAutres += dst.nbPieces; caissonsAutreSet.add(l.refCommande); }
+        });
+      } else {
+        if (l.sousTypeCle === 'CAISSON_25') { piecesCaissons25 += l.quantiteTotalPieces; caissons25Set.add(l.refCommande); }
+        else if (l.sousTypeCle === 'CAISSON_30') { piecesCaissons30 += l.quantiteTotalPieces; caissons30Set.add(l.refCommande); }
+        else if (l.sousTypeCle === 'CAISSON_40') { piecesCaissons40 += l.quantiteTotalPieces; caissons40Set.add(l.refCommande); }
+        else { piecesCaissonsAutres += l.quantiteTotalPieces; caissonsAutreSet.add(l.refCommande); }
       }
     });
-    const dateLivraisonCaissonJusquAu = DelaisProductionService.formaterDateLivraison(dateFinCaissonFinale);
 
-    const chargeHeuresCaisson = Math.round(((piecesCaissonsTotal * (configCaisson.tempsUnitaireMinutes || 5)) / 60) * 10) / 10;
-
+    const configCaisson = params.familles.CAISSON;
     const statsCaissons: StatsFamilleMonitoring = {
       famille: 'CAISSON',
       label: 'Caissons & Sous-Faces',
@@ -492,231 +603,271 @@ export class MonitoringService {
         c25: {
           cle: '25',
           label: 'Caisson 25 (250 mm)',
-          nbCommandes: caissons25CommandesSet.size,
+          nbCommandes: caissons25Set.size,
           totalPieces: piecesCaissons25,
           pourcentage: piecesCaissonsTotal > 0 ? Math.round((piecesCaissons25 / piecesCaissonsTotal) * 100) : 0,
-          commandesRefs: Array.from(caissons25CommandesSet)
+          commandesRefs: Array.from(caissons25Set)
         },
         c30: {
           cle: '30',
           label: 'Caisson 30 (300 mm)',
-          nbCommandes: caissons30CommandesSet.size,
+          nbCommandes: caissons30Set.size,
           totalPieces: piecesCaissons30,
           pourcentage: piecesCaissonsTotal > 0 ? Math.round((piecesCaissons30 / piecesCaissonsTotal) * 100) : 0,
-          commandesRefs: Array.from(caissons30CommandesSet)
+          commandesRefs: Array.from(caissons30Set)
         },
         c40: {
           cle: '40',
           label: 'Caisson 40 (400 mm)',
-          nbCommandes: caissons40CommandesSet.size,
+          nbCommandes: caissons40Set.size,
           totalPieces: piecesCaissons40,
           pourcentage: piecesCaissonsTotal > 0 ? Math.round((piecesCaissons40 / piecesCaissonsTotal) * 100) : 0,
-          commandesRefs: Array.from(caissons40CommandesSet)
+          commandesRefs: Array.from(caissons40Set)
         },
         autres: {
           cle: 'AUTRE',
           label: 'Sous-Faces & Autres',
-          nbCommandes: caissonsAutresCommandesSet.size,
+          nbCommandes: caissonsAutreSet.size,
           totalPieces: piecesCaissonsAutres,
           pourcentage: piecesCaissonsTotal > 0 ? Math.round((piecesCaissonsAutres / piecesCaissonsTotal) * 100) : 0,
-          commandesRefs: Array.from(caissonsAutresCommandesSet)
+          commandesRefs: Array.from(caissonsAutreSet)
         }
       },
-      capaciteJournaliere: capaciteJourCaisson,
+      capaciteJournaliere: configCaisson.capaciteJournalierePieces || 120,
       tempsUnitaireMin: configCaisson.tempsUnitaireMinutes || 5,
-      chargeHeuresEstimee: chargeHeuresCaisson,
-      joursOuvresRequis: joursRequisCaisson,
-      dateLivraisonJusquAu: dateLivraisonCaissonJusquAu,
-      dateFinDate: dateFinCaissonFinale,
-      tauxOccupationJour: Math.min(100, Math.round((piecesCaissonsTotal / capaciteJourCaisson) * 100))
+      chargeHeuresEstimee: simResCaissons.chargeHeuresTotale,
+      joursOuvresRequis: simResCaissons.chargeJoursTotal,
+      dateLivraisonJusquAu: simResCaissons.dateFinGlobaleFormattee,
+      dateFinDate: simResCaissons.dateFinGlobale,
+      tauxOccupationJour: Math.min(100, Math.round((piecesCaissonsTotal / (configCaisson.capaciteJournalierePieces || 120)) * 100)),
+      propositionHeuresSup: simResCaissons.propositionHeuresSup
     };
 
     // ────────────────────────────────────────────────────────────────────────
     // 2. EXTRACTION ET VENTILATION DES TABLIERS (43, 55...)
     // ────────────────────────────────────────────────────────────────────────
+    const lignesCommandesTabliers: LigneCommandeMonitoring[] = [];
     const tabliersCommandesSet = new Set<string>();
-    const tabliers43CommandesSet = new Set<string>();
-    const tabliers55CommandesSet = new Set<string>();
-    const tabliersAutresCommandesSet = new Set<string>();
+
+    dossiersActifs.forEach(dossier => {
+      if (!dossier.articlesTabliers || dossier.articlesTabliers.length === 0) return;
+
+      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'TABLIER'));
+      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        return;
+      }
+
+      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
+      let totalPiecesCeDossier = 0;
+      const detailsDescriptions: string[] = [];
+      let sousTypePrincipal: string = '';
+      const sousTypesSet = new Set<string>();
+      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+      dossier.articlesTabliers.forEach(t => {
+        const qte = Number(t.quantite) || 1;
+        totalPiecesCeDossier += qte;
+
+        const classification = this.classifierTablier(t.hauteur_lame_tablier, t.articleDesignation);
+        const stKey = classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE';
+        
+        const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
+        existingSt.nbPieces += qte;
+        typesCountMap.set(stKey, existingSt);
+
+        sousTypesSet.add(stKey);
+        if (!sousTypePrincipal) sousTypePrincipal = classification.label;
+
+        const nomProd = t.articleDesignation || `Tablier Lame ${t.hauteur_lame_tablier || 43}mm`;
+        detailsDescriptions.push(`${qte}x ${nomProd} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
+      });
+
+      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
+        totalPiecesCeDossier = matchingOF.nombrePieces;
+      }
+
+      if (totalPiecesCeDossier <= 0) return;
+      tabliersCommandesSet.add(ref);
+
+      const sousTypesList = Array.from(sousTypesSet);
+      const primaryKey = sousTypePrincipal.includes('55')
+        ? 'TABLIER_55'
+        : sousTypePrincipal.includes('43')
+        ? 'TABLIER_43'
+        : (sousTypesList[0] || 'TABLIER_AUTRE');
+
+      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+
+      lignesCommandesTabliers.push({
+        id: `DOS-TABL-${dossier.id}`,
+        dossierId: dossier.id,
+        refCommande: ref,
+        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+        famille: 'TABLIER',
+        estPrioritaire,
+        estEnPause,
+        motifPause: matchingOF?.motifPause || dossier.motifPause,
+        statutAtelier: estEnPause
+          ? 'EN_PAUSE'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: estEnPause
+          ? 'En Pause'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Assemblage)')
+          : 'En Attente Découpe',
+        typePrecision: sousTypePrincipal || 'Tablier',
+        sousTypeCle: primaryKey,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+        detailsSousTypes: Array.from(typesCountMap.values()),
+        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} tabliers`,
+        quantiteTotalPieces: totalPiecesCeDossier,
+        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+        ofCode: matchingOF?.codeOF,
+        ofStatut: matchingOF?.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
+    });
+
+    // Rapprochement des OFs Tabliers actifs
+    ofsActifs.forEach(of => {
+      if (of.famille !== 'TABLIER') return;
+
+      const matchedLine = lignesCommandesTabliers.find(l => {
+        if (l.dossierId && of.dossierId && l.dossierId === of.dossierId) return true;
+        const r1 = normalizeRef(l.refCommande);
+        const r2 = normalizeRef(of.numCommande);
+        return Boolean(r1 && r2 && (r1 === r2 || (r1.length >= 3 && r2.length >= 3 && (r1.startsWith(r2) || r2.startsWith(r1)))));
+      });
+
+      if (matchedLine) {
+        if (!matchedLine.ofCode && of.codeOF) matchedLine.ofCode = of.codeOF;
+        if (!matchedLine.ofStatut && of.statut) matchedLine.ofStatut = of.statut;
+        if (of.estEnPause) {
+          matchedLine.estEnPause = true;
+          matchedLine.statutAtelier = 'EN_PAUSE';
+          matchedLine.statutBadgeLabel = 'En Pause';
+          matchedLine.motifPause = of.motifPause;
+        }
+        if (of.estPrioritaire) matchedLine.estPrioritaire = true;
+        return;
+      }
+
+      const nbP = DelaisProductionService.compterPiecesOF(of, dossiers);
+      if (nbP <= 0) return;
+      const ref = of.numCommande || of.id;
+      tabliersCommandesSet.add(ref);
+
+      const classification = this.classifierTablier(undefined, of.titreSection);
+      const stCle = classification.cle === '55' ? 'TABLIER_55' : classification.cle === '43' ? 'TABLIER_43' : 'TABLIER_AUTRE';
+      const estEnPause = Boolean(of.estEnPause);
+
+      lignesCommandesTabliers.push({
+        id: `OF-TABL-${of.id}`,
+        dossierId: of.dossierId,
+        refCommande: of.numCommande || of.id,
+        client: of.nomClient || 'Client',
+        donneurOrdre: of.donneurOrdre || 'Atelier',
+        dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        famille: 'TABLIER',
+        estPrioritaire: Boolean(of.estPrioritaire),
+        estEnPause,
+        motifPause: of.motifPause,
+        statutAtelier: estEnPause ? 'EN_PAUSE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
+        statutBadgeLabel: estEnPause ? 'En Pause' : of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Assemblage)',
+        typePrecision: classification.label,
+        sousTypeCle: stCle,
+        sousTypesCles: [stCle],
+        detailsSousTypes: [{ cle: stCle, label: classification.label, nbPieces: nbP }],
+        detailArticles: `${nbP}x ${of.titreSection || 'Tabliers'}`,
+        quantiteTotalPieces: nbP,
+        dateLivraisonPrevisionnelle: of.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO,
+        ofCode: of.codeOF,
+        ofStatut: of.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
+    });
+
+    // Simulation de planning pour les tabliers (Équipe indépendante)
+    const simTablierItems: PlanningItemSimulation[] = lignesCommandesTabliers.map(l => ({
+      id: l.id,
+      refCommande: l.refCommande,
+      nomClient: l.client,
+      nbPieces: l.quantiteTotalPieces,
+      estPrioritaire: l.estPrioritaire,
+      estEnPause: l.estEnPause,
+      motifPause: l.motifPause,
+      dateEmission: l.dateEmission || l.dateCommande,
+      dossierId: l.dossierId
+    }));
+    const simResTabliers = DelaisProductionService.simulerPlanningFamille('TABLIER', simTablierItems, params);
+
+    lignesCommandesTabliers.forEach(l => {
+      const planItem = simResTabliers.commandesPlanifiees.find(p => p.id === l.id) || simResTabliers.commandesEnPause.find(p => p.id === l.id);
+      if (planItem) {
+        l.dateLivraisonPrevisionnelle = planItem.texteLivraison;
+        l.dateLivraisonPrevisionnelleISO = planItem.dateLivraisonISO;
+      }
+      l.alerteDelai = DelaisProductionService.evaluerStatutDelai(
+        l.dateLivraisonPrevisionnelle,
+        l.dateLivraisonPrevisionnelleISO,
+        l.dateEmission || l.dateCommande,
+        l.ofStatut
+      );
+    });
 
     let piecesTabliersTotal = 0;
     let piecesTabliers43 = 0;
     let piecesTabliers55 = 0;
     let piecesTabliersAutres = 0;
+    const tabliers43Set = new Set<string>();
+    const tabliers55Set = new Set<string>();
+    const tabliersAutreSet = new Set<string>();
 
-    const lignesCommandesTabliers: LigneCommandeMonitoring[] = [];
-
-    dossiersActifs.forEach(dossier => {
-      if (!dossier.articlesTabliers || dossier.articlesTabliers.length === 0) return;
-
-      const ref = dossier.refCommande || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal: string = '';
-      const sousTypesSet = new Set<string>();
-
-      dossier.articlesTabliers.forEach(t => {
-        const qte = Number(t.quantite) || 1;
-        totalPiecesCeDossier += qte;
-        piecesTabliersTotal += qte;
-        tabliersCommandesSet.add(ref);
-
-        const classification = this.classifierTablier(t.hauteur_lame_tablier, t.articleDesignation);
-
-        if (classification.cle === '43') {
-          piecesTabliers43 += qte;
-          tabliers43CommandesSet.add(ref);
-          sousTypesSet.add('TABLIER_43');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Lame 43';
-        } else if (classification.cle === '55') {
-          piecesTabliers55 += qte;
-          tabliers55CommandesSet.add(ref);
-          sousTypesSet.add('TABLIER_55');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Lame 55';
-        } else {
-          piecesTabliersAutres += qte;
-          tabliersAutresCommandesSet.add(ref);
-          sousTypesSet.add('TABLIER_AUTRE');
-          if (!sousTypePrincipal) sousTypePrincipal = 'Lame Spéciale';
-        }
-
-        const nomLame = classification.label;
-        detailsDescriptions.push(`${qte}x ${nomLame} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
-      });
-
-      const matchingOF = suivisOF.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeTablier)) &&
-        o.famille === 'TABLIER'
-      );
-
-      const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
-      const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
-      const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-        dossier.dateLivraisonPrevisionnelle || dateLiv,
-        dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        dossier.dateCommande,
-        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
-      );
-
-      const sousTypesList = Array.from(sousTypesSet);
-      const primaryKey = sousTypePrincipal.includes('43')
-        ? 'TABLIER_43'
-        : sousTypePrincipal.includes('55')
-        ? 'TABLIER_55'
-        : (sousTypesList[0] || 'TABLIER_AUTRE');
-
-      lignesCommandesTabliers.push({
-        id: `DOS-TABL-${dossier.id}`,
-        refCommande: dossier.refCommande,
-        client: dossier.nomClientFinal || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'TABLIER',
-        statutAtelier: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? 'OF_CLOTURE'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'RETOUR_SAISI'
-              : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? '✓ OF Clôturé (Fabriqué)'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'Retour Saisi'
-              : 'OF Émis (En Coupe)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Tablier',
-        sousTypeCle: primaryKey,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} tabliers`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dateLiv,
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai
-      });
-    });
-
-    // OFs Tabliers autonomes
-    ofsActifs.forEach(of => {
-      if (of.famille !== 'TABLIER') return;
-
-      const dejaComptabilise = lignesCommandesTabliers.some(l => l.refCommande === of.numCommande);
-      if (!dejaComptabilise) {
-        const nbP = DelaisProductionService.compterPiecesOF(of);
-        const ref = of.numCommande || of.id;
-        piecesTabliersTotal += nbP;
-        tabliersCommandesSet.add(ref);
-
-        const classification = this.classifierTablier(undefined, of.titreSection);
-        if (classification.cle === '43') {
-          piecesTabliers43 += nbP;
-          tabliers43CommandesSet.add(ref);
-        } else if (classification.cle === '55') {
-          piecesTabliers55 += nbP;
-          tabliers55CommandesSet.add(ref);
-        } else {
-          piecesTabliersAutres += nbP;
-          tabliersAutresCommandesSet.add(ref);
-        }
-
-        const delai = DelaisProductionService.estimerDelaiOF(of, ofsActifs, params);
-        const dateLiv = of.dateLivraisonPrevisionnelle || delai.texteFormatte;
-        const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-          dateLiv,
-          of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          of.dateEmission,
-          of.statut
-        );
-
-        lignesCommandesTabliers.push({
-          id: `OF-TABL-${of.id}`,
-          refCommande: of.numCommande,
-          client: of.nomClient || 'Client',
-          donneurOrdre: of.donneurOrdre || 'Atelier',
-          dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
-          famille: 'TABLIER',
-          statutAtelier: of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
-          statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
-          typePrecision: classification.label,
-          sousTypeCle: classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE',
-          sousTypesCles: [classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE'],
-          detailArticles: `${nbP}x ${of.titreSection || 'Tablier'}`,
-          quantiteTotalPieces: nbP,
-          dateLivraisonPrevisionnelle: dateLiv,
-          dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          ofCode: of.codeOF,
-          ofStatut: of.statut,
-          alerteDelai
+    lignesCommandesTabliers.forEach(l => {
+      piecesTabliersTotal += l.quantiteTotalPieces;
+      if (l.detailsSousTypes && l.detailsSousTypes.length > 0) {
+        l.detailsSousTypes.forEach(dst => {
+          if (dst.cle === 'TABLIER_43') { piecesTabliers43 += dst.nbPieces; tabliers43Set.add(l.refCommande); }
+          else if (dst.cle === 'TABLIER_55') { piecesTabliers55 += dst.nbPieces; tabliers55Set.add(l.refCommande); }
+          else { piecesTabliersAutres += dst.nbPieces; tabliersAutreSet.add(l.refCommande); }
         });
+      } else {
+        if (l.sousTypeCle === 'TABLIER_43') { piecesTabliers43 += l.quantiteTotalPieces; tabliers43Set.add(l.refCommande); }
+        else if (l.sousTypeCle === 'TABLIER_55') { piecesTabliers55 += l.quantiteTotalPieces; tabliers55Set.add(l.refCommande); }
+        else { piecesTabliersAutres += l.quantiteTotalPieces; tabliersAutreSet.add(l.refCommande); }
       }
     });
 
     const configTablier = params.familles.TABLIER;
-    const capaciteJourTablier = configTablier.capaciteJournalierePieces || 35;
-    const delaiFixeTablier = configTablier.delaiFixeJours || 0;
-    const joursRequisTablier = piecesTabliersTotal > 0
-      ? Math.max(1, Math.ceil(piecesTabliersTotal / capaciteJourTablier) + delaiFixeTablier)
-      : 1;
-
-    const joursAjoutesTablier = piecesTabliersTotal > 0 ? Math.max(0, Math.ceil(piecesTabliersTotal / capaciteJourTablier) - 1 + delaiFixeTablier) : 0;
-    const dateFinTablier = DelaisProductionService.ajouterJoursOuvres(dateRef, joursAjoutesTablier, params.joursOuvres);
-    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
-    let dateFinTablierFinale = dateFinTablier;
-    lignesCommandesTabliers.forEach(l => {
-      if (l.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(l.dateLivraisonPrevisionnelleISO);
-        if (!isNaN(d.getTime()) && d.getTime() > dateFinTablierFinale.getTime()) {
-          dateFinTablierFinale = d;
-        }
-      }
-    });
-    const dateLivraisonTablierJusquAu = DelaisProductionService.formaterDateLivraison(dateFinTablierFinale);
-
-    const chargeHeuresTablier = Math.round(((piecesTabliersTotal * (configTablier.tempsUnitaireMinutes || 8)) / 60) * 10) / 10;
-
     const statsTabliers: StatsFamilleMonitoring = {
       famille: 'TABLIER',
       label: 'Tabliers Volets Roulants',
@@ -726,66 +877,63 @@ export class MonitoringService {
         l43: {
           cle: '43',
           label: 'Lame 43 mm (ALU / PVC)',
-          nbCommandes: tabliers43CommandesSet.size,
+          nbCommandes: tabliers43Set.size,
           totalPieces: piecesTabliers43,
           pourcentage: piecesTabliersTotal > 0 ? Math.round((piecesTabliers43 / piecesTabliersTotal) * 100) : 0,
-          commandesRefs: Array.from(tabliers43CommandesSet)
+          commandesRefs: Array.from(tabliers43Set)
         },
         l55: {
           cle: '55',
           label: 'Lame 55 mm (ALU / PVC)',
-          nbCommandes: tabliers55CommandesSet.size,
+          nbCommandes: tabliers55Set.size,
           totalPieces: piecesTabliers55,
           pourcentage: piecesTabliersTotal > 0 ? Math.round((piecesTabliers55 / piecesTabliersTotal) * 100) : 0,
-          commandesRefs: Array.from(tabliers55CommandesSet)
+          commandesRefs: Array.from(tabliers55Set)
         },
         autres: {
           cle: 'AUTRE',
           label: 'Autres Lames (39, 77...)',
-          nbCommandes: tabliersAutresCommandesSet.size,
+          nbCommandes: tabliersAutreSet.size,
           totalPieces: piecesTabliersAutres,
           pourcentage: piecesTabliersTotal > 0 ? Math.round((piecesTabliersAutres / piecesTabliersTotal) * 100) : 0,
-          commandesRefs: Array.from(tabliersAutresCommandesSet)
+          commandesRefs: Array.from(tabliersAutreSet)
         }
       },
-      capaciteJournaliere: capaciteJourTablier,
+      capaciteJournaliere: configTablier.capaciteJournalierePieces || 80,
       tempsUnitaireMin: configTablier.tempsUnitaireMinutes || 8,
-      chargeHeuresEstimee: chargeHeuresTablier,
-      joursOuvresRequis: joursRequisTablier,
-      dateLivraisonJusquAu: dateLivraisonTablierJusquAu,
-      dateFinDate: dateFinTablierFinale,
-      tauxOccupationJour: Math.min(100, Math.round((piecesTabliersTotal / capaciteJourTablier) * 100))
+      chargeHeuresEstimee: simResTabliers.chargeHeuresTotale,
+      joursOuvresRequis: simResTabliers.chargeJoursTotal,
+      dateLivraisonJusquAu: simResTabliers.dateFinGlobaleFormattee,
+      dateFinDate: simResTabliers.dateFinGlobale,
+      tauxOccupationJour: Math.min(100, Math.round((piecesTabliersTotal / (configTablier.capaciteJournalierePieces || 80)) * 100)),
+      propositionHeuresSup: simResTabliers.propositionHeuresSup
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // 3. PRÉCADRES & MOUSTIQUAIRES (VENTILATION DÉTAILLÉE PAR TYPES)
+    // 3. PRÉCADRES (VENTILATION DÉTAILLÉE PAR TYPES)
     // ────────────────────────────────────────────────────────────────────────
     const precadresCommandesSet = new Set<string>();
-    const precadres36CommandesSet = new Set<string>();
-    const precadres50CommandesSet = new Set<string>();
-    const precadresAutresCommandesSet = new Set<string>();
-
-    let piecesPrecadresTotal = 0;
-    let piecesPrecadres36 = 0;
-    let piecesPrecadres50 = 0;
-    let piecesPrecadresAutres = 0;
-
     const lignesCommandesPrecadres: LigneCommandeMonitoring[] = [];
 
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesPrecadres || dossier.articlesPrecadres.length === 0) return;
-      const ref = dossier.refCommande || dossier.id;
+
+      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'PRECADRE'));
+      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        return;
+      }
+
+      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
       let totalPiecesCeDossier = 0;
       const detailsDescriptions: string[] = [];
       let sousTypePrincipal = '';
       let sousTypeCode = 'PRECADRE_36';
       const sousTypesSet = new Set<string>();
+      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
 
       dossier.articlesPrecadres.forEach(p => {
         const q = Number(p.quantite) || 1;
         totalPiecesCeDossier += q;
-        piecesPrecadresTotal += q;
-        precadresCommandesSet.add(ref);
 
         const classification = this.classifierPrecadre(
           p.articleDesignation,
@@ -794,508 +942,516 @@ export class MonitoringService {
           p.hauteur
         );
 
-        if (classification.cle === '36') {
-          piecesPrecadres36 += q;
-          precadres36CommandesSet.add(ref);
-          sousTypesSet.add('PRECADRE_36');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'PRECADRE_36';
-          }
-        } else if (classification.cle === '50') {
-          piecesPrecadres50 += q;
-          precadres50CommandesSet.add(ref);
-          sousTypesSet.add('PRECADRE_50');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'PRECADRE_50';
-          }
-        } else {
-          piecesPrecadresAutres += q;
-          precadresAutresCommandesSet.add(ref);
-          sousTypesSet.add('PRECADRE_AUTRE');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'PRECADRE_AUTRE';
-          }
+        const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
+        existingSt.nbPieces += q;
+        typesCountMap.set(classification.codeSousType, existingSt);
+
+        sousTypesSet.add(classification.codeSousType);
+        if (!sousTypePrincipal) {
+          sousTypePrincipal = classification.label;
+          sousTypeCode = classification.codeSousType;
         }
 
-        detailsDescriptions.push(`${q}x ${classification.label} (${p.largeur || 0}x${p.hauteur || 0}mm)`);
+        const nomProd = p.articleDesignation || `Précadre ${classification.cle}mm`;
+        detailsDescriptions.push(`${q}x ${nomProd} (${p.largeur || 0}x${p.hauteur || 0}mm)`);
       });
 
-      const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
-      const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
-      const matchingOF = suivisOF.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandePrecadre)) &&
-        o.famille === 'PRECADRE'
-      );
+      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
+        totalPiecesCeDossier = matchingOF.nombrePieces;
+      }
 
-      const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-        dossier.dateLivraisonPrevisionnelle || dateLiv,
-        dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        dossier.dateCommande,
-        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
-      );
+      if (totalPiecesCeDossier <= 0) return;
+      precadresCommandesSet.add(ref);
 
       const sousTypesList = Array.from(sousTypesSet);
+      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
 
       lignesCommandesPrecadres.push({
         id: `DOS-PREC-${dossier.id}`,
-        refCommande: dossier.refCommande,
-        client: dossier.nomClientFinal || 'Client',
-        donneurOrdre: dossier.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+        dossierId: dossier.id,
+        refCommande: ref,
+        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
         famille: 'PRECADRE',
-        statutAtelier: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? 'OF_CLOTURE'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'RETOUR_SAISI'
-              : 'OF_EMIS')
+        estPrioritaire,
+        estEnPause,
+        motifPause: matchingOF?.motifPause || dossier.motifPause,
+        statutAtelier: estEnPause
+          ? 'EN_PAUSE'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
           : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? '✓ OF Clôturé (Fabriqué)'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'Retour Saisi'
-              : 'OF Émis (En Coupe)')
+        statutBadgeLabel: estEnPause
+          ? 'En Pause'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
           : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Précadre Type 36',
+        typePrecision: sousTypePrincipal || 'Précadre',
         sousTypeCle: sousTypeCode,
         sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} précadre(s)`,
+        detailsSousTypes: Array.from(typesCountMap.values()),
+        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} précadres`,
         quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dateLiv,
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
+        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
         ofCode: matchingOF?.codeOF,
         ofStatut: matchingOF?.statut,
-        alerteDelai
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
       });
     });
 
-    // OFs Précadres autonomes
+    // Rapprochement des OFs Précadres actifs
     ofsActifs.forEach(of => {
       if (of.famille !== 'PRECADRE') return;
-      const dejaComptabilise = lignesCommandesPrecadres.some(l => l.refCommande === of.numCommande);
-      if (!dejaComptabilise) {
-        const nbP = DelaisProductionService.compterPiecesOF(of);
-        const ref = of.numCommande || of.id;
-        piecesPrecadresTotal += nbP;
-        precadresCommandesSet.add(ref);
 
-        const classification = this.classifierPrecadre(of.titreSection);
-        if (classification.cle === '36') {
-          piecesPrecadres36 += nbP;
-          precadres36CommandesSet.add(ref);
-        } else if (classification.cle === '50') {
-          piecesPrecadres50 += nbP;
-          precadres50CommandesSet.add(ref);
-        } else {
-          piecesPrecadresAutres += nbP;
-          precadresAutresCommandesSet.add(ref);
+      const matchedLine = lignesCommandesPrecadres.find(l => {
+        if (l.dossierId && of.dossierId && l.dossierId === of.dossierId) return true;
+        const r1 = normalizeRef(l.refCommande);
+        const r2 = normalizeRef(of.numCommande);
+        return Boolean(r1 && r2 && (r1 === r2 || (r1.length >= 3 && r2.length >= 3 && (r1.startsWith(r2) || r2.startsWith(r1)))));
+      });
+
+      if (matchedLine) {
+        if (!matchedLine.ofCode && of.codeOF) matchedLine.ofCode = of.codeOF;
+        if (!matchedLine.ofStatut && of.statut) matchedLine.ofStatut = of.statut;
+        if (of.estEnPause) {
+          matchedLine.estEnPause = true;
+          matchedLine.statutAtelier = 'EN_PAUSE';
+          matchedLine.statutBadgeLabel = 'En Pause';
+          matchedLine.motifPause = of.motifPause;
         }
+        if (of.estPrioritaire) matchedLine.estPrioritaire = true;
+        return;
+      }
 
-        const delai = DelaisProductionService.estimerDelaiOF(of, ofsActifs, params);
-        const dateLiv = of.dateLivraisonPrevisionnelle || delai.texteFormatte;
-        const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-          dateLiv,
-          of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          of.dateEmission,
-          of.statut
-        );
+      const nbP = DelaisProductionService.compterPiecesOF(of, dossiers);
+      if (nbP <= 0) return;
+      const ref = of.numCommande || of.id;
+      precadresCommandesSet.add(ref);
 
-        lignesCommandesPrecadres.push({
-          id: `OF-PREC-${of.id}`,
-          refCommande: of.numCommande,
-          client: of.nomClient || 'Client',
-          donneurOrdre: of.donneurOrdre || 'Atelier',
-          dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
-          famille: 'PRECADRE',
-          statutAtelier: of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
-          statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
-          typePrecision: classification.label,
-          sousTypeCle: classification.codeSousType,
-          sousTypesCles: [classification.codeSousType],
-          detailArticles: `${nbP}x ${of.titreSection || 'Précadres'}`,
-          quantiteTotalPieces: nbP,
-          dateLivraisonPrevisionnelle: dateLiv,
-          dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          ofCode: of.codeOF,
-          ofStatut: of.statut,
-          alerteDelai
+      const classification = this.classifierPrecadre(of.titreSection);
+      const estEnPause = Boolean(of.estEnPause);
+
+      lignesCommandesPrecadres.push({
+        id: `OF-PREC-${of.id}`,
+        dossierId: of.dossierId,
+        refCommande: of.numCommande || of.id,
+        client: of.nomClient || 'Client',
+        donneurOrdre: of.donneurOrdre || 'Atelier',
+        dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        famille: 'PRECADRE',
+        estPrioritaire: Boolean(of.estPrioritaire),
+        estEnPause,
+        motifPause: of.motifPause,
+        statutAtelier: estEnPause ? 'EN_PAUSE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
+        statutBadgeLabel: estEnPause ? 'En Pause' : of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
+        typePrecision: classification.label,
+        sousTypeCle: classification.codeSousType,
+        sousTypesCles: [classification.codeSousType],
+        detailsSousTypes: [{ cle: classification.codeSousType, label: classification.label, nbPieces: nbP }],
+        detailArticles: `${nbP}x ${of.titreSection || 'Précadres'}`,
+        quantiteTotalPieces: nbP,
+        dateLivraisonPrevisionnelle: of.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO,
+        ofCode: of.codeOF,
+        ofStatut: of.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
+    });
+
+    // Simulation de planning pour les précadres (Équipe indépendante)
+    const simPrecadreItems: PlanningItemSimulation[] = lignesCommandesPrecadres.map(l => ({
+      id: l.id,
+      refCommande: l.refCommande,
+      nomClient: l.client,
+      nbPieces: l.quantiteTotalPieces,
+      estPrioritaire: l.estPrioritaire,
+      estEnPause: l.estEnPause,
+      motifPause: l.motifPause,
+      dateEmission: l.dateEmission || l.dateCommande,
+      dossierId: l.dossierId
+    }));
+    const simResPrecadres = DelaisProductionService.simulerPlanningFamille('PRECADRE', simPrecadreItems, params);
+
+    lignesCommandesPrecadres.forEach(l => {
+      const planItem = simResPrecadres.commandesPlanifiees.find(p => p.id === l.id) || simResPrecadres.commandesEnPause.find(p => p.id === l.id);
+      if (planItem) {
+        l.dateLivraisonPrevisionnelle = planItem.texteLivraison;
+        l.dateLivraisonPrevisionnelleISO = planItem.dateLivraisonISO;
+      }
+      l.alerteDelai = DelaisProductionService.evaluerStatutDelai(
+        l.dateLivraisonPrevisionnelle,
+        l.dateLivraisonPrevisionnelleISO,
+        l.dateEmission || l.dateCommande,
+        l.ofStatut
+      );
+    });
+
+    let piecesPrecadresTotal = 0;
+    let piecesPrecadres36 = 0;
+    let piecesPrecadres50 = 0;
+    let piecesPrecadresAutres = 0;
+    const precadres36Set = new Set<string>();
+    const precadres50Set = new Set<string>();
+    const precadresAutreSet = new Set<string>();
+
+    lignesCommandesPrecadres.forEach(l => {
+      piecesPrecadresTotal += l.quantiteTotalPieces;
+      if (l.detailsSousTypes && l.detailsSousTypes.length > 0) {
+        l.detailsSousTypes.forEach(dst => {
+          if (dst.cle === 'PRECADRE_36') { piecesPrecadres36 += dst.nbPieces; precadres36Set.add(l.refCommande); }
+          else if (dst.cle === 'PRECADRE_50') { piecesPrecadres50 += dst.nbPieces; precadres50Set.add(l.refCommande); }
+          else { piecesPrecadresAutres += dst.nbPieces; precadresAutreSet.add(l.refCommande); }
         });
+      } else {
+        if (l.sousTypeCle === 'PRECADRE_36') { piecesPrecadres36 += l.quantiteTotalPieces; precadres36Set.add(l.refCommande); }
+        else if (l.sousTypeCle === 'PRECADRE_50') { piecesPrecadres50 += l.quantiteTotalPieces; precadres50Set.add(l.refCommande); }
+        else { piecesPrecadresAutres += l.quantiteTotalPieces; precadresAutreSet.add(l.refCommande); }
       }
     });
 
     const configPrecadre = params.familles.PRECADRE;
-    const capPrecadre = configPrecadre.capaciteJournalierePieces || 20;
-    const jPrecadre = piecesPrecadresTotal > 0 ? Math.max(1, Math.ceil(piecesPrecadresTotal / capPrecadre)) : 1;
-    const dateFinPrecadre = DelaisProductionService.ajouterJoursOuvres(dateRef, jPrecadre, params.joursOuvres);
-    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
-    let dateFinPrecadreFinale = dateFinPrecadre;
-    lignesCommandesPrecadres.forEach(l => {
-      if (l.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(l.dateLivraisonPrevisionnelleISO);
-        if (!isNaN(d.getTime()) && d.getTime() > dateFinPrecadreFinale.getTime()) {
-          dateFinPrecadreFinale = d;
-        }
-      }
-    });
-    const dateLivraisonPrecadreJusquAu = DelaisProductionService.formaterDateLivraison(dateFinPrecadreFinale);
-
     const statsPrecadres: StatsFamilleMonitoring = {
       famille: 'PRECADRE',
-      label: 'Précadres Aluminium',
+      label: 'Précadres & Profilés',
       nbCommandesEnCours: precadresCommandesSet.size,
       totalPiecesEnCours: piecesPrecadresTotal,
       detailsPrecadres: {
         p36: {
           cle: '36',
-          label: 'Type 36 (36 mm Standard)',
-          nbCommandes: precadres36CommandesSet.size,
+          label: 'Précadre 36 mm',
+          nbCommandes: precadres36Set.size,
           totalPieces: piecesPrecadres36,
           pourcentage: piecesPrecadresTotal > 0 ? Math.round((piecesPrecadres36 / piecesPrecadresTotal) * 100) : 0,
-          commandesRefs: Array.from(precadres36CommandesSet)
+          commandesRefs: Array.from(precadres36Set)
         },
         p50: {
           cle: '50',
-          label: 'Type 50 (50 mm Renforcé)',
-          nbCommandes: precadres50CommandesSet.size,
+          label: 'Précadre 50 mm',
+          nbCommandes: precadres50Set.size,
           totalPieces: piecesPrecadres50,
           pourcentage: piecesPrecadresTotal > 0 ? Math.round((piecesPrecadres50 / piecesPrecadresTotal) * 100) : 0,
-          commandesRefs: Array.from(precadres50CommandesSet)
+          commandesRefs: Array.from(precadres50Set)
         },
         autres: {
           cle: 'AUTRE',
-          label: 'Profils Spéciaux / Sur-mesure',
-          nbCommandes: precadresAutresCommandesSet.size,
+          label: 'Autres Profilés',
+          nbCommandes: precadresAutreSet.size,
           totalPieces: piecesPrecadresAutres,
           pourcentage: piecesPrecadresTotal > 0 ? Math.round((piecesPrecadresAutres / piecesPrecadresTotal) * 100) : 0,
-          commandesRefs: Array.from(precadresAutresCommandesSet)
+          commandesRefs: Array.from(precadresAutreSet)
         }
       },
-      detailsGeneriques: [
-        {
-          cle: 'PRECADRE_36',
-          label: 'Précadre Type 36',
-          nbCommandes: precadres36CommandesSet.size,
-          totalPieces: piecesPrecadres36,
-          pourcentage: piecesPrecadresTotal > 0 ? Math.round((piecesPrecadres36 / piecesPrecadresTotal) * 100) : 0,
-          commandesRefs: Array.from(precadres36CommandesSet)
-        },
-        {
-          cle: 'PRECADRE_50',
-          label: 'Précadre Type 50',
-          nbCommandes: precadres50CommandesSet.size,
-          totalPieces: piecesPrecadres50,
-          pourcentage: piecesPrecadresTotal > 0 ? Math.round((piecesPrecadres50 / piecesPrecadresTotal) * 100) : 0,
-          commandesRefs: Array.from(precadres50CommandesSet)
-        }
-      ],
-      capaciteJournaliere: capPrecadre,
-      tempsUnitaireMin: configPrecadre.tempsUnitaireMinutes || 12,
-      chargeHeuresEstimee: Math.round(((piecesPrecadresTotal * (configPrecadre.tempsUnitaireMinutes || 12)) / 60) * 10) / 10,
-      joursOuvresRequis: jPrecadre,
-      dateLivraisonJusquAu: dateLivraisonPrecadreJusquAu,
-      dateFinDate: dateFinPrecadreFinale,
-      tauxOccupationJour: Math.min(100, Math.round((piecesPrecadresTotal / capPrecadre) * 100))
+      capaciteJournaliere: configPrecadre.capaciteJournalierePieces || 50,
+      tempsUnitaireMin: configPrecadre.tempsUnitaireMinutes || 10,
+      chargeHeuresEstimee: simResPrecadres.chargeHeuresTotale,
+      joursOuvresRequis: simResPrecadres.chargeJoursTotal,
+      dateLivraisonJusquAu: simResPrecadres.dateFinGlobaleFormattee,
+      dateFinDate: simResPrecadres.dateFinGlobale,
+      tauxOccupationJour: Math.min(100, Math.round((piecesPrecadresTotal / (configPrecadre.capaciteJournalierePieces || 50)) * 100)),
+      propositionHeuresSup: simResPrecadres.propositionHeuresSup
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // MOUSTIQUAIRES (PORTE-FENÊTRE, FENÊTRE, DOUBLE VANTAUX, FIXE)
+    // 4. EXTRACTION ET VENTILATION DES MOUSTIQUAIRES (ENROULABLES, PLISSÉES...)
     // ────────────────────────────────────────────────────────────────────────
     const mstqCommandesSet = new Set<string>();
-    const mstqPFCommandesSet = new Set<string>();
-    const mstqFenCommandesSet = new Set<string>();
-    const mstqDVCommandesSet = new Set<string>();
-    const mstqFixeCommandesSet = new Set<string>();
-    const mstqAutresCommandesSet = new Set<string>();
+    const lignesCommandesMstq: LigneCommandeMonitoring[] = [];
+
+    dossiersActifs.forEach(dossier => {
+      if (!dossier.articlesMoustiquaires || dossier.articlesMoustiquaires.length === 0) return;
+
+      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'MOUSTIQUAIRE'));
+      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        return;
+      }
+
+      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
+      let totalPiecesCeDossier = 0;
+      const detailsDescriptions: string[] = [];
+      let sousTypePrincipal = '';
+      let sousTypeCode = 'MSTQ_ENROULABLE';
+      const sousTypesSet = new Set<string>();
+      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+      dossier.articlesMoustiquaires.forEach(m => {
+        const q = Number(m.quantite) || 1;
+        totalPiecesCeDossier += q;
+
+        const classification = this.classifierMoustiquaire(
+          m.typeOuverture,
+          m.articleDesignation,
+          m.modele
+        );
+
+        const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
+        existingSt.nbPieces += q;
+        typesCountMap.set(classification.codeSousType, existingSt);
+
+        sousTypesSet.add(classification.codeSousType);
+        if (!sousTypePrincipal) {
+          sousTypePrincipal = classification.label;
+          sousTypeCode = classification.codeSousType;
+        }
+
+        const nomProd = m.articleDesignation || classification.label;
+        detailsDescriptions.push(`${q}x ${nomProd} (${m.largeur || 0}x${m.hauteur || 0}mm)`);
+      });
+
+      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
+        totalPiecesCeDossier = matchingOF.nombrePieces;
+      }
+
+      if (totalPiecesCeDossier <= 0) return;
+      mstqCommandesSet.add(ref);
+
+      const sousTypesList = Array.from(sousTypesSet);
+      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+
+      lignesCommandesMstq.push({
+        id: `DOS-MSTQ-${dossier.id}`,
+        dossierId: dossier.id,
+        refCommande: ref,
+        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+        famille: 'MOUSTIQUAIRE',
+        estPrioritaire,
+        estEnPause,
+        motifPause: matchingOF?.motifPause || dossier.motifPause,
+        statutAtelier: estEnPause
+          ? 'EN_PAUSE'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+          : 'EN_ATTENTE_COUPE',
+        statutBadgeLabel: estEnPause
+          ? 'En Pause'
+          : matchingOF
+          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
+          : 'En Attente Découpe',
+        typePrecision: sousTypePrincipal || 'Moustiquaire',
+        sousTypeCle: sousTypeCode,
+        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
+        detailsSousTypes: Array.from(typesCountMap.values()),
+        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} moustiquaires`,
+        quantiteTotalPieces: totalPiecesCeDossier,
+        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+        ofCode: matchingOF?.codeOF,
+        ofStatut: matchingOF?.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
+    });
+
+    // Rapprochement des OFs Moustiquaires actifs
+    ofsActifs.forEach(of => {
+      if (of.famille !== 'MOUSTIQUAIRE') return;
+
+      const matchedLine = lignesCommandesMstq.find(l => {
+        if (l.dossierId && of.dossierId && l.dossierId === of.dossierId) return true;
+        const r1 = normalizeRef(l.refCommande);
+        const r2 = normalizeRef(of.numCommande);
+        return Boolean(r1 && r2 && (r1 === r2 || (r1.length >= 3 && r2.length >= 3 && (r1.startsWith(r2) || r2.startsWith(r1)))));
+      });
+
+      if (matchedLine) {
+        if (!matchedLine.ofCode && of.codeOF) matchedLine.ofCode = of.codeOF;
+        if (!matchedLine.ofStatut && of.statut) matchedLine.ofStatut = of.statut;
+        if (of.estEnPause) {
+          matchedLine.estEnPause = true;
+          matchedLine.statutAtelier = 'EN_PAUSE';
+          matchedLine.statutBadgeLabel = 'En Pause';
+          matchedLine.motifPause = of.motifPause;
+        }
+        if (of.estPrioritaire) matchedLine.estPrioritaire = true;
+        return;
+      }
+
+      const nbP = DelaisProductionService.compterPiecesOF(of, dossiers);
+      if (nbP <= 0) return;
+      const ref = of.numCommande || of.id;
+      mstqCommandesSet.add(ref);
+
+      const classification = this.classifierMoustiquaire(of.titreSection);
+      const estEnPause = Boolean(of.estEnPause);
+
+      lignesCommandesMstq.push({
+        id: `OF-MSTQ-${of.id}`,
+        dossierId: of.dossierId,
+        refCommande: of.numCommande || of.id,
+        client: of.nomClient || 'Client',
+        donneurOrdre: of.donneurOrdre || 'Atelier',
+        dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        dateEmission: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
+        famille: 'MOUSTIQUAIRE',
+        estPrioritaire: Boolean(of.estPrioritaire),
+        estEnPause,
+        motifPause: of.motifPause,
+        statutAtelier: estEnPause ? 'EN_PAUSE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
+        statutBadgeLabel: estEnPause ? 'En Pause' : of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
+        typePrecision: classification.label,
+        sousTypeCle: classification.codeSousType,
+        sousTypesCles: [classification.codeSousType],
+        detailsSousTypes: [{ cle: classification.codeSousType, label: classification.label, nbPieces: nbP }],
+        detailArticles: `${nbP}x ${of.titreSection || 'Moustiquaires'}`,
+        quantiteTotalPieces: nbP,
+        dateLivraisonPrevisionnelle: of.dateLivraisonPrevisionnelle || '',
+        dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO,
+        ofCode: of.codeOF,
+        ofStatut: of.statut,
+        alerteDelai: {
+          statutDelai: 'DANS_LES_TEMPS',
+          joursDeRetard: 0,
+          estDepasse: false,
+          estRetardCritique: false,
+          texteAlerte: 'Dans les temps',
+          badgeLabel: '✓ Dans les délais',
+          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+          ligneClasses: '',
+          flagEmoji: '✓'
+        }
+      });
+    });
+
+    // Simulation de planning pour les moustiquaires (Équipe indépendante)
+    const simMstqItems: PlanningItemSimulation[] = lignesCommandesMstq.map(l => ({
+      id: l.id,
+      refCommande: l.refCommande,
+      nomClient: l.client,
+      nbPieces: l.quantiteTotalPieces,
+      estPrioritaire: l.estPrioritaire,
+      estEnPause: l.estEnPause,
+      motifPause: l.motifPause,
+      dateEmission: l.dateEmission || l.dateCommande,
+      dossierId: l.dossierId
+    }));
+    const simResMstq = DelaisProductionService.simulerPlanningFamille('MOUSTIQUAIRE', simMstqItems, params);
+
+    lignesCommandesMstq.forEach(l => {
+      const planItem = simResMstq.commandesPlanifiees.find(p => p.id === l.id) || simResMstq.commandesEnPause.find(p => p.id === l.id);
+      if (planItem) {
+        l.dateLivraisonPrevisionnelle = planItem.texteLivraison;
+        l.dateLivraisonPrevisionnelleISO = planItem.dateLivraisonISO;
+      }
+      l.alerteDelai = DelaisProductionService.evaluerStatutDelai(
+        l.dateLivraisonPrevisionnelle,
+        l.dateLivraisonPrevisionnelleISO,
+        l.dateEmission || l.dateCommande,
+        l.ofStatut
+      );
+    });
 
     let piecesMstqTotal = 0;
     let piecesMstqPF = 0;
     let piecesMstqFen = 0;
     let piecesMstqDV = 0;
     let piecesMstqFixe = 0;
-    let piecesMstqAutres = 0;
+    const mstqPFSet = new Set<string>();
+    const mstqFenSet = new Set<string>();
+    const mstqDVSet = new Set<string>();
+    const mstqFixeSet = new Set<string>();
 
-    const lignesCommandesMstq: LigneCommandeMonitoring[] = [];
-
-    dossiersActifs.forEach(dossier => {
-      if (!dossier.articlesMoustiquaires || dossier.articlesMoustiquaires.length === 0) return;
-      const ref = dossier.refCommande || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal = '';
-      let sousTypeCode = 'MSTQ_FENETRE';
-      const sousTypesSet = new Set<string>();
-
-      dossier.articlesMoustiquaires.forEach(m => {
-        const q = Number(m.quantite) || 1;
-        totalPiecesCeDossier += q;
-        piecesMstqTotal += q;
-        mstqCommandesSet.add(ref);
-
-        const classification = this.classifierMoustiquaire(m.typeOuverture, m.articleDesignationCadre || m.articleDesignation || m.articleDesignationCoulisse, m.modele);
-
-        if (classification.cle === 'PORTE_FENETRE') {
-          piecesMstqPF += q;
-          mstqPFCommandesSet.add(ref);
-          sousTypesSet.add('MSTQ_PORTE_FENETRE');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'MSTQ_PORTE_FENETRE';
-          }
-        } else if (classification.cle === 'FENETRE') {
-          piecesMstqFen += q;
-          mstqFenCommandesSet.add(ref);
-          sousTypesSet.add('MSTQ_FENETRE');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'MSTQ_FENETRE';
-          }
-        } else if (classification.cle === 'DOUBLE_VANTAUX') {
-          piecesMstqDV += q;
-          mstqDVCommandesSet.add(ref);
-          sousTypesSet.add('MSTQ_DOUBLE_VANTAUX');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'MSTQ_DOUBLE_VANTAUX';
-          }
-        } else if (classification.cle === 'FIXE') {
-          piecesMstqFixe += q;
-          mstqFixeCommandesSet.add(ref);
-          sousTypesSet.add('MSTQ_FIXE');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'MSTQ_FIXE';
-          }
-        } else {
-          piecesMstqAutres += q;
-          mstqAutresCommandesSet.add(ref);
-          sousTypesSet.add('MSTQ_AUTRE');
-          if (!sousTypePrincipal) {
-            sousTypePrincipal = classification.label;
-            sousTypeCode = 'MSTQ_AUTRE';
-          }
-        }
-
-        detailsDescriptions.push(`${q}x ${classification.label} (${m.largeur || 0}x${m.hauteur || 0}mm)`);
-      });
-
-      const delaiInfo = DelaisProductionService.estimerDelaiDossier(dossier, dossiersActifs, ofsActifs, params);
-      const dateLiv = dossier.dateLivraisonPrevisionnelle || delaiInfo.dateLivraisonFormattee;
-      const matchingOF = suivisOF.find(o =>
-        (o.numCommande && (o.numCommande === dossier.refCommande || o.numCommande === dossier.numCommandeMoustiquaire)) &&
-        o.famille === 'MOUSTIQUAIRE'
-      );
-
-      const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-        dossier.dateLivraisonPrevisionnelle || dateLiv,
-        dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        dossier.dateCommande,
-        matchingOF?.statut === 'CLOTURE' ? 'CLOTURE' : dossier.statut
-      );
-
-      const sousTypesList = Array.from(sousTypesSet);
-
-      lignesCommandesMstq.push({
-        id: `DOS-MSTQ-${dossier.id}`,
-        refCommande: dossier.refCommande,
-        client: dossier.nomClientFinal || 'Client',
-        donneurOrdre: dossier.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'MOUSTIQUAIRE',
-        statutAtelier: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? 'OF_CLOTURE'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'RETOUR_SAISI'
-              : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: matchingOF
-          ? (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE'
-              ? '✓ OF Clôturé (Fabriqué)'
-              : matchingOF.statut === 'RETOUR_EN_ATTENTE'
-              ? 'Retour Saisi'
-              : 'OF Émis (En Coupe)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Moustiquaire Plissée',
-        sousTypeCle: sousTypeCode,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} moustiquaire(s)`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dateLiv,
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO || delaiInfo.dateLivraisonISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai
-      });
-    });
-
-    // OFs Moustiquaires autonomes
-    ofsActifs.forEach(of => {
-      if (of.famille !== 'MOUSTIQUAIRE') return;
-      const dejaComptabilise = lignesCommandesMstq.some(l => l.refCommande === of.numCommande);
-      if (!dejaComptabilise) {
-        const nbP = DelaisProductionService.compterPiecesOF(of);
-        const ref = of.numCommande || of.id;
-        piecesMstqTotal += nbP;
-        mstqCommandesSet.add(ref);
-
-        const classification = this.classifierMoustiquaire(undefined, of.titreSection);
-        if (classification.cle === 'PORTE_FENETRE') {
-          piecesMstqPF += nbP;
-          mstqPFCommandesSet.add(ref);
-        } else if (classification.cle === 'FENETRE') {
-          piecesMstqFen += nbP;
-          mstqFenCommandesSet.add(ref);
-        } else if (classification.cle === 'DOUBLE_VANTAUX') {
-          piecesMstqDV += nbP;
-          mstqDVCommandesSet.add(ref);
-        } else if (classification.cle === 'FIXE') {
-          piecesMstqFixe += nbP;
-          mstqFixeCommandesSet.add(ref);
-        } else {
-          piecesMstqAutres += nbP;
-          mstqAutresCommandesSet.add(ref);
-        }
-
-        const delai = DelaisProductionService.estimerDelaiOF(of, ofsActifs, params);
-        const dateLiv = of.dateLivraisonPrevisionnelle || delai.texteFormatte;
-        const alerteDelai = DelaisProductionService.evaluerStatutDelai(
-          dateLiv,
-          of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          of.dateEmission,
-          of.statut
-        );
-
-        lignesCommandesMstq.push({
-          id: `OF-MSTQ-${of.id}`,
-          refCommande: of.numCommande,
-          client: of.nomClient || 'Client',
-          donneurOrdre: of.donneurOrdre || 'Atelier',
-          dateCommande: of.dateEmission || new Date().toLocaleDateString('fr-FR'),
-          famille: 'MOUSTIQUAIRE',
-          statutAtelier: of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
-          statutBadgeLabel: of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
-          typePrecision: classification.label,
-          sousTypeCle: classification.codeSousType,
-          sousTypesCles: [classification.codeSousType],
-          detailArticles: `${nbP}x ${of.titreSection || 'Moustiquaires'}`,
-          quantiteTotalPieces: nbP,
-          dateLivraisonPrevisionnelle: dateLiv,
-          dateLivraisonPrevisionnelleISO: of.dateLivraisonPrevisionnelleISO || delai.dateLivraisonISO,
-          ofCode: of.codeOF,
-          ofStatut: of.statut,
-          alerteDelai
+    lignesCommandesMstq.forEach(l => {
+      piecesMstqTotal += l.quantiteTotalPieces;
+      if (l.detailsSousTypes && l.detailsSousTypes.length > 0) {
+        l.detailsSousTypes.forEach(dst => {
+          if (dst.cle.includes('PORTE_FENETRE')) { piecesMstqPF += dst.nbPieces; mstqPFSet.add(l.refCommande); }
+          else if (dst.cle.includes('DOUBLE_VANTAUX')) { piecesMstqDV += dst.nbPieces; mstqDVSet.add(l.refCommande); }
+          else if (dst.cle.includes('FIXE')) { piecesMstqFixe += dst.nbPieces; mstqFixeSet.add(l.refCommande); }
+          else { piecesMstqFen += dst.nbPieces; mstqFenSet.add(l.refCommande); }
         });
+      } else {
+        if (l.sousTypeCle.includes('PORTE_FENETRE')) { piecesMstqPF += l.quantiteTotalPieces; mstqPFSet.add(l.refCommande); }
+        else if (l.sousTypeCle.includes('DOUBLE_VANTAUX')) { piecesMstqDV += l.quantiteTotalPieces; mstqDVSet.add(l.refCommande); }
+        else if (l.sousTypeCle.includes('FIXE')) { piecesMstqFixe += l.quantiteTotalPieces; mstqFixeSet.add(l.refCommande); }
+        else { piecesMstqFen += l.quantiteTotalPieces; mstqFenSet.add(l.refCommande); }
       }
     });
 
     const configMstq = params.familles.MOUSTIQUAIRE;
-    const capMstq = configMstq.capaciteJournalierePieces || 15;
-    const jMstq = piecesMstqTotal > 0 ? Math.max(1, Math.ceil(piecesMstqTotal / capMstq)) : 1;
-    const dateFinMstq = DelaisProductionService.ajouterJoursOuvres(dateRef, jMstq, params.joursOuvres);
-    // 💡 Synchroniser l'échéance affichée sur la carte avec le délai maximum réel des OFs et commandes de la file
-    let dateFinMstqFinale = dateFinMstq;
-    lignesCommandesMstq.forEach(l => {
-      if (l.dateLivraisonPrevisionnelleISO) {
-        const d = new Date(l.dateLivraisonPrevisionnelleISO);
-        if (!isNaN(d.getTime()) && d.getTime() > dateFinMstqFinale.getTime()) {
-          dateFinMstqFinale = d;
-        }
-      }
-    });
-    const dateLivraisonMstqJusquAu = DelaisProductionService.formaterDateLivraison(dateFinMstqFinale);
-
     const statsMoustiquaires: StatsFamilleMonitoring = {
       famille: 'MOUSTIQUAIRE',
-      label: 'Moustiquaires Plissées & Cadres',
+      label: 'Moustiquaires',
       nbCommandesEnCours: mstqCommandesSet.size,
       totalPiecesEnCours: piecesMstqTotal,
-      detailsMoustiquaires: {
-        porteFenetre: {
-          cle: 'PORTE_FENETRE',
-          label: 'Porte-Fenêtre',
-          nbCommandes: mstqPFCommandesSet.size,
-          totalPieces: piecesMstqPF,
-          pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqPF / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqPFCommandesSet)
-        },
-        fenetre: {
-          cle: 'FENETRE',
-          label: 'Fenêtre (1 Vantail)',
-          nbCommandes: mstqFenCommandesSet.size,
-          totalPieces: piecesMstqFen,
-          pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqFen / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqFenCommandesSet)
-        },
-        doubleVantaux: {
-          cle: 'DOUBLE_VANTAUX',
-          label: 'Double Vantaux (Double Vento)',
-          nbCommandes: mstqDVCommandesSet.size,
-          totalPieces: piecesMstqDV,
-          pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqDV / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqDVCommandesSet)
-        },
-        fixe: {
-          cle: 'FIXE',
-          label: 'Cadre Fixe',
-          nbCommandes: mstqFixeCommandesSet.size,
-          totalPieces: piecesMstqFixe,
-          pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqFixe / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqFixeCommandesSet)
-        },
-        autres: {
-          cle: 'AUTRE',
-          label: 'Autres Moustiquaires',
-          nbCommandes: mstqAutresCommandesSet.size,
-          totalPieces: piecesMstqAutres,
-          pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqAutres / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqAutresCommandesSet)
-        }
-      },
       detailsGeneriques: [
         {
           cle: 'MSTQ_PORTE_FENETRE',
           label: 'Porte-Fenêtre',
-          nbCommandes: mstqPFCommandesSet.size,
+          nbCommandes: mstqPFSet.size,
           totalPieces: piecesMstqPF,
           pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqPF / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqPFCommandesSet)
+          commandesRefs: Array.from(mstqPFSet)
         },
         {
           cle: 'MSTQ_FENETRE',
           label: 'Fenêtre',
-          nbCommandes: mstqFenCommandesSet.size,
+          nbCommandes: mstqFenSet.size,
           totalPieces: piecesMstqFen,
           pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqFen / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqFenCommandesSet)
+          commandesRefs: Array.from(mstqFenSet)
         },
         {
           cle: 'MSTQ_DOUBLE_VANTAUX',
           label: 'Double Vantaux',
-          nbCommandes: mstqDVCommandesSet.size,
+          nbCommandes: mstqDVSet.size,
           totalPieces: piecesMstqDV,
           pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqDV / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqDVCommandesSet)
+          commandesRefs: Array.from(mstqDVSet)
         },
         {
           cle: 'MSTQ_FIXE',
           label: 'Cadre Fixe',
-          nbCommandes: mstqFixeCommandesSet.size,
+          nbCommandes: mstqFixeSet.size,
           totalPieces: piecesMstqFixe,
           pourcentage: piecesMstqTotal > 0 ? Math.round((piecesMstqFixe / piecesMstqTotal) * 100) : 0,
-          commandesRefs: Array.from(mstqFixeCommandesSet)
+          commandesRefs: Array.from(mstqFixeSet)
         }
       ],
-      capaciteJournaliere: capMstq,
+      capaciteJournaliere: configMstq.capaciteJournalierePieces || 30,
       tempsUnitaireMin: configMstq.tempsUnitaireMinutes || 15,
-      chargeHeuresEstimee: Math.round(((piecesMstqTotal * (configMstq.tempsUnitaireMinutes || 15)) / 60) * 10) / 10,
-      joursOuvresRequis: jMstq,
-      dateLivraisonJusquAu: dateLivraisonMstqJusquAu,
-      dateFinDate: dateFinMstqFinale,
-      tauxOccupationJour: Math.min(100, Math.round((piecesMstqTotal / capMstq) * 100))
+      chargeHeuresEstimee: simResMstq.chargeHeuresTotale,
+      joursOuvresRequis: simResMstq.chargeJoursTotal,
+      dateLivraisonJusquAu: simResMstq.dateFinGlobaleFormattee,
+      dateFinDate: simResMstq.dateFinGlobale,
+      tauxOccupationJour: Math.min(100, Math.round((piecesMstqTotal / (configMstq.capaciteJournalierePieces || 30)) * 100)),
+      propositionHeuresSup: simResMstq.propositionHeuresSup
     };
 
     // ────────────────────────────────────────────────────────────────────────
@@ -1309,14 +1465,14 @@ export class MonitoringService {
     ]);
 
     const totalPieces = piecesCaissonsTotal + piecesTabliersTotal + piecesPrecadresTotal + piecesMstqTotal;
-    const totalChargeHeures = Math.round((chargeHeuresCaisson + chargeHeuresTablier + statsPrecadres.chargeHeuresEstimee + statsMoustiquaires.chargeHeuresEstimee) * 10) / 10;
+    const totalChargeHeures = Math.round((statsCaissons.chargeHeuresEstimee + statsTabliers.chargeHeuresEstimee + statsPrecadres.chargeHeuresEstimee + statsMoustiquaires.chargeHeuresEstimee) * 10) / 10;
 
     // Date maximale d'achèvement de toutes les files
     let dateMaxAtelier = new Date(dateRef);
-    if (dateFinCaissonFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinCaissonFinale;
-    if (dateFinTablierFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinTablierFinale;
-    if (dateFinPrecadreFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinPrecadreFinale;
-    if (dateFinMstqFinale.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = dateFinMstqFinale;
+    if (statsCaissons.dateFinDate && statsCaissons.dateFinDate.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = statsCaissons.dateFinDate;
+    if (statsTabliers.dateFinDate && statsTabliers.dateFinDate.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = statsTabliers.dateFinDate;
+    if (statsPrecadres.dateFinDate && statsPrecadres.dateFinDate.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = statsPrecadres.dateFinDate;
+    if (statsMoustiquaires.dateFinDate && statsMoustiquaires.dateFinDate.getTime() > dateMaxAtelier.getTime()) dateMaxAtelier = statsMoustiquaires.dateFinDate;
 
     const allCommandesList: LigneCommandeMonitoring[] = [
       ...lignesCommandesCaissons,
@@ -1333,6 +1489,8 @@ export class MonitoringService {
     const ofsClotures = suivisOF.filter(o => o && (o.statut === 'CLOTURE' || o.statut === 'LIVRE'));
     const totalOFsClotures = ofsClotures.length;
     const totalPiecesCloturees = ofsClotures.reduce((sum, o) => sum + (o.nombrePieces || 0), 0);
+
+    const clientsMonitoring = this.ventilerParClient(allCommandesList);
 
     return {
       dateHeureCalcul: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
@@ -1351,8 +1509,151 @@ export class MonitoringService {
       tabliers: statsTabliers,
       precadres: statsPrecadres,
       moustiquaires: statsMoustiquaires,
-      commandesActives: allCommandesList
+      commandesActives: allCommandesList,
+      clientsMonitoring
     };
+  }
+
+  /**
+   * Ventilation intelligente des commandes en cours par Client -> Famille -> Types de pièces
+   */
+  static ventilerParClient(commandes: LigneCommandeMonitoring[]): ClientMonitoringGroup[] {
+    const clientsMap = new Map<string, {
+      nomClient: string;
+      donneurOrdre: string;
+      commandes: LigneCommandeMonitoring[];
+      refsSet: Set<string>;
+    }>();
+
+    commandes.forEach(cmd => {
+      const clientNom = (cmd.client || 'Client Non Renseigné').trim();
+      const existing = clientsMap.get(clientNom) || {
+        nomClient: clientNom,
+        donneurOrdre: cmd.donneurOrdre || 'Atelier',
+        commandes: [],
+        refsSet: new Set<string>()
+      };
+      existing.commandes.push(cmd);
+      if (cmd.refCommande) existing.refsSet.add(cmd.refCommande);
+      else existing.refsSet.add(cmd.id);
+      clientsMap.set(clientNom, existing);
+    });
+
+    const labelsFamilles: Record<FamilleProduit, string> = {
+      CAISSON: 'Caissons & Coffres',
+      TABLIER: 'Tabliers de Volet',
+      PRECADRE: 'Précadres',
+      MOUSTIQUAIRE: 'Moustiquaires'
+    };
+
+    const groupes: ClientMonitoringGroup[] = [];
+
+    clientsMap.forEach(clientData => {
+      const totalCommandesEnCours = clientData.refsSet.size;
+      let totalPiecesClient = 0;
+
+      // Regrouper par famille
+      const famillesMap = new Map<FamilleProduit, {
+        famille: FamilleProduit;
+        commandesRefs: Set<string>;
+        totalPieces: number;
+        typesMap: Map<string, { cle: string; label: string; nbPieces: number; commandesRefs: Set<string> }>;
+      }>();
+
+      clientData.commandes.forEach(cmd => {
+        const fam = cmd.famille;
+        totalPiecesClient += cmd.quantiteTotalPieces;
+
+        const famEntry = famillesMap.get(fam) || {
+          famille: fam,
+          commandesRefs: new Set<string>(),
+          totalPieces: 0,
+          typesMap: new Map()
+        };
+
+        const cmdRef = cmd.refCommande || cmd.id;
+        famEntry.commandesRefs.add(cmdRef);
+        famEntry.totalPieces += cmd.quantiteTotalPieces;
+
+        if (cmd.detailsSousTypes && cmd.detailsSousTypes.length > 0) {
+          cmd.detailsSousTypes.forEach(dst => {
+            const tEntry = famEntry.typesMap.get(dst.cle) || {
+              cle: dst.cle,
+              label: dst.label,
+              nbPieces: 0,
+              commandesRefs: new Set<string>()
+            };
+            tEntry.nbPieces += dst.nbPieces;
+            tEntry.commandesRefs.add(cmdRef);
+            famEntry.typesMap.set(dst.cle, tEntry);
+          });
+        } else {
+          const cleType = cmd.sousTypeCle || 'AUTRE';
+          const labelType = cmd.typePrecision || 'Standard';
+          const tEntry = famEntry.typesMap.get(cleType) || {
+            cle: cleType,
+            label: labelType,
+            nbPieces: 0,
+            commandesRefs: new Set<string>()
+          };
+          tEntry.nbPieces += cmd.quantiteTotalPieces;
+          tEntry.commandesRefs.add(cmdRef);
+          famEntry.typesMap.set(cleType, tEntry);
+        }
+
+        famillesMap.set(fam, famEntry);
+      });
+
+      const detailsFamilles: DetailFamilleClient[] = [];
+      famillesMap.forEach(famEntry => {
+        const detailsTypes: DetailTypeClient[] = [];
+        famEntry.typesMap.forEach(tEntry => {
+          detailsTypes.push({
+            typeCle: tEntry.cle,
+            cle: tEntry.cle,
+            typeLabel: tEntry.label,
+            label: tEntry.label,
+            totalPieces: tEntry.nbPieces,
+            nbPieces: tEntry.nbPieces,
+            nbCommandes: tEntry.commandesRefs.size,
+            commandesRefs: Array.from(tEntry.commandesRefs),
+            pourcentageFamille: famEntry.totalPieces > 0 ? Math.round((tEntry.nbPieces / famEntry.totalPieces) * 100) : 0
+          });
+        });
+
+        // Trier les sous-types par nombre de pièces décroissant
+        detailsTypes.sort((a, b) => b.totalPieces - a.totalPieces);
+
+        detailsFamilles.push({
+          famille: famEntry.famille,
+          familleLabel: labelsFamilles[famEntry.famille] || famEntry.famille,
+          labelFamille: labelsFamilles[famEntry.famille] || famEntry.famille,
+          totalPieces: famEntry.totalPieces,
+          totalCommandes: famEntry.commandesRefs.size,
+          nbCommandes: famEntry.commandesRefs.size,
+          types: detailsTypes
+        });
+      });
+
+      // Trier les familles par nombre de pièces décroissant
+      detailsFamilles.sort((a, b) => b.totalPieces - a.totalPieces);
+
+      groupes.push({
+        clientNom: clientData.nomClient,
+        nomClient: clientData.nomClient,
+        donneurOrdre: clientData.donneurOrdre,
+        totalCommandes: totalCommandesEnCours,
+        totalCommandesEnCours,
+        totalPieces: totalPiecesClient,
+        familles: detailsFamilles,
+        commandes: clientData.commandes
+      });
+    });
+
+    // Trier les clients : ceux qui ont le plus de pièces à fabriquer en premier
+    groupes.sort((a, b) => b.totalPieces - a.totalPieces);
+
+    return groupes;
   }
 
   /**

@@ -27,8 +27,10 @@ import {
   Calendar,
   Eye,
   RefreshCw,
-  FolderOpen
+  FolderOpen,
+  Terminal
 } from 'lucide-react';
+import { SystemLogsViewer } from '../common/SystemLogsViewer';
 import {
   Article,
   ChuteItem,
@@ -71,6 +73,7 @@ type ParamSubTab =
   | 'colonnes'
   | 'sauvegarde'
   | 'restauration'
+  | 'logs'
   | 'vidage';
 
 export const ParametresTab: React.FC<ParametresTabProps> = ({
@@ -639,6 +642,18 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
           >
             <Link className="w-3.5 h-3.5" />
             <span>🔗 Mappage Chutes</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('logs')}
+            className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
+              activeSubTab === 'logs'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>📜 Logs &amp; Traçabilité</span>
           </button>
 
           <button
@@ -1895,6 +1910,54 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
               <span>Confirmer le Vidage Définitif de SQLite</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 9. SECTION LOGS & TRAÇABILITÉ COMPLÈTE DE L'ATELIER                */}
+      {/* =================================================================== */}
+      {activeSubTab === 'logs' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/30 text-amber-400">
+                <Terminal className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base font-bold text-slate-100">
+                    Journal d'Audit &amp; Traçabilité Complète de l'Atelier
+                  </h2>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    En direct SQLite
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Historique détaillé et temps réel de toutes les opérations de l'atelier : saisies de commandes, calculs de débit, réutilisation de chutes, requêtes SQLite et alertes.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400">Opérateur actif :</span>
+              <span className="font-bold text-amber-300 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800">
+                {activeOperator.nom} ({activeOperator.role})
+              </span>
+            </div>
+          </div>
+
+          <SystemLogsViewer
+            embedded={true}
+            extraSystemInfo={{
+              operateurActif: activeOperator.nom,
+              roleOperateur: activeOperator.role,
+              articlesActifs: articles.length,
+              famillesChutes: Object.keys(chutesBarres).length,
+              chutesMailleCount: chutesMaille.length,
+              clientsCodifies: clientCodifications.length
+            }}
+          />
         </div>
       )}
     </div>

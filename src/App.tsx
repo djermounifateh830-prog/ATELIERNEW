@@ -162,6 +162,7 @@ export default function App() {
             articles={articles}
             onRefreshData={loadData}
             onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
+            onLoadDossierInEcosysteme={handleLoadDossierFromHistorique}
           />
         )}
 
@@ -189,6 +190,7 @@ export default function App() {
             fichesTransfert={fichesTransfert}
             onRefreshData={loadData}
             onNavigateToTab={(tabId) => handleSetActiveTab(tabId)}
+            onLoadDossierInEcosysteme={handleLoadDossierFromHistorique}
             articles={articles}
             chutesBarres={chutesBarres}
             mapping={mapping}
@@ -259,6 +261,7 @@ export default function App() {
             chutesMaille={chutesMaille}
             mapping={mapping}
             suivisOF={suivisOF}
+            dossiers={dossiers}
             mouvements={mouvements}
             onStockUpdated={loadData}
           />

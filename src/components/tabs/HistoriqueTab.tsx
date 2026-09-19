@@ -98,12 +98,11 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   };
 
   const getDossierTotalArticles = (d: DossierCommandeGlobal) => {
-    return (
-      (d.articlesCaissons || []).length +
-      (d.articlesTabliers || []).length +
-      (d.articlesMoustiquaires || []).length +
-      (d.articlesPrecadres || []).length
-    );
+    const qC = (d.articlesCaissons || []).reduce((sum, c) => sum + (Number(c.quantite) || 1), 0);
+    const qT = (d.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
+    const qM = (d.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+    const qP = (d.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
+    return qC + qT + qM + qP;
   };
 
   const getDossierDateLivraison = (d: DossierCommandeGlobal) => {
@@ -250,10 +249,10 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
     let nbPrecadres = 0;
 
     dossiers.forEach(d => {
-      nbCaissons += (d.articlesCaissons || []).length;
-      nbTabliers += (d.articlesTabliers || []).length;
-      nbMoustiquaires += (d.articlesMoustiquaires || []).length;
-      nbPrecadres += (d.articlesPrecadres || []).length;
+      (d.articlesCaissons || []).forEach(c => { nbCaissons += (Number(c.quantite) || 1); });
+      (d.articlesTabliers || []).forEach(t => { nbTabliers += (Number(t.quantite) || 1); });
+      (d.articlesMoustiquaires || []).forEach(m => { nbMoustiquaires += (Number(m.quantite) || 1); });
+      (d.articlesPrecadres || []).forEach(p => { nbPrecadres += (Number(p.quantite) || 1); });
     });
 
     return {
@@ -563,10 +562,10 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {displayedDossiers.map((dossier, idx) => {
-                  const nbCaisson = (dossier.articlesCaissons || []).length;
-                  const nbTablier = (dossier.articlesTabliers || []).length;
-                  const nbMstq = (dossier.articlesMoustiquaires || []).length;
-                  const nbPrecadre = (dossier.articlesPrecadres || []).length;
+                  const nbCaisson = (dossier.articlesCaissons || []).reduce((sum, c) => sum + (Number(c.quantite) || 1), 0);
+                  const nbTablier = (dossier.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
+                  const nbMstq = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+                  const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
                   const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
                   const dateLiv = getDossierDateLivraison(dossier);
 
@@ -785,10 +784,10 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
         /* Vue Cartes (Détaillée) */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {displayedDossiers.map(dossier => {
-            const nbCaisson = (dossier.articlesCaissons || []).length;
-            const nbTablier = (dossier.articlesTabliers || []).length;
-            const nbMstq = (dossier.articlesMoustiquaires || []).length;
-            const nbPrecadre = (dossier.articlesPrecadres || []).length;
+            const nbCaisson = (dossier.articlesCaissons || []).reduce((sum, c) => sum + (Number(c.quantite) || 1), 0);
+            const nbTablier = (dossier.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
+            const nbMstq = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+            const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
             const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
 
             return (
@@ -1114,12 +1113,9 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                 <span className="text-slate-300">{selectedOFDossier.dateCommande}</span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>Articles (total) :</span>
+                <span>Pièces (total) :</span>
                 <span className="text-emerald-300 font-bold">
-                  {(selectedOFDossier.articlesCaissons || []).length +
-                   (selectedOFDossier.articlesTabliers || []).length +
-                   (selectedOFDossier.articlesMoustiquaires || []).length +
-                   (selectedOFDossier.articlesPrecadres || []).length} lignes
+                  {getDossierTotalArticles(selectedOFDossier)} pièce(s)
                 </span>
               </div>
             </div>
