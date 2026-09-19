@@ -22,6 +22,7 @@ import {
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
@@ -53,8 +54,9 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   const [familleFilter, setFamilleFilter] = useState<'TOUTES' | 'CAISSON' | 'TABLIER' | 'MOUSTIQUAIRE' | 'PRECADRE'>('TOUTES');
   const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
 
-  // Mode d'affichage confortable pour grands volumes (Tableau compact par défaut ou Cartes)
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  // Mode d'affichage confortable pour grands volumes (Tableau compact par défaut, Cartes ou Par Famille)
+  const [viewMode, setViewMode] = useState<'table' | 'cards' | 'families'>('table');
+  const [collapsedFamilies, setCollapsedFamilies] = useState<Record<string, boolean>>({});
 
   // Tri des dossiers
   const [sortColumn, setSortColumn] = useState<SortColumn>('dateCommande');
@@ -445,7 +447,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             </select>
           </div>
 
-          {/* Toggle Vue Tableau vs Vue Cartes */}
+          {/* Toggle Vue Tableau vs Vue Cartes vs Vue Par Famille */}
           <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-700">
             <button
               type="button"
@@ -472,6 +474,19 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             >
               <LayoutGrid className="w-3.5 h-3.5" />
               <span>Cartes</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('families')}
+              className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition cursor-pointer ${
+                viewMode === 'families'
+                  ? 'bg-purple-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Visualiser et regrouper par Famille de produits (Caissons, Tabliers, Moustiquaires, Précadres)"
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-300" />
+              <span>Par Famille</span>
             </button>
           </div>
 
@@ -946,7 +961,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             </table>
           </div>
         </div>
-      ) : (
+      ) : viewMode === 'cards' ? (
         /* Vue Cartes (Détaillée) */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {displayedDossiers.map(dossier => {
@@ -1203,6 +1218,223 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                     </button>
                   </div>
                 </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* Vue Par Famille (Regroupement clair par Famille de produit) */
+        <div className="space-y-6">
+          {[
+            {
+              key: 'CAISSON',
+              title: 'Caissons & Sous-Faces',
+              icon: '📦',
+              borderColor: 'border-emerald-500/40',
+              bgColor: 'bg-emerald-950/20',
+              badgeColor: 'bg-emerald-950 text-emerald-300 border-emerald-500/40',
+              headerBg: 'bg-emerald-950/60',
+              dossiers: filteredAndSortedDossiers.filter(d => (d.articlesCaissons || []).length > 0),
+              getItems: (d: DossierCommandeGlobal) => d.articlesCaissons || [],
+              getPcs: (d: DossierCommandeGlobal) => (d.articlesCaissons || []).reduce((s, c) => s + (Number(c.quantite) || 1), 0),
+              getArticles: (d: DossierCommandeGlobal) => (d.articlesCaissons || []).map(c => c.articleDesignation || c.articleCode || 'Caisson')
+            },
+            {
+              key: 'TABLIER',
+              title: 'Volets & Tabliers',
+              icon: '🪟',
+              borderColor: 'border-sky-500/40',
+              bgColor: 'bg-sky-950/20',
+              badgeColor: 'bg-sky-950 text-sky-300 border-sky-500/40',
+              headerBg: 'bg-sky-950/60',
+              dossiers: filteredAndSortedDossiers.filter(d => (d.articlesTabliers || []).length > 0),
+              getItems: (d: DossierCommandeGlobal) => d.articlesTabliers || [],
+              getPcs: (d: DossierCommandeGlobal) => (d.articlesTabliers || []).reduce((s, t) => s + (Number(t.quantite) || 1), 0),
+              getArticles: (d: DossierCommandeGlobal) => (d.articlesTabliers || []).map(t => t.articleDesignation || t.articleCode || 'Tablier')
+            },
+            {
+              key: 'MOUSTIQUAIRE',
+              title: 'Moustiquaires Plissées',
+              icon: '🦟',
+              borderColor: 'border-amber-500/40',
+              bgColor: 'bg-amber-950/20',
+              badgeColor: 'bg-amber-950 text-amber-300 border-amber-500/40',
+              headerBg: 'bg-amber-950/60',
+              dossiers: filteredAndSortedDossiers.filter(d => (d.articlesMoustiquaires || []).length > 0),
+              getItems: (d: DossierCommandeGlobal) => d.articlesMoustiquaires || [],
+              getPcs: (d: DossierCommandeGlobal) => (d.articlesMoustiquaires || []).reduce((s, m) => s + (Number(m.quantite) || 1), 0),
+              getArticles: (d: DossierCommandeGlobal) => (d.articlesMoustiquaires || []).map(m => m.articleDesignationCadre || m.modele || 'Moustiquaire')
+            },
+            {
+              key: 'PRECADRE',
+              title: 'Précadres Aluminium',
+              icon: '🚪',
+              borderColor: 'border-purple-500/40',
+              bgColor: 'bg-purple-950/20',
+              badgeColor: 'bg-purple-950 text-purple-300 border-purple-500/40',
+              headerBg: 'bg-purple-950/60',
+              dossiers: filteredAndSortedDossiers.filter(d => (d.articlesPrecadres || []).length > 0),
+              getItems: (d: DossierCommandeGlobal) => d.articlesPrecadres || [],
+              getPcs: (d: DossierCommandeGlobal) => (d.articlesPrecadres || []).reduce((s, p) => s + (Number(p.quantite) || 1), 0),
+              getArticles: (d: DossierCommandeGlobal) => (d.articlesPrecadres || []).map(p => p.articleDesignation || p.articleCode || 'Précadre')
+            }
+          ].map(fam => {
+            const isCollapsed = !!collapsedFamilies[fam.key];
+            const totalFamPcs = fam.dossiers.reduce((sum, d) => sum + fam.getPcs(d), 0);
+            return (
+              <div key={fam.key} className={`rounded-xl border ${fam.borderColor} ${fam.bgColor} overflow-hidden shadow-lg`}>
+                <div
+                  className={`flex items-center justify-between px-4 py-3 cursor-pointer select-none ${fam.headerBg} border-b ${fam.borderColor} transition hover:brightness-110`}
+                  onClick={() => setCollapsedFamilies(prev => ({ ...prev, [fam.key]: !prev[fam.key] }))}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xl">{fam.icon}</span>
+                    <h3 className="font-bold text-white text-sm tracking-wide">{fam.title}</h3>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-bold border ${fam.badgeColor}`}>
+                      {fam.dossiers.length} commande{fam.dossiers.length > 1 ? 's' : ''}
+                    </span>
+                    <span className="text-xs text-slate-300 font-mono font-bold">
+                      • {totalFamPcs} pièce{totalFamPcs > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-400 font-semibold">{isCollapsed ? 'Afficher' : 'Réduire'}</span>
+                    {isCollapsed ? <ChevronRight className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </div>
+                </div>
+
+                {!isCollapsed && (
+                  fam.dossiers.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400 italic">
+                      Aucune commande avec des articles de cette famille pour les filtres sélectionnés.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/90 text-slate-400 text-[11px] uppercase tracking-wider font-semibold border-b border-slate-800">
+                          <tr>
+                            <th className="py-2.5 px-3">Réf. Commande</th>
+                            <th className="py-2.5 px-3">Date &amp; Échéance</th>
+                            <th className="py-2.5 px-3">Client Final</th>
+                            <th className="py-2.5 px-3">Articles &amp; Profilés</th>
+                            <th className="py-2.5 px-3 text-center">Nbr Pièces (Pcs)</th>
+                            <th className="py-2.5 px-3 text-center">Statut</th>
+                            <th className="py-2.5 px-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-sans">
+                          {fam.dossiers.map((dossier, dIdx) => {
+                            const pcs = fam.getPcs(dossier);
+                            const arts = Array.from(new Set(fam.getArticles(dossier)));
+                            const dateLiv = formatDelai(dossier);
+                            const isCloture = dossier.statut === 'CLOTURE' || dossier.statut === 'LIVRE' || dossier.statut === 'TERMINE';
+
+                            return (
+                              <tr key={dossier.id} className={dIdx % 2 === 0 ? 'bg-slate-900/40 hover:bg-slate-800/60 transition' : 'bg-slate-950/40 hover:bg-slate-800/60 transition'}>
+                                <td className="py-2.5 px-3 font-mono">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenDossierDetail(dossier)}
+                                    className="font-bold text-amber-300 hover:text-amber-200 bg-amber-950/60 hover:bg-amber-900 px-2 py-0.5 rounded border border-amber-500/30 flex items-center gap-1 transition cursor-pointer shadow-xs"
+                                    title="Cliquer pour voir le détail de la commande"
+                                  >
+                                    <span>{dossier.refCommande}</span>
+                                    <Eye className="w-3 h-3 text-amber-400 opacity-60" />
+                                  </button>
+                                </td>
+                                <td className="py-2.5 px-3 text-slate-300 text-[11px] font-mono whitespace-nowrap">
+                                  <div>📅 {dossier.dateCommande || '—'}</div>
+                                  <div className="text-amber-300 text-[10px]">⏰ {dateLiv}</div>
+                                </td>
+                                <td className="py-2.5 px-3 font-semibold text-slate-200 max-w-[180px] truncate" title={dossier.nomClientFinal}>
+                                  <div className="truncate">{dossier.nomClientFinal || '—'}</div>
+                                  {dossier.donneurOrdre && <div className="text-[10px] text-sky-400 truncate">{dossier.donneurOrdre}</div>}
+                                </td>
+                                <td className="py-2.5 px-3 max-w-[240px]">
+                                  <div className="flex flex-wrap gap-1">
+                                    {arts.slice(0, 2).map((art, aIdx) => (
+                                      <span key={aIdx} className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[10px] font-medium truncate max-w-[180px] border border-slate-700" title={art}>
+                                        {art}
+                                      </span>
+                                    ))}
+                                    {arts.length > 2 && (
+                                      <span className="px-1 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-bold border border-slate-700" title={arts.slice(2).join(', ')}>
+                                        +{arts.length - 2}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono">
+                                  <span className={`px-2 py-0.5 rounded text-xs font-bold border ${fam.badgeColor}`}>
+                                    {pcs} pc{pcs > 1 ? 's' : ''}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                                    isCloture ? 'bg-emerald-950 text-emerald-300 border-emerald-800' :
+                                    dossier.statut === 'EN_COURS' ? 'bg-sky-950 text-sky-300 border-sky-800' :
+                                    dossier.statut === 'EN_PAUSE' ? 'bg-rose-950 text-rose-300 border-rose-800' :
+                                    'bg-amber-950 text-amber-300 border-amber-800'
+                                  }`}>
+                                    {dossier.statut === 'EN_ATTENTE' ? 'En attente' :
+                                     dossier.statut === 'EN_COURS' ? 'En cours' :
+                                     dossier.statut === 'CLOTURE' ? 'Clôturé' :
+                                     dossier.statut === 'LIVRE' ? 'Livré' :
+                                     dossier.statut === 'EN_PAUSE' ? 'En pause' : dossier.statut}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDossierDetail(dossier)}
+                                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                                      title="Consulter le dossier"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-sky-400" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => onLoadDossierInEcosysteme(dossier)}
+                                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                                      title="Recharger dans l'Écosystème"
+                                    >
+                                      <FolderOpen className="w-3.5 h-3.5 text-emerald-400" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenOFModal(dossier)}
+                                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                                      title="Imprimer Ordre de Fabrication (OF)"
+                                    >
+                                      <Printer className="w-3.5 h-3.5 text-amber-400" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDupliquerDossier(dossier)}
+                                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs transition cursor-pointer"
+                                      title="Dupliquer"
+                                    >
+                                      <Copy className="w-3.5 h-3.5 text-sky-400" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSupprimerDossier(dossier.id, dossier.refCommande)}
+                                      className="p-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer"
+                                      title="Supprimer définitivement"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                )}
               </div>
             );
           })}

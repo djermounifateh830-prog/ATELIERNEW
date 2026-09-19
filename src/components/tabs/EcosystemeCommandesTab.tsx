@@ -3455,11 +3455,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   // =========================================================================
   // FONCTION CLÉ : REPRENDRE / COMPLÉTER UNE COMMANDE DEPUIS L'HISTORIQUE
   // =========================================================================
-  const handleReprendreCommande = (dossier: DossierCommandeGlobal) => {
+  const handleReprendreCommande = (dossier: DossierCommandeGlobal, targetFamille?: FamilleProduit) => {
     setEditingDossierId(dossier.id);
-    setMonClient(dossier.donneurOrdre);
-    setClientDeMonClient(dossier.nomClientFinal);
-    setDateCommande(dossier.dateCommande);
+    setMonClient(dossier.donneurOrdre || '');
+    setClientDeMonClient(dossier.nomClientFinal || '');
+    setDateCommande(dossier.dateCommande || getTodayDateString());
 
     // Restaurer le délai de livraison et l'état de pause/interruption
     const isInst = dossier.typePriorite === 'INSTANTANE' || !!dossier.estPrioritaire;
@@ -3485,22 +3485,29 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       return val.trim();
     };
 
+    const globalRef = (dossier.refCommande || '').trim();
+    const cmdCaisson = formatCmd(dossier.numCommandeCaisson || dossier.articlesCaissons?.[0]?.refCommande || globalRef);
+    const cmdSousFace = formatCmd(dossier.numCommandeSousFace || (dossier.articlesCaissons?.find(c => c.avecSousFace && c.sfRefCommande)?.sfRefCommande) || cmdCaisson);
+    const cmdTablier = formatCmd(dossier.numCommandeTablier || dossier.articlesTabliers?.[0]?.refCommande || globalRef);
+    const cmdMstq = formatCmd(dossier.numCommandeMoustiquaire || dossier.articlesMoustiquaires?.[0]?.refCommande || globalRef);
+    const cmdPrecadre = formatCmd(dossier.numCommandePrecadre || dossier.articlesPrecadres?.[0]?.refCommande || globalRef);
+
     setFilterCmdActive('TOUTES');
-    setActiveNumCommande(dossier.refCommande || dossier.numCommandeTablier || dossier.numCommandeCaisson || '');
 
     // Restaurer les numéros propres à chaque famille
-    setNumCommandeCaisson(formatCmd(dossier.numCommandeCaisson || dossier.articlesCaissons?.[0]?.refCommande || (dossier.articlesCaissons?.length ? dossier.refCommande : '')));
-    setNumCommandeSousFace(formatCmd(dossier.numCommandeSousFace || (dossier.articlesCaissons?.find(c => c.avecSousFace && c.sfRefCommande)?.sfRefCommande) || ''));
-    setNumCommandeTablier(formatCmd(dossier.numCommandeTablier || dossier.articlesTabliers?.[0]?.refCommande || (dossier.articlesTabliers?.length ? dossier.refCommande : '')));
-    setNumCommandeMoustiquaire(formatCmd(dossier.numCommandeMoustiquaire || dossier.articlesMoustiquaires?.[0]?.refCommande || (dossier.articlesMoustiquaires?.length ? dossier.refCommande : '')));
-    setNumCommandePrecadre(formatCmd(dossier.numCommandePrecadre || dossier.articlesPrecadres?.[0]?.refCommande || (dossier.articlesPrecadres?.length ? dossier.refCommande : '')));
+    setNumCommandeCaisson(cmdCaisson);
+    setNumCommandeSousFace(cmdSousFace);
+    setNumCommandeTablier(cmdTablier);
+    setNumCommandeMoustiquaire(cmdMstq);
+    setNumCommandePrecadre(cmdPrecadre);
     
-    // Charger toutes les lignes enregistrées — enrichissement défensif des codes articles et hauteurs de lames
+    // Charger toutes les lignes enregistrées — enrichissement défensif des codes articles, hauteurs de lames et refCommande
     const enrichedTabliers = (dossier.articlesTabliers || []).map((t: any) => {
       const hLame = getHauteurLameTablier(t.articleCode, t.articleDesignation, t.hauteur_lame_tablier);
       const h = Number(t.hauteur) || 0;
       return {
         ...t,
+        refCommande: t.refCommande || cmdTablier || globalRef,
         articleCode: t.articleCode || 'ART0040',
         articleDesignation: t.articleDesignation || 'TBL 43 BL',
         hauteur_lame_tablier: hLame,
@@ -3508,13 +3515,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       };
     });
     setLignesTabliers(enrichedTabliers);
-    setLignesMoustiquaires(dossier.articlesMoustiquaires || []);
+
+    const enrichedMstq = (dossier.articlesMoustiquaires || []).map((m: any) => ({
+      ...m,
+      refCommande: m.refCommande || cmdMstq || globalRef
+    }));
+    setLignesMoustiquaires(enrichedMstq);
+
     const enrichedCaissons = (dossier.articlesCaissons || []).map((c: any) => {
       const isSFSeule = Boolean(c.isSousFaceSeule || c.typePrestation === 'SOUS_FACE_SEULE');
       const ctResolved = articlesCT.find(a => a.code_art === c.articleCode || a.designation === c.articleDesignation) || articlesCT[0];
       const sfResolved = articlesSF.find(a => a.code_art === c.sfArticleCode || a.designation === c.sfArticleDesignation) || articlesSF[0];
       return {
         ...c,
+        refCommande: c.refCommande || cmdCaisson || globalRef,
         isSousFaceSeule: isSFSeule,
         typePrestation: isSFSeule ? 'SOUS_FACE_SEULE' : (c.typePrestation || (c.avecSousFace ? 'CAISSON_ET_SOUS_FACE' : 'CAISSON_SEUL')),
         articleCode: isSFSeule ? undefined : (c.articleCode || ctResolved?.code_art || 'ART0011'),
@@ -3524,45 +3538,57 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       };
     });
     setLignesCaissons(enrichedCaissons);
-    setLignesPrecadres(dossier.articlesPrecadres || []);
 
-    // Déterminer la famille d'article à ouvrir selon le contenu et le préfixe
+    const enrichedPrecadres = (dossier.articlesPrecadres || []).map((p: any) => ({
+      ...p,
+      refCommande: p.refCommande || cmdPrecadre || globalRef
+    }));
+    setLignesPrecadres(enrichedPrecadres);
+
+    // Déterminer la famille d'article à ouvrir selon la cible ou le contenu prédominant
     const nbCaissons = (dossier.articlesCaissons || []).length;
     const nbTabliers = (dossier.articlesTabliers || []).length;
     const nbMoustiquaires = (dossier.articlesMoustiquaires || []).length;
     const nbPrecadres = (dossier.articlesPrecadres || []).length;
 
-    const refUpper = (dossier.refCommande || '').toUpperCase();
-    
-    // Si la commande a un préfixe de codification identifiable
-    if (refUpper.startsWith('SA-') && nbTabliers > 0) {
-      setFamilleArticle('TABLIER');
-      setInputRepere(`SA-${nbTabliers + 1}`);
-    } else if ((refUpper.startsWith('SC-') || refUpper.startsWith('D-')) && nbMoustiquaires > 0) {
-      setFamilleArticle('MOUSTIQUAIRE');
-      setInputRepere(`H${nbMoustiquaires + 1}`);
-    } else if (refUpper.startsWith('1R') && nbPrecadres > 0) {
-      setFamilleArticle('PRECADRE');
-      setInputRepere(`1R${nbPrecadres + 1}`);
-    } else if ((refUpper.startsWith('CT-') || refUpper.startsWith('A-')) && nbCaissons > 0) {
-      setFamilleArticle('CAISSON');
-      setInputRepere(`CT-${nbCaissons + 1}`);
+    if (targetFamille) {
+      setFamilleArticle(targetFamille);
+      if (targetFamille === 'TABLIER') setInputRepere(`SA-${nbTabliers + 1}`);
+      else if (targetFamille === 'MOUSTIQUAIRE') setInputRepere(`H${nbMoustiquaires + 1}`);
+      else if (targetFamille === 'CAISSON') setInputRepere(`CT-${nbCaissons + 1}`);
+      else if (targetFamille === 'PRECADRE') setInputRepere(`1R${nbPrecadres + 1}`);
     } else {
-      // Sinon ouvrir la famille prédominante (celle avec le plus d'articles saisis)
-      const counts = [
-        { fam: 'TABLIER' as FamilleProduit, count: nbTabliers, repere: `SA-${nbTabliers + 1}` },
-        { fam: 'MOUSTIQUAIRE' as FamilleProduit, count: nbMoustiquaires, repere: `H${nbMoustiquaires + 1}` },
-        { fam: 'CAISSON' as FamilleProduit, count: nbCaissons, repere: `CT-${nbCaissons + 1}` },
-        { fam: 'PRECADRE' as FamilleProduit, count: nbPrecadres, repere: `1R${nbPrecadres + 1}` },
-      ].sort((a, b) => b.count - a.count);
+      const refUpper = (dossier.refCommande || '').toUpperCase();
+      // Si la commande a un préfixe de codification identifiable
+      if (refUpper.startsWith('SA-') && nbTabliers > 0) {
+        setFamilleArticle('TABLIER');
+        setInputRepere(`SA-${nbTabliers + 1}`);
+      } else if ((refUpper.startsWith('SC-') || refUpper.startsWith('D-')) && nbMoustiquaires > 0) {
+        setFamilleArticle('MOUSTIQUAIRE');
+        setInputRepere(`H${nbMoustiquaires + 1}`);
+      } else if (refUpper.startsWith('1R') && nbPrecadres > 0) {
+        setFamilleArticle('PRECADRE');
+        setInputRepere(`1R${nbPrecadres + 1}`);
+      } else if ((refUpper.startsWith('CT-') || refUpper.startsWith('A-')) && nbCaissons > 0) {
+        setFamilleArticle('CAISSON');
+        setInputRepere(`CT-${nbCaissons + 1}`);
+      } else {
+        // Sinon ouvrir la famille prédominante (celle avec le plus d'articles saisis)
+        const counts = [
+          { fam: 'TABLIER' as FamilleProduit, count: nbTabliers, repere: `SA-${nbTabliers + 1}` },
+          { fam: 'MOUSTIQUAIRE' as FamilleProduit, count: nbMoustiquaires, repere: `H${nbMoustiquaires + 1}` },
+          { fam: 'CAISSON' as FamilleProduit, count: nbCaissons, repere: `CT-${nbCaissons + 1}` },
+          { fam: 'PRECADRE' as FamilleProduit, count: nbPrecadres, repere: `1R${nbPrecadres + 1}` },
+        ].sort((a, b) => b.count - a.count);
 
-      const best = counts[0].count > 0 ? counts[0] : counts[0];
-      setFamilleArticle(best.fam);
-      setInputRepere(best.repere);
+        const best = counts[0];
+        setFamilleArticle(best.fam);
+        setInputRepere(best.repere);
+      }
     }
 
     setModeSaisieActif(true);  // Activer le mode saisie lors de la reprise d'un dossier
-    showFlashNotification(`Commande ${dossier.refCommande} chargée ! Vous pouvez continuer la saisie et ajouter des articles.`, 'success');
+    showFlashNotification(`✓ Commande ${dossier.refCommande || globalRef} (${dossier.nomClientFinal}) chargée dans l'Écosystème pour mise à jour !`, 'success');
 
     // Défilement fluide vers l'éditeur de commande en haut
     setTimeout(() => {
@@ -3581,9 +3607,25 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   }, [editingDossierId, numCommande, familleArticle, clientDeMonClient]);
 
   useEffect(() => {
+    // 1. Depuis props (prioritaire)
     if (selectedDossierToLoad) {
       handleReprendreCommande(selectedDossierToLoad);
       onClearSelectedDossier?.();
+      return;
+    }
+
+    // 2. Depuis le bridge persistant localStorage pour sécuriser le passage inter-onglets
+    try {
+      const stored = localStorage.getItem('3m_dossier_to_load');
+      if (stored) {
+        localStorage.removeItem('3m_dossier_to_load');
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.dossier) {
+          handleReprendreCommande(parsed.dossier, parsed.targetFamille);
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur lecture bridge dossier localStorage:', e);
     }
   }, [selectedDossierToLoad, onClearSelectedDossier]);
 
@@ -8536,7 +8578,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           <div className="flex items-center justify-between border-b border-sky-500/20 pb-2">
                             <div className="flex items-center gap-2">
                               <span className="text-lg">🖼️</span>
-                              <span className="text-sm font-black text-sky-300">Plan de Coupe Optimisé des Profilés Aluminium (Cadre MSTQ, Barre Coulisse MSTQ, Barre Inférieure MSTQ)</span>
+                              <span className="text-sm font-black text-sky-300">Optimisation &amp; OF des Profilés Aluminium (Cadre MSTQ, Barre Coulisse MSTQ, Barre Inférieure MSTQ)</span>
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono">
                               💡 Les chutes restantes $\ge$ Refus Max (1200 mm) sont automatiquement reversées au Stock de Chutes

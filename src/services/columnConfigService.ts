@@ -109,19 +109,15 @@ export const TABLE_COLUMNS_DEFINITIONS: Record<TableId, { title: string; columns
   of_encours: {
     title: 'Tableau des Ordres de Fabrication en Cours (OF)',
     columns: [
-      { id: 'id', label: 'N° OF', defaultVisible: true },
-      { id: 'date', label: 'Date & Heure', defaultVisible: true },
-      { id: 'dossier', label: 'N° Dossier & Réf', defaultVisible: true },
-      { id: 'client', label: 'Client / Agence', defaultVisible: true },
-      { id: 'famille', label: 'Famille Produit', defaultVisible: true },
-      { id: 'article', label: 'Article / Profilé', defaultVisible: true },
-      { id: 'barres', label: 'Barres Requises', defaultVisible: true },
-      { id: 'pieces', label: 'Total Pièces', defaultVisible: true },
-      { id: 'chute', label: 'Chute Estimée (%)', defaultVisible: true },
-      { id: 'delai', label: 'Délai Livraison', defaultVisible: true },
-      { id: 'operateur', label: 'Opérateur', defaultVisible: true },
+      { id: 'id_of', label: 'N° OF & Émission', defaultVisible: true },
+      { id: 'dossier', label: 'N° Commande & Réf', defaultVisible: true },
+      { id: 'agence', label: 'Client / Donneur d\'Ordre', defaultVisible: true },
+      { id: 'produit', label: 'Famille & Nbr de Pièces (Pcs)', defaultVisible: true },
+      { id: 'date', label: 'Date Émission', defaultVisible: true },
+      { id: 'delai', label: 'Date Livraison (Fixée)', defaultVisible: true },
+      { id: 'profils', label: 'Barres & Chutes Réservées', defaultVisible: true },
       { id: 'statut', label: 'Statut OF', defaultVisible: true },
-      { id: 'actions', label: 'Actions', defaultVisible: true }
+      { id: 'actions', label: 'Actions Atelier', defaultVisible: true }
     ]
   },
   mouvements: {
@@ -185,6 +181,21 @@ class ColumnConfigService {
     const tableConf = this.config[tableId];
     if (tableConf && tableConf[columnId] !== undefined) {
       return tableConf[columnId];
+    }
+    // Alias pour compatibilité ascendante of_encours
+    if (tableId === 'of_encours') {
+      if (columnId === 'produit' && tableConf && (tableConf['famille'] !== undefined || tableConf['pieces'] !== undefined)) {
+        return tableConf['famille'] ?? tableConf['pieces'] ?? true;
+      }
+      if (columnId === 'id_of' && tableConf && tableConf['id'] !== undefined) {
+        return tableConf['id'];
+      }
+      if (columnId === 'agence' && tableConf && tableConf['client'] !== undefined) {
+        return tableConf['client'];
+      }
+      if (columnId === 'profils' && tableConf && tableConf['barres'] !== undefined) {
+        return tableConf['barres'];
+      }
     }
     // Fallback sur defaultVisible de la définition
     const def = TABLE_COLUMNS_DEFINITIONS[tableId]?.columns.find(c => c.id === columnId);
