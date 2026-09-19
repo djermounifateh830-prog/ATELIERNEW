@@ -28,7 +28,9 @@ import {
   Eye,
   RefreshCw,
   FolderOpen,
-  Terminal
+  Terminal,
+  Truck,
+  MapPin
 } from 'lucide-react';
 import { SystemLogsViewer } from '../common/SystemLogsViewer';
 import {
@@ -48,6 +50,7 @@ import { userService, ROLE_CONFIG, DEFAULT_PERMISSIONS_BY_ROLE } from '../../ser
 import {
   DelaisProductionService,
   PARAMETRES_PRODUCTION_DEFAUT,
+  TOURNEES_DESTINATIONS_DEFAUT,
   NOMS_JOURS_SEMAINE
 } from '../../services/delaisProductionService';
 import { columnConfigService, TABLE_COLUMNS_DEFINITIONS, TableId } from '../../services/columnConfigService';
@@ -1486,6 +1489,109 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
                   <span className="text-xs text-slate-500">heures / jour ouvré</span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Section Tournées de livraison par destination */}
+          <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+              <div className="flex items-center gap-2">
+                <Truck className="w-4 h-4 text-sky-400" />
+                <span className="text-xs font-bold text-slate-100">
+                  Tournées de Livraison par Destination &amp; Petites Commandes (&le; 2 pièces)
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400">
+                Constantine (Lun/Mer), Oran (Dim/Mar), Alger (Tous les jours)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {(prodParams.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT).map(tournee => {
+                const isCne = tournee.id === 'cne';
+                const isOran = tournee.id === 'oran';
+                return (
+                  <div
+                    key={tournee.id}
+                    className={`p-3.5 rounded-xl border ${
+                      isCne
+                        ? 'bg-blue-950/20 border-blue-800/50'
+                        : isOran
+                        ? 'bg-amber-950/20 border-amber-800/50'
+                        : 'bg-slate-900/60 border-slate-800'
+                    } space-y-2.5`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <MapPin className={`w-3.5 h-3.5 ${isCne ? 'text-blue-400' : isOran ? 'text-amber-400' : 'text-emerald-400'}`} />
+                        <span className="text-xs font-bold text-white">{tournee.nom}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400">
+                      Jours de livraison atelier :
+                    </div>
+
+                    <div className="flex flex-wrap gap-1">
+                      {NOMS_JOURS_SEMAINE.map((nomJour, idx) => {
+                        const isSelected = tournee.joursLivraison.includes(idx);
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setProdParams(prev => {
+                                const list = prev.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+                                const updated = list.map(t => {
+                                  if (t.id !== tournee.id) return t;
+                                  const exists = t.joursLivraison.includes(idx);
+                                  const newJ = exists
+                                    ? t.joursLivraison.filter(j => j !== idx)
+                                    : [...t.joursLivraison, idx].sort((a, b) => a - b);
+                                  return { ...t, joursLivraison: newJ.length > 0 ? newJ : [idx] };
+                                });
+                                return { ...prev, tourneesDestinations: updated };
+                              });
+                            }}
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold transition border cursor-pointer ${
+                              isSelected
+                                ? isCne
+                                  ? 'bg-blue-600 text-white border-blue-500'
+                                  : isOran
+                                  ? 'bg-amber-500 text-slate-950 border-amber-400'
+                                  : 'bg-emerald-600 text-white border-emerald-500'
+                                : 'bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300'
+                            }`}
+                          >
+                            {nomJour.slice(0, 3)}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-900 text-[11px] text-slate-300">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={tournee.delaiExpressPetitesCommandes}
+                          onChange={() => {
+                            setProdParams(prev => {
+                              const list = prev.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+                              const updated = list.map(t =>
+                                t.id === tournee.id ? { ...t, delaiExpressPetitesCommandes: !t.delaiExpressPetitesCommandes } : t
+                              );
+                              return { ...prev, tourneesDestinations: updated };
+                            });
+                          }}
+                          className="w-3 h-3 accent-amber-400 rounded"
+                        />
+                        <span>Délai express pour :</span>
+                      </label>
+                      <span className="font-mono font-bold text-amber-300">&le; {tournee.maxPiecesExpress || 2} pcs</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

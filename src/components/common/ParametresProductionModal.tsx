@@ -14,15 +14,20 @@ import {
   Scissors,
   Boxes,
   HelpCircle,
-  AlertCircle
+  AlertCircle,
+  Truck,
+  MapPin,
+  Zap
 } from 'lucide-react';
 import {
   ParametresProductionAtelier,
-  FamilleProduit
+  FamilleProduit,
+  RegleTourneeDestination
 } from '../../types';
 import {
   DelaisProductionService,
   PARAMETRES_PRODUCTION_DEFAUT,
+  TOURNEES_DESTINATIONS_DEFAUT,
   NOMS_JOURS_SEMAINE
 } from '../../services/delaisProductionService';
 
@@ -109,6 +114,43 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
           [fam]: updatedFam
         }
       };
+    });
+  };
+
+  const toggleJourTournee = (tourneeId: string, jourIndex: number) => {
+    setParams(prev => {
+      const tournees = prev.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+      const updated = tournees.map(t => {
+        if (t.id !== tourneeId) return t;
+        const exists = t.joursLivraison.includes(jourIndex);
+        const newJours = exists
+          ? t.joursLivraison.filter(j => j !== jourIndex)
+          : [...t.joursLivraison, jourIndex].sort((a, b) => a - b);
+        return { ...t, joursLivraison: newJours.length > 0 ? newJours : [jourIndex] };
+      });
+      return { ...prev, tourneesDestinations: updated };
+    });
+  };
+
+  const updateTourneeMaxPieces = (tourneeId: string, maxPcs: number) => {
+    setParams(prev => {
+      const tournees = prev.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+      const updated = tournees.map(t => {
+        if (t.id !== tourneeId) return t;
+        return { ...t, maxPiecesExpress: Math.max(1, maxPcs) };
+      });
+      return { ...prev, tourneesDestinations: updated };
+    });
+  };
+
+  const toggleTourneeExpress = (tourneeId: string) => {
+    setParams(prev => {
+      const tournees = prev.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+      const updated = tournees.map(t => {
+        if (t.id !== tourneeId) return t;
+        return { ...t, delaiExpressPetitesCommandes: !t.delaiExpressPetitesCommandes };
+      });
+      return { ...prev, tourneesDestinations: updated };
     });
   };
 
@@ -356,6 +398,108 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
                       <strong className="text-emerald-400 font-mono">
                         ≈ {(conf.capaciteJournalierePieces / (params.heuresTravailParJour || 8)).toFixed(1)} pcs / heure
                       </strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* SECTION 3 : TOURNÉES DE LIVRAISON PAR DESTINATION & OPTIMISATION PETITES COMMANDES */}
+          <div className="bg-slate-950/70 p-5 rounded-xl border border-slate-800 space-y-4">
+            <div>
+              <h4 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                <Truck className="w-4 h-4 text-sky-400" />
+                <span>Tournées de Livraison &amp; Délais Spécifiques (Oran, Constantine, Alger...)</span>
+              </h4>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Configurez les jours de livraison fixes par destination (ex: Constantine = Lundi &amp; Mercredi, Oran = Dimanche &amp; Mardi) et l'affectation automatique du délai le plus court pour les petites commandes (&le; 2 pièces).
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {(params.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT).map(tournee => {
+                const isOran = tournee.id === 'oran';
+                const isCne = tournee.id === 'cne';
+                const isAlger = tournee.id === 'alger';
+
+                return (
+                  <div
+                    key={tournee.id}
+                    className={`p-4 rounded-xl border transition ${
+                      isCne
+                        ? 'bg-blue-950/30 border-blue-800/60'
+                        : isOran
+                        ? 'bg-amber-950/30 border-amber-800/60'
+                        : 'bg-slate-900/80 border-slate-800'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <MapPin className={`w-4 h-4 ${isCne ? 'text-blue-400' : isOran ? 'text-amber-400' : 'text-emerald-400'}`} />
+                        <h5 className="text-sm font-bold text-white">{tournee.nom}</h5>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          {tournee.keywords.slice(0, 3).join(', ')}
+                        </span>
+                      </div>
+
+                      {/* Option Express petites commandes */}
+                      <div className="flex items-center gap-2 text-xs">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+                          <input
+                            type="checkbox"
+                            checked={tournee.delaiExpressPetitesCommandes}
+                            onChange={() => toggleTourneeExpress(tournee.id)}
+                            className="w-3.5 h-3.5 accent-amber-400 rounded"
+                          />
+                          <span className="font-semibold text-[11px]">Délai le plus court pour :</span>
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={tournee.maxPiecesExpress || 2}
+                          onChange={e => updateTourneeMaxPieces(tournee.id, parseInt(e.target.value, 10) || 2)}
+                          className="w-12 px-1.5 py-0.5 bg-slate-950 border border-slate-700 rounded text-center text-xs font-mono font-bold text-amber-300"
+                        />
+                        <span className="text-[11px] text-slate-400">pièces max</span>
+                      </div>
+                    </div>
+
+                    {/* Sélecteur des jours de livraison pour cette destination */}
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-semibold text-slate-400">
+                        Jours de départ / livraison atelier :
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {NOMS_JOURS_SEMAINE.map((nomJour, idx) => {
+                          const isSelected = tournee.joursLivraison.includes(idx);
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => toggleJourTournee(tournee.id, idx)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition border cursor-pointer ${
+                                isSelected
+                                  ? isCne
+                                    ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
+                                    : isOran
+                                    ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                                    : 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                                  : 'bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300 hover:border-slate-700'
+                              }`}
+                            >
+                              {nomJour.slice(0, 3)}
+                              {isSelected && <span className="ml-1 text-[10px]">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-slate-400 italic pt-1">
+                        {isCne && 'Constantine est planifié les Lundis et Mercredis. Les commandes sont optimisées pour être prêtes avant ces départs.'}
+                        {isOran && 'Oran est planifié les Dimanches et Mardis. Les commandes sont optimisées pour être prêtes avant ces départs.'}
+                        {isAlger && 'Somadal / Cristal Alger bénéficient de livraisons régulières et du délai le plus rapide possible.'}
+                      </div>
                     </div>
                   </div>
                 );

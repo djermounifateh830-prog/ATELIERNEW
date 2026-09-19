@@ -59,6 +59,7 @@ export interface OrdreFabricationModalProps {
   codeOF?: string;
   dateLivraisonPrevisionnelle?: string;
   dateLivraisonPrevisionnelleISO?: string;
+  dossierId?: string;
   onOFEmis?: () => void;
 }
 
@@ -470,6 +471,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   codeOF,
   dateLivraisonPrevisionnelle,
   dateLivraisonPrevisionnelleISO,
+  dossierId,
   onOFEmis
 }) => {
   const [ofEmis, setOfEmis] = useState<boolean>(false);
@@ -1560,6 +1562,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
     const suivi: SuiviOF = {
       id: match?.id || `of-${Date.now()}`,
+      dossierId: dossierId || match?.dossierId,
       numeroEmission: seqNum,
       codeOF: finalCodeOF,
       numCommande: refCommande || 'CMD',

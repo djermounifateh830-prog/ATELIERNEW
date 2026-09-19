@@ -81,7 +81,9 @@ export const TABLE_COLUMNS_DEFINITIONS: Record<TableId, { title: string; columns
       { id: 'dateLivraison', label: 'Échéance / Délai', defaultVisible: true },
       { id: 'nomClientFinal', label: 'Client Final', defaultVisible: true },
       { id: 'donneurOrdre', label: 'Donneur d\'Ordre', defaultVisible: true },
-      { id: 'nbArticles', label: 'Articles / Pièces', defaultVisible: true },
+      { id: 'famille', label: 'Famille(s)', defaultVisible: true },
+      { id: 'articles', label: 'Articles / Profilés', defaultVisible: true },
+      { id: 'nbArticles', label: 'Nbr Pièces (Pcs)', defaultVisible: true },
       { id: 'statut', label: 'Statut', defaultVisible: true },
       { id: 'actions', label: 'Actions', defaultVisible: true }
     ]

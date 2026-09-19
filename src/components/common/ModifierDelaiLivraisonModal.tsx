@@ -19,6 +19,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   suivisOF,
   onSaved
 }) => {
+  const [typePriorite, setTypePriorite] = useState<'INSTANTANE' | 'DIFFERE'>('DIFFERE');
   const [estPrioritaire, setEstPrioritaire] = useState<boolean>(false);
   const [motifPriorite, setMotifPriorite] = useState<string>('');
   const [dateSelectionnee, setDateSelectionnee] = useState<string>('');
@@ -30,7 +31,9 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   useEffect(() => {
     if (!isOpen || !of) return;
 
-    setEstPrioritaire(!!of.estPrioritaire);
+    const isInst = of.typePriorite === 'INSTANTANE' || !!of.estPrioritaire;
+    setTypePriorite(isInst ? 'INSTANTANE' : 'DIFFERE');
+    setEstPrioritaire(isInst);
     setMotifPriorite(of.motifPriorite || '');
 
     // Récupérer la date existante ou calculée
@@ -55,10 +58,11 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
         const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
         if (!isNaN(d.getTime())) {
           const texteFormatte = DelaisProductionService.formaterDateLivraison(d);
-          if (estPrioritaire) {
-            setTextePrevisualisation(`⚡ PRIORITAIRE : ${texteFormatte.replace(/^LIVRAISON\s*:\s*/i, '')}`);
+          const datePure = texteFormatte.replace(/^(LIVRAISON\s*PR[EÉ]VUE|D[EÉ]LAI\s*PR[EÉ]VISIONNEL|D[EÉ]LAI|LIVRAISON)\s*:\s*/i, '').trim();
+          if (typePriorite === 'INSTANTANE') {
+            setTextePrevisualisation(`⚡ INSTANTANÉ : ${datePure}`);
           } else {
-            setTextePrevisualisation(texteFormatte);
+            setTextePrevisualisation(datePure);
           }
           return;
         }
@@ -66,8 +70,8 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     } catch {
       // ignore
     }
-    setTextePrevisualisation(estPrioritaire ? '⚡ PRIORITAIRE' : 'Date de livraison définie');
-  }, [dateSelectionnee, estPrioritaire]);
+    setTextePrevisualisation(typePriorite === 'INSTANTANE' ? '⚡ INSTANTANÉ' : 'Date fixée');
+  }, [dateSelectionnee, typePriorite]);
 
   if (!isOpen || !of) return null;
 
@@ -107,8 +111,9 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     try {
       const updatedOF: SuiviOF = {
         ...of,
-        estPrioritaire,
-        motifPriorite: estPrioritaire ? motifPriorite.trim() : undefined,
+        typePriorite,
+        estPrioritaire: typePriorite === 'INSTANTANE',
+        motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite.trim() : undefined,
         dateLivraisonPrevisionnelle: textePrevisualisation,
         dateLivraisonPrevisionnelleISO: dateSelectionnee
       };
@@ -133,8 +138,9 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
             dossierModifie = true;
             return {
               ...d,
-              estPrioritaire,
-              motifPriorite: estPrioritaire ? motifPriorite.trim() : undefined,
+              typePriorite,
+              estPrioritaire: typePriorite === 'INSTANTANE',
+              motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite.trim() : undefined,
               dateLivraisonPrevisionnelle: textePrevisualisation,
               dateLivraisonPrevisionnelleISO: dateSelectionnee
             };
@@ -166,16 +172,16 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/70">
           <div className="flex items-center gap-3">
             <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-              estPrioritaire ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+              typePriorite === 'INSTANTANE' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40' : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
             }`}>
-              {estPrioritaire ? <Zap className="w-5 h-5 fill-rose-400" /> : <Calendar className="w-5 h-5" />}
+              {typePriorite === 'INSTANTANE' ? <Zap className="w-5 h-5 fill-rose-400" /> : <Calendar className="w-5 h-5" />}
             </div>
             <div>
               <h2 className="text-base font-black text-white flex items-center gap-2">
-                <span>Date de Livraison &amp; Priorité</span>
-                {estPrioritaire && (
+                <span>Date de Fixation &amp; Priorité Commande</span>
+                {typePriorite === 'INSTANTANE' && (
                   <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 text-[10px] uppercase font-black tracking-wide border border-rose-500/40">
-                    ⚡ Prioritaire
+                    ⚡ Instantané
                   </span>
                 )}
               </h2>
@@ -237,70 +243,73 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
             </div>
           </div>
 
-          {/* Activation Commande Prioritaire */}
-          <div className={`p-4 rounded-xl border transition ${
-            estPrioritaire
-              ? 'bg-rose-950/30 border-rose-500/50 shadow-inner'
-              : 'bg-slate-800/40 border-slate-700/60 hover:border-slate-600'
-          }`}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2.5">
-                <div className={`p-2 rounded-lg mt-0.5 ${
-                  estPrioritaire ? 'bg-rose-500/20 text-rose-400' : 'bg-slate-700/40 text-slate-400'
-                }`}>
-                  <Zap className={`w-4 h-4 ${estPrioritaire ? 'fill-rose-400 text-rose-400' : ''}`} />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-white flex items-center gap-2">
-                    <span>Commande Prioritaire / Urgente</span>
-                    {estPrioritaire && (
-                      <span className="px-1.5 py-0.2 rounded bg-rose-500 text-white font-mono text-[9px] font-black uppercase">
-                        Actif
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                    Priorise cet ordre dans le planning atelier et place le badge <strong>⚡ PRIORITAIRE</strong> sur les fiches de coupe et le suivi.
-                  </p>
-                </div>
-              </div>
+          {/* Type de Priorité Commande : Instantané vs Différé */}
+          <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-3">
+            <span className="block text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Type de Priorité Commande :
+            </span>
 
-              {/* Toggle Switch */}
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                role="switch"
-                aria-checked={estPrioritaire}
                 onClick={() => {
-                  const nouveauStatut = !estPrioritaire;
-                  setEstPrioritaire(nouveauStatut);
-                  if (nouveauStatut && !dateSelectionnee) {
-                    // Si on active la priorité, proposer aujourd'hui ou demain
-                    appliquerRaccourci(1);
-                  }
+                  setTypePriorite('INSTANTANE');
+                  setEstPrioritaire(true);
+                  appliquerRaccourci(0);
                 }}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
-                  estPrioritaire ? 'bg-rose-600' : 'bg-slate-700'
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between gap-1.5 ${
+                  typePriorite === 'INSTANTANE'
+                    ? 'bg-rose-950/40 border-rose-500 text-rose-200 shadow-md ring-1 ring-rose-500/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
                 }`}
               >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                    estPrioritaire ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className={`w-4 h-4 ${typePriorite === 'INSTANTANE' ? 'text-rose-400 fill-rose-400' : 'text-slate-500'}`} />
+                    <span className="font-bold text-xs text-white">⚡ Instantané</span>
+                  </div>
+                  {typePriorite === 'INSTANTANE' && <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping" />}
+                </div>
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  Fabrication immédiate. Classé au-devant des autres dans la file atelier.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTypePriorite('DIFFERE');
+                  setEstPrioritaire(false);
+                }}
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between gap-1.5 ${
+                  typePriorite === 'DIFFERE'
+                    ? 'bg-sky-950/40 border-sky-500 text-sky-200 shadow-md ring-1 ring-sky-500/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className={`w-4 h-4 ${typePriorite === 'DIFFERE' ? 'text-sky-400' : 'text-slate-500'}`} />
+                    <span className="font-bold text-xs text-white">⏳ Différé</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  Planification normale selon la file d'attente et tournées de livraison.
+                </p>
               </button>
             </div>
 
-            {/* Motif de la priorité */}
-            {estPrioritaire && (
-              <div className="mt-3 pt-3 border-t border-rose-500/30">
-                <label className="block text-xs font-bold text-rose-300 mb-1">
-                  Motif de la priorité (optionnel) :
+            {/* Motif si instantané */}
+            {typePriorite === 'INSTANTANE' && (
+              <div className="pt-2">
+                <label className="block text-[11px] font-semibold text-rose-300 mb-1">
+                  Motif de la priorité instantanée (optionnel) :
                 </label>
                 <input
                   type="text"
                   value={motifPriorite}
                   onChange={(e) => setMotifPriorite(e.target.value)}
-                  placeholder="ex: Chantier urgent, Demande expresse client, Remplacement SAV..."
+                  placeholder="ex: Urgence chantier, Remplacement immédiat..."
                   className="w-full bg-slate-900 border border-rose-500/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-rose-400"
                 />
               </div>

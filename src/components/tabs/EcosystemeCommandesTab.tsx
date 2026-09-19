@@ -1703,6 +1703,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [dateLivraisonPrevisionnelle, setDateLivraisonPrevisionnelle] = useState<string>('');
   const [dateLivraisonPrevisionnelleISO, setDateLivraisonPrevisionnelleISO] = useState<string>('');
   const [delaiFixeManuellement, setDelaiFixeManuellement] = useState<boolean>(false);
+  const [typePriorite, setTypePriorite] = useState<'INSTANTANE' | 'DIFFERE'>('DIFFERE');
   const [estPrioritaire, setEstPrioritaire] = useState<boolean>(false);
   const [motifPriorite, setMotifPriorite] = useState<string>('');
   const [estEnPause, setEstEnPause] = useState<boolean>(false);
@@ -1752,8 +1753,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       motifPause: motifPause,
       datePause: datePause,
       dureePauseJours: dureePauseJours,
-      estPrioritaire: estPrioritaire,
-      motifPriorite: motifPriorite,
+      typePriorite: typePriorite,
+      estPrioritaire: typePriorite === 'INSTANTANE' || estPrioritaire,
+      motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite : undefined,
       dateLivraisonPrevisionnelle: delaiFixeManuellement ? dateLivraisonPrevisionnelle : undefined,
       dateLivraisonPrevisionnelleISO: delaiFixeManuellement ? dateLivraisonPrevisionnelleISO : undefined,
     };
@@ -1762,7 +1764,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     numCommandeCaisson, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre,
     lignesCaissons, lignesTabliers, lignesMoustiquaires, lignesPrecadres,
     estEnPause, motifPause, datePause, dureePauseJours,
-    estPrioritaire, motifPriorite,
+    typePriorite, estPrioritaire, motifPriorite,
     delaiFixeManuellement, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO,
     dossiers
   ]);
@@ -3309,6 +3311,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setDelaiFixeManuellement(false);
     setDateLivraisonPrevisionnelle('');
     setDateLivraisonPrevisionnelleISO('');
+    setTypePriorite('DIFFERE');
     setEstPrioritaire(false);
     setMotifPriorite('');
     setEstEnPause(false);
@@ -3369,27 +3372,56 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // Retirer une commande spécifique du dossier en cours (avec mise à jour SQLite)
+  // Retirer / Supprimer une commande spécifique du dossier en cours (avec mise à jour SQLite et suppression des lignes)
   const handleRetirerCommandeDuDossier = async (cmdRef: string) => {
-    if (!confirm(`Voulez-vous vraiment retirer la commande N° ${cmdRef} de ce dossier ?`)) {
+    if (!confirm(`Voulez-vous vraiment supprimer la commande N° ${cmdRef} et toutes ses lignes de ce dossier ?\n\nCette action supprimera définitivement les lignes de cette commande et libérera les réservations d'OF associées.`)) {
       return;
     }
 
-    setLignesCaissons(prev => prev.filter(c => (c.refCommande || numCommandeCaisson) !== cmdRef));
-    setLignesTabliers(prev => prev.filter(t => (t.refCommande || numCommandeTablier) !== cmdRef));
-    setLignesMoustiquaires(prev => prev.filter(m => (m.refCommande || numCommandeMoustiquaire) !== cmdRef));
-    setLignesPrecadres(prev => prev.filter(p => (p.refCommande || numCommandePrecadre) !== cmdRef));
+    const cleanRef = cmdRef.trim().toLowerCase();
+    const matchCmd = (r?: string) => (r || '').trim().toLowerCase() === cleanRef;
+
+    setLignesCaissons(prev => prev.filter(c => !matchCmd(c.refCommande || numCommandeCaisson)));
+    setLignesTabliers(prev => prev.filter(t => !matchCmd(t.refCommande || numCommandeTablier)));
+    setLignesMoustiquaires(prev => prev.filter(m => !matchCmd(m.refCommande || numCommandeMoustiquaire)));
+    setLignesPrecadres(prev => prev.filter(p => !matchCmd(p.refCommande || numCommandePrecadre)));
+
+    // Nettoyer les OFs correspondants et libérer leurs réservations
+    try {
+      const ofs = await StorageService.getSuivisOF();
+      const ofsAssocies = ofs.filter(o => 
+        matchCmd(o.numCommande) || 
+        (o.dossierId && o.dossierId === editingDossierId && (o.titreSection?.toLowerCase().includes(cleanRef) || o.codeOF?.toLowerCase().includes(cleanRef)))
+      );
+      for (const ofItem of ofsAssocies) {
+        await StorageService.deleteSuiviOF(ofItem.id);
+      }
+    } catch (e) {
+      console.warn('Erreur nettoyage OFs:', e);
+    }
 
     // Si le dossier est déjà sauvegardé dans SQLite, retirer la commande du dossier en base
     if (editingDossierId) {
       const updatedDossiers = dossiers.map(d => {
         if (d.id === editingDossierId) {
+          const restCaissons = (d.articlesCaissons || []).filter(c => !matchCmd(c.refCommande || d.numCommandeCaisson || d.refCommande));
+          const restTabliers = (d.articlesTabliers || []).filter(t => !matchCmd(t.refCommande || d.numCommandeTablier || d.refCommande));
+          const restMoustiquaires = (d.articlesMoustiquaires || []).filter(m => !matchCmd(m.refCommande || d.numCommandeMoustiquaire || d.refCommande));
+          const restPrecadres = (d.articlesPrecadres || []).filter(p => !matchCmd(p.refCommande || d.numCommandePrecadre || d.refCommande));
+          const restConfirmees = (d.commandesConfirmees || []).filter(c => !matchCmd(c));
+
           return {
             ...d,
-            articlesCaissons: (d.articlesCaissons || []).filter(c => (c.refCommande || d.numCommandeCaisson || d.refCommande) !== cmdRef),
-            articlesTabliers: (d.articlesTabliers || []).filter(t => (t.refCommande || d.numCommandeTablier || d.refCommande) !== cmdRef),
-            articlesMoustiquaires: (d.articlesMoustiquaires || []).filter(m => (m.refCommande || d.numCommandeMoustiquaire || d.refCommande) !== cmdRef),
-            articlesPrecadres: (d.articlesPrecadres || []).filter(p => (p.refCommande || d.numCommandePrecadre || d.refCommande) !== cmdRef),
+            articlesCaissons: restCaissons,
+            articlesTabliers: restTabliers,
+            articlesMoustiquaires: restMoustiquaires,
+            articlesPrecadres: restPrecadres,
+            commandesConfirmees: restConfirmees,
+            numCommandeCaisson: matchCmd(d.numCommandeCaisson) ? '' : d.numCommandeCaisson,
+            numCommandeSousFace: matchCmd(d.numCommandeSousFace) ? '' : d.numCommandeSousFace,
+            numCommandeTablier: matchCmd(d.numCommandeTablier) ? '' : d.numCommandeTablier,
+            numCommandeMoustiquaire: matchCmd(d.numCommandeMoustiquaire) ? '' : d.numCommandeMoustiquaire,
+            numCommandePrecadre: matchCmd(d.numCommandePrecadre) ? '' : d.numCommandePrecadre,
           };
         }
         return d;
@@ -3398,7 +3430,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       if (onDossiersUpdated) onDossiersUpdated();
     }
 
-    showFlashNotification(`Commande N° ${cmdRef} retirée du dossier.`, 'warn');
+    showFlashNotification(`Commande N° ${cmdRef} et ses lignes supprimées du dossier avec succès.`, 'warn');
   };
 
   // 2. Démarrer une NOUVELLE COMMANDE dans le MÊME DOSSIER
@@ -3430,7 +3462,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setDateCommande(dossier.dateCommande);
 
     // Restaurer le délai de livraison et l'état de pause/interruption
-    setEstPrioritaire(!!dossier.estPrioritaire);
+    const isInst = dossier.typePriorite === 'INSTANTANE' || !!dossier.estPrioritaire;
+    setTypePriorite(isInst ? 'INSTANTANE' : 'DIFFERE');
+    setEstPrioritaire(isInst);
     setMotifPriorite(dossier.motifPriorite || '');
     setEstEnPause(!!dossier.estEnPause || dossier.statut === 'EN_PAUSE');
     setMotifPause(dossier.motifPause || '');
@@ -3448,8 +3482,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
     const formatCmd = (val?: string) => {
       if (!val || !val.trim()) return '';
-      return formaterRefCommandeAvecPrefixe(val, dossier.donneurOrdre, clientCodifications);
+      return val.trim();
     };
+
+    setFilterCmdActive('TOUTES');
+    setActiveNumCommande(dossier.refCommande || dossier.numCommandeTablier || dossier.numCommandeCaisson || '');
 
     // Restaurer les numéros propres à chaque famille
     setNumCommandeCaisson(formatCmd(dossier.numCommandeCaisson || dossier.articlesCaissons?.[0]?.refCommande || (dossier.articlesCaissons?.length ? dossier.refCommande : '')));
@@ -4177,8 +4214,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               dateLivraisonPrevisionnelleISO: finaleDateISO,
               delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
               datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : d.datesLivraisonCommandes,
-              estPrioritaire: finaleEstPrioritaire,
-              motifPriorite: finaleEstPrioritaire ? finaleMotifPriorite : undefined,
+              typePriorite: (finaleEstPrioritaire || typePriorite === 'INSTANTANE') ? 'INSTANTANE' : 'DIFFERE',
+              estPrioritaire: finaleEstPrioritaire || typePriorite === 'INSTANTANE',
+              motifPriorite: (finaleEstPrioritaire || typePriorite === 'INSTANTANE') ? (finaleMotifPriorite || motifPriorite) : undefined,
               estEnPause: estEnPause,
               motifPause: estEnPause ? motifPause : undefined,
               datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
@@ -4215,8 +4253,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           dateLivraisonPrevisionnelleISO: finaleDateISO,
           delaiPrevisionnelJours: estimationLivraisonLive.joursOuvresMax,
           datesLivraisonCommandes: Object.keys(datesCommandesToSave).length > 0 ? datesCommandesToSave : undefined,
-          estPrioritaire: finaleEstPrioritaire,
-          motifPriorite: finaleEstPrioritaire ? finaleMotifPriorite : undefined,
+          typePriorite: (finaleEstPrioritaire || typePriorite === 'INSTANTANE') ? 'INSTANTANE' : 'DIFFERE',
+          estPrioritaire: finaleEstPrioritaire || typePriorite === 'INSTANTANE',
+          motifPriorite: (finaleEstPrioritaire || typePriorite === 'INSTANTANE') ? (finaleMotifPriorite || motifPriorite) : undefined,
           estEnPause: estEnPause,
           motifPause: estEnPause ? motifPause : undefined,
           datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
@@ -4634,22 +4673,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             />
           </div>
 
-          {/* Délai & Date de Livraison Prévisionnelle (Directement visible & modifiable ici) */}
+          {/* Date de Livraison Fixée & Priorité Atelier */}
           <div className="lg:col-span-3">
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-[11px] font-semibold text-amber-300 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-amber-400" />
-                <span>Délai &amp; Livraison</span>
+              <label className="block text-[11px] font-semibold text-emerald-300 flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Date Livraison (Fixée)</span>
               </label>
-              <button
-                type="button"
-                onClick={() => setAfficherEditeurLivraison(prev => !prev)}
-                className="text-[10px] text-amber-400 hover:text-amber-300 underline font-medium flex items-center gap-0.5 cursor-pointer"
-                title="Modifier ou fixer manuellement la date de livraison pour ce dossier"
-              >
-                <Edit2 className="w-3 h-3" />
-                <span>{delaiFixeManuellement ? 'Fixée (modifier)' : 'Fixer la date'}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = typePriorite === 'INSTANTANE' ? 'DIFFERE' : 'INSTANTANE';
+                    setTypePriorite(next);
+                    setEstPrioritaire(next === 'INSTANTANE');
+                  }}
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-black uppercase transition cursor-pointer flex items-center gap-1 ${
+                    typePriorite === 'INSTANTANE'
+                      ? 'bg-rose-500 text-white shadow-xs'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Basculer entre Instantané (fabrication immédiate) et Différé"
+                >
+                  <Zap className={`w-2.5 h-2.5 ${typePriorite === 'INSTANTANE' ? 'fill-current' : ''}`} />
+                  <span>{typePriorite === 'INSTANTANE' ? '⚡ Instantané' : '⏳ Différé'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAfficherEditeurLivraison(prev => !prev)}
+                  className="text-[10px] text-amber-400 hover:text-amber-300 underline font-medium flex items-center gap-0.5 cursor-pointer"
+                  title="Fixer ou ajuster la date de livraison"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>Fixer</span>
+                </button>
+              </div>
             </div>
 
             <div
@@ -4657,11 +4715,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               className={`w-full border rounded-lg px-2.5 py-1.5 flex items-center justify-between cursor-pointer transition shadow-inner ${
                 estEnPause
                   ? 'bg-red-950/40 border-red-500/60 text-red-200 hover:bg-red-950/60'
-                  : delaiFixeManuellement
-                  ? 'bg-amber-950/40 border-amber-500/60 text-amber-200 hover:bg-amber-950/60'
+                  : typePriorite === 'INSTANTANE'
+                  ? 'bg-rose-950/40 border-rose-500/60 text-rose-200 hover:bg-rose-950/60'
                   : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-600'
               }`}
-              title="Cliquer pour afficher/masquer le panneau de réglage du délai de livraison et des pauses"
+              title="Cliquer pour afficher/masquer le panneau de fixation de la date et priorité"
             >
               <div className="flex flex-col min-w-0">
                 <span className="text-[11px] font-mono font-bold truncate flex items-center gap-1.5">
@@ -4670,25 +4728,32 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       <Pause className="w-3 h-3 text-red-400 animate-pulse" />
                       EN PAUSE
                     </span>
-                  ) : delaiFixeManuellement ? (
-                    <span className="text-amber-400 font-bold flex items-center gap-1">
-                      <Zap className="w-3 h-3 text-amber-400" />
-                      FIXÉ :
+                  ) : typePriorite === 'INSTANTANE' ? (
+                    <span className="text-rose-400 font-black flex items-center gap-1">
+                      <Zap className="w-3 h-3 text-rose-400 fill-rose-400" />
+                      ⚡ INSTANTANÉ :
                     </span>
                   ) : (
-                    <span className="text-sky-400 font-bold flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-sky-400" />
-                      PRÉVU :
+                    <span className="text-emerald-400 font-bold flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-emerald-400" />
+                      DATE :
                     </span>
                   )}
-                  <span className="truncate">{delaiFixeManuellement && dateLivraisonPrevisionnelle ? dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '') : estimationLivraisonLive.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')}</span>
+                  <span className="truncate">
+                    {(() => {
+                      const raw = delaiFixeManuellement && dateLivraisonPrevisionnelle
+                        ? dateLivraisonPrevisionnelle
+                        : estimationLivraisonLive.dateLivraisonFormattee;
+                      return raw.replace(/^(⚡\s*INSTANTAN[EÉ]\s*:\s*|⚡\s*PRIORITAIRE\s*:\s*|LIVRAISON\s*PR[EÉ]VUE\s*:\s*|D[EÉ]LAI\s*PR[EÉ]VISIONNEL\s*:\s*|D[EÉ]LAI\s*:\s*|LIVRAISON\s*:\s*)/i, '').trim();
+                    })()}
+                  </span>
                 </span>
                 <span className="text-[9px] text-slate-400 truncate">
                   {estEnPause
                     ? `Interruption : +${dureePauseJours}j (Pause en cours)`
-                    : delaiFixeManuellement
-                    ? 'Date personnalisée / fixée'
-                    : `Charge atelier : ${estimationLivraisonLive.joursOuvresMax}j ouvré(s)`}
+                    : typePriorite === 'INSTANTANE'
+                    ? 'Fabrication immédiate (en tête de file)'
+                    : 'Date de livraison fixée'}
                 </span>
               </div>
               <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${afficherEditeurLivraison ? 'rotate-180 text-amber-400' : ''}`} />
@@ -4696,13 +4761,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
         </div>
 
-        {/* Panneau dépliable de personnalisation du Délai & Mise en Pause de commande */}
+        {/* Panneau dépliable de fixation de la Date & Priorité Commande */}
         {afficherEditeurLivraison && (
-          <div className="mt-2.5 bg-slate-950 p-3.5 rounded-xl border border-amber-500/40 shadow-xl space-y-3 animate-fade-in text-xs">
+          <div className="mt-2.5 bg-slate-950 p-3.5 rounded-xl border border-emerald-500/40 shadow-xl space-y-3 animate-fade-in text-xs">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
               <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-amber-400" />
-                <span className="font-bold text-slate-100">Fixer / Ajuster la Livraison &amp; Gestion des Interruptions</span>
+                <Calendar className="w-4 h-4 text-emerald-400" />
+                <span className="font-bold text-slate-100">Fixer la Date de Livraison &amp; Priorité Commande</span>
               </div>
               <button
                 type="button"
@@ -4711,6 +4776,48 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               >
                 ✕ Fermer
               </button>
+            </div>
+
+            {/* Sélecteur Instantané vs Différé */}
+            <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold text-white block">Priorité de Fabrication de la Commande :</span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Les commandes <strong>Instantanées</strong> sont fabriquées immédiatement et classées au-devant des autres dans la file atelier.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTypePriorite('INSTANTANE');
+                    setEstPrioritaire(true);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
+                    typePriorite === 'INSTANTANE'
+                      ? 'bg-rose-600 text-white shadow-md ring-1 ring-rose-400'
+                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                  }`}
+                >
+                  <Zap className={`w-3.5 h-3.5 ${typePriorite === 'INSTANTANE' ? 'fill-current' : ''}`} />
+                  <span>⚡ Instantané</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTypePriorite('DIFFERE');
+                    setEstPrioritaire(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    typePriorite === 'DIFFERE'
+                      ? 'bg-sky-600 text-white shadow-md ring-1 ring-sky-400'
+                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>⏳ Différé</span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
@@ -4961,142 +5068,158 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       {/* 2. ONGLETS PAR FAMILLE DE PRODUIT (AVEC N° COMMANDE PROPRE À CHAQUE ONGLET)*/}
       {/* ========================================================================= */}
       <div className="space-y-0">
-        {/* BARRE D'ONGLETS (TABS) PAR FAMILLE */}
-        <div className="flex flex-wrap items-end gap-1.5 border-b-2 border-slate-700/80 px-2 pt-2 bg-slate-950/60 rounded-t-2xl">
+        {/* BARRE D'ONGLETS (TABS) PAR FAMILLE : TOUS SUR LA MÊME LIGNE */}
+        <div className="grid grid-cols-4 items-end gap-1.5 border-b-2 border-slate-700/80 px-2 pt-2 bg-slate-950/60 rounded-t-2xl w-full">
           {/* ONGLET 1: CAISSON & SF */}
           <button
             type="button"
             onClick={() => handleFamilleChange('CAISSON')}
-            className={`px-4 py-3 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border-t-2 border-x-2 -mb-[2px] ${
+            className={`w-full min-w-0 px-2.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between gap-1.5 border-t-2 border-x-2 -mb-[2px] ${
               familleArticle === 'CAISSON'
                 ? 'bg-slate-900 border-emerald-500 text-emerald-300 border-b-2 border-b-slate-900 shadow-lg z-10'
                 : 'bg-slate-950 text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            <Layers className={`w-4 h-4 ${familleArticle === 'CAISSON' ? 'text-emerald-400' : 'text-slate-500'}`} />
-            <span className="font-black">📦 Caisson & SF</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
-              familleArticle === 'CAISSON' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
-            }`}>
-              {lignesCaissons.length}
-            </span>
-            {estimationLivraisonLive.detailsParFamille['CAISSON'] && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40" title="Délai calculé pour la commande Caisson">
-                🕒 {estimationLivraisonLive.detailsParFamille['CAISSON'].dateLivraisonFormattee}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Layers className={`w-3.5 h-3.5 shrink-0 ${familleArticle === 'CAISSON' ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <span className="font-black truncate">📦 Caisson & SF</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                familleArticle === 'CAISSON' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {lignesCaissons.length}
               </span>
-            )}
-            {numCommandeCaisson && extraireNumeroSansPrefixe(numCommandeCaisson, clientCodifications) ? (
-              <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                <span>N° {numCommandeCaisson}</span>
-              </span>
-            ) : (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                ⚠️ Sans N°
-              </span>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {estimationLivraisonLive.detailsParFamille['CAISSON'] && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 whitespace-nowrap" title="Date fixée pour Caisson">
+                  📅 {estimationLivraisonLive.detailsParFamille['CAISSON'].dateLivraisonFormattee.replace(/^(LIVRAISON\s*PR[EÉ]VUE|D[EÉ]LAI\s*PR[EÉ]VISIONNEL|D[EÉ]LAI|LIVRAISON)\s*:\s*/i, '')}
+                </span>
+              )}
+              {numCommandeCaisson && extraireNumeroSansPrefixe(numCommandeCaisson, clientCodifications) ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 whitespace-nowrap">
+                  N° {numCommandeCaisson}
+                </span>
+              ) : (
+                <span className="text-[9px] px-1 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap">
+                  Sans N°
+                </span>
+              )}
+            </div>
           </button>
 
           {/* ONGLET 2: VOLET / TABLIER */}
           <button
             type="button"
             onClick={() => handleFamilleChange('TABLIER')}
-            className={`px-4 py-3 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border-t-2 border-x-2 -mb-[2px] ${
+            className={`w-full min-w-0 px-2.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between gap-1.5 border-t-2 border-x-2 -mb-[2px] ${
               familleArticle === 'TABLIER'
                 ? 'bg-slate-900 border-sky-500 text-sky-300 border-b-2 border-b-slate-900 shadow-lg z-10'
                 : 'bg-slate-950 text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            <Scissors className={`w-4 h-4 ${familleArticle === 'TABLIER' ? 'text-sky-400' : 'text-slate-500'}`} />
-            <span className="font-black">🪟 Volet / Tablier</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
-              familleArticle === 'TABLIER' ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-slate-800 text-slate-400'
-            }`}>
-              {lignesTabliers.length}
-            </span>
-            {estimationLivraisonLive.detailsParFamille['TABLIER'] && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950/80 text-sky-300 border border-sky-500/40" title="Délai calculé pour la commande Tablier">
-                🕒 {estimationLivraisonLive.detailsParFamille['TABLIER'].dateLivraisonFormattee}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Scissors className={`w-3.5 h-3.5 shrink-0 ${familleArticle === 'TABLIER' ? 'text-sky-400' : 'text-slate-500'}`} />
+              <span className="font-black truncate">🪟 Volet / Tablier</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                familleArticle === 'TABLIER' ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {lignesTabliers.length}
               </span>
-            )}
-            {numCommandeTablier && extraireNumeroSansPrefixe(numCommandeTablier, clientCodifications) ? (
-              <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-sky-500/20 text-sky-300 border border-sky-500/40 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-sky-400" />
-                <span>N° {numCommandeTablier}</span>
-              </span>
-            ) : (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                ⚠️ Sans N°
-              </span>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {estimationLivraisonLive.detailsParFamille['TABLIER'] && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-sky-950/80 text-sky-300 border border-sky-500/40 whitespace-nowrap" title="Date fixée pour Tablier">
+                  📅 {estimationLivraisonLive.detailsParFamille['TABLIER'].dateLivraisonFormattee.replace(/^(LIVRAISON\s*PR[EÉ]VUE|D[EÉ]LAI\s*PR[EÉ]VISIONNEL|D[EÉ]LAI|LIVRAISON)\s*:\s*/i, '')}
+                </span>
+              )}
+              {numCommandeTablier && extraireNumeroSansPrefixe(numCommandeTablier, clientCodifications) ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-black bg-sky-500/20 text-sky-300 border border-sky-500/40 whitespace-nowrap">
+                  N° {numCommandeTablier}
+                </span>
+              ) : (
+                <span className="text-[9px] px-1 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap">
+                  Sans N°
+                </span>
+              )}
+            </div>
           </button>
 
           {/* ONGLET 3: PRÉCADRE */}
           <button
             type="button"
             onClick={() => handleFamilleChange('PRECADRE')}
-            className={`px-4 py-3 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border-t-2 border-x-2 -mb-[2px] ${
+            className={`w-full min-w-0 px-2.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between gap-1.5 border-t-2 border-x-2 -mb-[2px] ${
               familleArticle === 'PRECADRE'
                 ? 'bg-slate-900 border-purple-500 text-purple-300 border-b-2 border-b-slate-900 shadow-lg z-10'
                 : 'bg-slate-950 text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            <Building2 className={`w-4 h-4 ${familleArticle === 'PRECADRE' ? 'text-purple-400' : 'text-slate-500'}`} />
-            <span className="font-black">🚪 Précadre</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
-              familleArticle === 'PRECADRE' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'bg-slate-800 text-slate-400'
-            }`}>
-              {lignesPrecadres.length}
-            </span>
-            {estimationLivraisonLive.detailsParFamille['PRECADRE'] && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40" title="Délai calculé pour la commande Précadre">
-                🕒 {estimationLivraisonLive.detailsParFamille['PRECADRE'].dateLivraisonFormattee}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Building2 className={`w-3.5 h-3.5 shrink-0 ${familleArticle === 'PRECADRE' ? 'text-purple-400' : 'text-slate-500'}`} />
+              <span className="font-black truncate">🚪 Précadre</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                familleArticle === 'PRECADRE' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {lignesPrecadres.length}
               </span>
-            )}
-            {numCommandePrecadre && extraireNumeroSansPrefixe(numCommandePrecadre, clientCodifications) ? (
-              <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-purple-400" />
-                <span>N° {numCommandePrecadre}</span>
-              </span>
-            ) : (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                ⚠️ Sans N°
-              </span>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {estimationLivraisonLive.detailsParFamille['PRECADRE'] && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40 whitespace-nowrap" title="Date fixée pour Précadre">
+                  📅 {estimationLivraisonLive.detailsParFamille['PRECADRE'].dateLivraisonFormattee.replace(/^(LIVRAISON\s*PR[EÉ]VUE|D[EÉ]LAI\s*PR[EÉ]VISIONNEL|D[EÉ]LAI|LIVRAISON)\s*:\s*/i, '')}
+                </span>
+              )}
+              {numCommandePrecadre && extraireNumeroSansPrefixe(numCommandePrecadre, clientCodifications) ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 whitespace-nowrap">
+                  N° {numCommandePrecadre}
+                </span>
+              ) : (
+                <span className="text-[9px] px-1 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap">
+                  Sans N°
+                </span>
+              )}
+            </div>
           </button>
 
           {/* ONGLET 4: MOUSTIQUAIRE */}
           <button
             type="button"
             onClick={() => handleFamilleChange('MOUSTIQUAIRE')}
-            className={`px-4 py-3 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border-t-2 border-x-2 -mb-[2px] ${
+            className={`w-full min-w-0 px-2.5 py-2.5 rounded-t-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between gap-1.5 border-t-2 border-x-2 -mb-[2px] ${
               familleArticle === 'MOUSTIQUAIRE'
                 ? 'bg-slate-900 border-amber-500 text-amber-300 border-b-2 border-b-slate-900 shadow-lg z-10'
                 : 'bg-slate-950 text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-900/60'
             }`}
           >
-            <Sliders className={`w-4 h-4 ${familleArticle === 'MOUSTIQUAIRE' ? 'text-amber-400' : 'text-slate-500'}`} />
-            <span className="font-black">🦟 Moustiquaire</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
-              familleArticle === 'MOUSTIQUAIRE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400'
-            }`}>
-              {lignesMoustiquaires.length}
-            </span>
-            {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'] && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-500/40" title="Délai calculé pour la commande Moustiquaire">
-                🕒 {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'].dateLivraisonFormattee}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Sliders className={`w-3.5 h-3.5 shrink-0 ${familleArticle === 'MOUSTIQUAIRE' ? 'text-amber-400' : 'text-slate-500'}`} />
+              <span className="font-black truncate">🦟 Moustiquaire</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                familleArticle === 'MOUSTIQUAIRE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400'
+              }`}>
+                {lignesMoustiquaires.length}
               </span>
-            )}
-            {numCommandeMoustiquaire && extraireNumeroSansPrefixe(numCommandeMoustiquaire, clientCodifications) ? (
-              <span className="text-[10px] px-2 py-0.5 rounded font-mono font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-amber-400" />
-                <span>N° {numCommandeMoustiquaire}</span>
-              </span>
-            ) : (
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
-                ⚠️ Sans N°
-              </span>
-            )}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'] && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-950/80 text-amber-300 border border-amber-500/40 whitespace-nowrap" title="Date fixée pour Moustiquaire">
+                  📅 {estimationLivraisonLive.detailsParFamille['MOUSTIQUAIRE'].dateLivraisonFormattee.replace(/^(LIVRAISON\s*PR[EÉ]VUE|D[EÉ]LAI\s*PR[EÉ]VISIONNEL|D[EÉ]LAI|LIVRAISON)\s*:\s*/i, '')}
+                </span>
+              )}
+              {numCommandeMoustiquaire && extraireNumeroSansPrefixe(numCommandeMoustiquaire, clientCodifications) ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap">
+                  N° {numCommandeMoustiquaire}
+                </span>
+              ) : (
+                <span className="text-[9px] px-1 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 whitespace-nowrap">
+                  Sans N°
+                </span>
+              )}
+            </div>
           </button>
         </div>
 
@@ -9095,10 +9218,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
                         disabled={cmd.total === 0}
                         className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 shadow transition active:scale-95 cursor-pointer"
-                        title={`Calculer l'optimisation de découpe pour la commande N° ${cmd.ref}`}
+                        title={`Calculer l'optimisation et générer l'OF pour la commande N° ${cmd.ref}`}
                       >
                         <Scissors className="w-3.5 h-3.5 text-amber-400" />
-                        <span>⚡ Plans de Découpe</span>
+                        <span>⚡ Optimisation & OF</span>
                       </button>
 
                       <button
@@ -9216,7 +9339,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </div>
                 <div>
                   <h2 className="text-base font-black text-slate-100 flex items-center gap-2">
-                    <span>Plan de Découpe Multi-Optimisé par Famille de Produit</span>
+                    <span>Optimisation & OF par Famille de Produit</span>
                     {multiOptActiveRefs.length > 0 && (
                       <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-bold border border-emerald-500/30">
                         {multiOptActiveRefs.length === 1 ? `Cmd ${multiOptActiveRefs[0]}` : `Cmds : ${multiOptActiveRefs.join(', ')}`}
@@ -9538,6 +9661,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             numCommandePrecadre={numCommandePrecadre}
             dateLivraisonPrevisionnelle={dateLivraisonPrevisionnelle}
             dateLivraisonPrevisionnelleISO={dateLivraisonPrevisionnelleISO}
+            dossierId={editingDossierId || undefined}
             onOFEmis={onDossiersUpdated}
           />
         );
@@ -9563,6 +9687,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           mapping={mapping}
           dateLivraisonPrevisionnelle={dateLivraisonPrevisionnelle}
           dateLivraisonPrevisionnelleISO={dateLivraisonPrevisionnelleISO}
+          dossierId={editingDossierId || undefined}
           onOFEmis={onDossiersUpdated}
         />
       )}

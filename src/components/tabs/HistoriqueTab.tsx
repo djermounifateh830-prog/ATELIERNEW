@@ -50,6 +50,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('TOUS');
+  const [familleFilter, setFamilleFilter] = useState<'TOUTES' | 'CAISSON' | 'TABLIER' | 'MOUSTIQUAIRE' | 'PRECADRE'>('TOUTES');
   const [suivisOF, setSuivisOF] = useState<SuiviOF[]>([]);
 
   // Mode d'affichage confortable pour grands volumes (Tableau compact par défaut ou Cartes)
@@ -86,7 +87,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   // Réinitialiser la pagination lors d'un changement de filtre ou de recherche
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, pageSize]);
+  }, [searchTerm, statusFilter, familleFilter, pageSize]);
 
   const handleSort = (col: SortColumn) => {
     if (sortColumn === col) {
@@ -115,6 +116,14 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 
   const filteredAndSortedDossiers = useMemo(() => {
     const filtered = dossiers.filter(d => {
+      // Filtre par Famille (Demande utilisateur: si je veux visualiser par famille permettre)
+      if (familleFilter !== 'TOUTES') {
+        if (familleFilter === 'CAISSON' && (!d.articlesCaissons || d.articlesCaissons.length === 0)) return false;
+        if (familleFilter === 'TABLIER' && (!d.articlesTabliers || d.articlesTabliers.length === 0)) return false;
+        if (familleFilter === 'MOUSTIQUAIRE' && (!d.articlesMoustiquaires || d.articlesMoustiquaires.length === 0)) return false;
+        if (familleFilter === 'PRECADRE' && (!d.articlesPrecadres || d.articlesPrecadres.length === 0)) return false;
+      }
+
       const term = searchTerm.toLowerCase().trim();
       if (!term) {
         return statusFilter === 'TOUS' || d.statut === statusFilter;
@@ -199,7 +208,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
         ? String(valA).localeCompare(String(valB))
         : String(valB).localeCompare(String(valA));
     });
-  }, [dossiers, searchTerm, statusFilter, sortColumn, sortDirection, suivisOF]);
+  }, [dossiers, searchTerm, statusFilter, familleFilter, sortColumn, sortDirection, suivisOF]);
 
   // Dossiers paginés
   const totalItems = filteredAndSortedDossiers.length;
@@ -210,11 +219,30 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
     return filteredAndSortedDossiers.slice(start, start + pageSize);
   }, [filteredAndSortedDossiers, currentPage, pageSize]);
 
+  // Règle utilisateur: quand je supprime une commande, elle doit être supprimée du dossier avec ses lignes,
+  // et cela doit se faire uniquement dans écosystème ou historique (avec libération des réservations associées)
   const handleSupprimerDossier = async (id: string, ref: string) => {
-    if (confirm(`Voulez-vous vraiment supprimer définitivement le dossier ${ref} de l'historique ?`)) {
-      const updated = dossiers.filter(d => d.id !== id);
-      await StorageService.saveDossiers(updated);
-      if (onRefreshData) onRefreshData();
+    if (confirm(`Voulez-vous vraiment supprimer définitivement la commande/dossier "${ref}" ?\n\n✓ Tous les repères, articles et lignes associées seront supprimés.\n✓ Les ordres de fabrication (OF) et réservations de profilés seront immédiatement libérés.`)) {
+      try {
+        // 1. Supprimer le dossier dans SQLite
+        const updated = dossiers.filter(d => d.id !== id);
+        await StorageService.saveDossiers(updated);
+
+        // 2. Nettoyer les suivis OF liés pour libérer proprement les réservations
+        const ofs = await StorageService.getSuivisOF();
+        const refLower = (ref || '').toLowerCase().trim();
+        const ofsToDelete = ofs.filter(o => 
+          (o.dossierId && o.dossierId === id) || 
+          (refLower && o.numCommande && o.numCommande.toLowerCase().trim() === refLower)
+        );
+        for (const of of ofsToDelete) {
+          await StorageService.deleteSuiviOF(of.id);
+        }
+
+        if (onRefreshData) onRefreshData();
+      } catch (err: any) {
+        alert("Erreur lors de la suppression du dossier : " + (err.message || err));
+      }
     }
   };
 
@@ -285,24 +313,60 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
           </div>
         </div>
 
-        {/* Stats Pills */}
+        {/* Stats Pills & Filtre Rapide Famille */}
         <div className="flex items-center gap-2 font-mono text-xs">
-          <span className="px-3 py-1 rounded-lg bg-slate-950 border border-emerald-500/30 text-emerald-300 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setFamilleFilter(prev => prev === 'CAISSON' ? 'TOUTES' : 'CAISSON')}
+            className={`px-3 py-1 rounded-lg border flex items-center gap-1.5 transition cursor-pointer ${
+              familleFilter === 'CAISSON'
+                ? 'bg-emerald-600 text-white border-emerald-400 font-bold shadow-md ring-2 ring-emerald-400/40'
+                : 'bg-slate-950 border-emerald-500/30 text-emerald-300 hover:border-emerald-400/60'
+            }`}
+            title="Cliquer pour filtrer uniquement les commandes avec Caissons"
+          >
             <Layers className="w-3.5 h-3.5" />
             <span>{stats.nbCaissons} Caissons</span>
-          </span>
-          <span className="px-3 py-1 rounded-lg bg-slate-950 border border-sky-500/30 text-sky-300 flex items-center gap-1.5">
+          </button>
+          <button
+            type="button"
+            onClick={() => setFamilleFilter(prev => prev === 'TABLIER' ? 'TOUTES' : 'TABLIER')}
+            className={`px-3 py-1 rounded-lg border flex items-center gap-1.5 transition cursor-pointer ${
+              familleFilter === 'TABLIER'
+                ? 'bg-sky-600 text-white border-sky-400 font-bold shadow-md ring-2 ring-sky-400/40'
+                : 'bg-slate-950 border-sky-500/30 text-sky-300 hover:border-sky-400/60'
+            }`}
+            title="Cliquer pour filtrer uniquement les commandes avec Tabliers"
+          >
             <Scissors className="w-3.5 h-3.5" />
             <span>{stats.nbTabliers} Tabliers</span>
-          </span>
-          <span className="px-3 py-1 rounded-lg bg-slate-950 border border-amber-500/30 text-amber-300 flex items-center gap-1.5">
+          </button>
+          <button
+            type="button"
+            onClick={() => setFamilleFilter(prev => prev === 'MOUSTIQUAIRE' ? 'TOUTES' : 'MOUSTIQUAIRE')}
+            className={`px-3 py-1 rounded-lg border flex items-center gap-1.5 transition cursor-pointer ${
+              familleFilter === 'MOUSTIQUAIRE'
+                ? 'bg-amber-600 text-white border-amber-400 font-bold shadow-md ring-2 ring-amber-400/40'
+                : 'bg-slate-950 border-amber-500/30 text-amber-300 hover:border-amber-400/60'
+            }`}
+            title="Cliquer pour filtrer uniquement les commandes avec Moustiquaires"
+          >
             <Sliders className="w-3.5 h-3.5" />
             <span>{stats.nbMoustiquaires} Mstq</span>
-          </span>
-          <span className="px-3 py-1 rounded-lg bg-slate-950 border border-purple-500/30 text-purple-300 flex items-center gap-1.5">
+          </button>
+          <button
+            type="button"
+            onClick={() => setFamilleFilter(prev => prev === 'PRECADRE' ? 'TOUTES' : 'PRECADRE')}
+            className={`px-3 py-1 rounded-lg border flex items-center gap-1.5 transition cursor-pointer ${
+              familleFilter === 'PRECADRE'
+                ? 'bg-purple-600 text-white border-purple-400 font-bold shadow-md ring-2 ring-purple-400/40'
+                : 'bg-slate-950 border-purple-500/30 text-purple-300 hover:border-purple-400/60'
+            }`}
+            title="Cliquer pour filtrer uniquement les commandes avec Précadres"
+          >
             <Building2 className="w-3.5 h-3.5" />
             <span>{stats.nbPrecadres} Précadres</span>
-          </span>
+          </button>
         </div>
       </div>
 
@@ -332,6 +396,22 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Filtre Famille (Demande utilisateur: si je veux visualiser par famille permettre) */}
+          <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-lg border border-slate-700 text-xs">
+            <span className="text-slate-400 text-[11px] font-semibold">Famille :</span>
+            <select
+              value={familleFilter}
+              onChange={e => setFamilleFilter(e.target.value as any)}
+              className="bg-transparent text-amber-300 font-bold focus:outline-none cursor-pointer text-xs"
+            >
+              <option value="TOUTES" className="bg-slate-900 text-slate-200">Toutes familles</option>
+              <option value="CAISSON" className="bg-slate-900 text-emerald-300">📦 Caissons</option>
+              <option value="TABLIER" className="bg-slate-900 text-sky-300">🪟 Tabliers</option>
+              <option value="MOUSTIQUAIRE" className="bg-slate-900 text-amber-300">🦟 Moustiquaires</option>
+              <option value="PRECADRE" className="bg-slate-900 text-purple-300">🚪 Précadres</option>
+            </select>
+          </div>
+
           {/* Filtre Statut */}
           <div className="flex items-center gap-1.5">
             <Filter className="w-3.5 h-3.5 text-purple-400" />
@@ -340,12 +420,12 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               onChange={e => setStatusFilter(e.target.value)}
               className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-purple-300 font-bold focus:outline-none"
             >
-              <option value="TOUS">Tous les statuts</option>
-              <option value="EN_ATTENTE">En attente</option>
-              <option value="EN_COURS">En cours de fabrication</option>
-              <option value="CLOTURE">Clôturé / Prêt livraison</option>
-              <option value="LIVRE">Livré (Fiche de Transfert)</option>
-              <option value="TERMINE">Terminé</option>
+              <option value="TOUS" className="bg-slate-900 text-slate-200">Tous les statuts</option>
+              <option value="EN_ATTENTE" className="bg-slate-900 text-slate-200">En attente</option>
+              <option value="EN_COURS" className="bg-slate-900 text-slate-200">En cours de fabrication</option>
+              <option value="CLOTURE" className="bg-slate-900 text-slate-200">Clôturé / Prêt livraison</option>
+              <option value="LIVRE" className="bg-slate-900 text-slate-200">Livré (Fiche de Transfert)</option>
+              <option value="TERMINE" className="bg-slate-900 text-slate-200">Terminé</option>
             </select>
           </div>
 
@@ -525,13 +605,19 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                   {columnConfigService.isColumnVisible('historique', 'donneurOrdre') && (
                     <th className="py-3 px-3">Donneur d'Ordre</th>
                   )}
+                  {columnConfigService.isColumnVisible('historique', 'famille') && (
+                    <th className="py-3 px-3">Famille(s)</th>
+                  )}
+                  {columnConfigService.isColumnVisible('historique', 'articles') && (
+                    <th className="py-3 px-3">Articles &amp; Profilés</th>
+                  )}
                   {columnConfigService.isColumnVisible('historique', 'nbArticles') && (
                     <th
                       onClick={() => handleSort('nbArticles')}
                       className="py-3 px-3 text-center cursor-pointer hover:bg-slate-900 transition"
                     >
                       <div className="flex items-center justify-center gap-1.5">
-                        <span>Articles / Pièces</span>
+                        <span>Nbr Pièces (Pcs)</span>
                         {sortColumn === 'nbArticles' ? (
                           sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-amber-400" /> : <ArrowDown className="w-3.5 h-3.5 text-amber-400" />
                         ) : (
@@ -568,6 +654,32 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                   const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
                   const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
                   const dateLiv = getDossierDateLivraison(dossier);
+
+                  // Collecter les familles présentes (Demande utilisateur : dans historique affichage par tableau je veux avoir l'info art pcs famille)
+                  const famillesPresentes: string[] = [];
+                  if (nbCaisson > 0) famillesPresentes.push('CAISSON');
+                  if (nbTablier > 0) famillesPresentes.push('TABLIER');
+                  if (nbMstq > 0) famillesPresentes.push('MOUSTIQUAIRE');
+                  if (nbPrecadre > 0) famillesPresentes.push('PRECADRE');
+
+                  // Collecter les articles et profilés principaux
+                  const articleLabels: string[] = [];
+                  (dossier.articlesCaissons || []).forEach(c => {
+                    const label = c.articleDesignation || c.articleCode || 'Caisson';
+                    if (!articleLabels.includes(label)) articleLabels.push(label);
+                  });
+                  (dossier.articlesTabliers || []).forEach(t => {
+                    const label = t.articleDesignation || t.articleCode || 'Tablier';
+                    if (!articleLabels.includes(label)) articleLabels.push(label);
+                  });
+                  (dossier.articlesMoustiquaires || []).forEach(m => {
+                    const label = m.articleDesignationCadre || m.modele || 'Moustiquaire';
+                    if (!articleLabels.includes(label)) articleLabels.push(label);
+                  });
+                  (dossier.articlesPrecadres || []).forEach(p => {
+                    const label = p.articleDesignation || p.articleCode || 'Précadre';
+                    if (!articleLabels.includes(label)) articleLabels.push(label);
+                  });
 
                   // Repères trouvés si recherche active
                   const term = searchTerm.toLowerCase().trim();
@@ -656,33 +768,87 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                         </td>
                       )}
 
-                      {/* Articles / Pièces */}
+                      {/* Famille(s) (Demande utilisateur: dans historique affichage par tableau je veux avoir l'info art pcs famille) */}
+                      {columnConfigService.isColumnVisible('historique', 'famille') && (
+                        <td className="py-2.5 px-3">
+                          <div className="flex flex-wrap gap-1">
+                            {famillesPresentes.map(f => (
+                              <span
+                                key={f}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
+                                  f === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                                  f === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800' :
+                                  f === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
+                                  'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                }`}
+                              >
+                                {f}
+                              </span>
+                            ))}
+                            {famillesPresentes.length === 0 && (
+                              <span className="text-slate-500 text-xs">—</span>
+                            )}
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Articles / Profilés */}
+                      {columnConfigService.isColumnVisible('historique', 'articles') && (
+                        <td className="py-2.5 px-3 max-w-[240px]">
+                          <div className="flex flex-wrap gap-1">
+                            {articleLabels.slice(0, 2).map((art, aIdx) => (
+                              <span
+                                key={aIdx}
+                                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[11px] font-medium truncate max-w-[180px] border border-slate-700"
+                                title={art}
+                              >
+                                {art}
+                              </span>
+                            ))}
+                            {articleLabels.length > 2 && (
+                              <span
+                                className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 text-[10px] font-bold border border-slate-700/60"
+                                title={articleLabels.slice(2).join(', ')}
+                              >
+                                +{articleLabels.length - 2}
+                              </span>
+                            )}
+                            {articleLabels.length === 0 && (
+                              <span className="text-slate-500 text-xs">—</span>
+                            )}
+                          </div>
+                        </td>
+                      )}
+
+                      {/* Nbr Pièces (Pcs) */}
                       {columnConfigService.isColumnVisible('historique', 'nbArticles') && (
                         <td className="py-2.5 px-3 text-center">
-                          <div className="inline-flex items-center gap-1 font-mono text-[11px]">
-                            <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold" title="Total lignes articles">
-                              {totalArticles} pcs
+                          <div className="inline-flex items-center gap-1.5 font-mono">
+                            <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold text-xs shadow-xs" title="Total nombre de pièces">
+                              {totalArticles} pc{totalArticles > 1 ? 's' : ''}
                             </span>
-                            {nbCaisson > 0 && (
-                              <span className="px-1 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-[10px]" title={`${nbCaisson} caisson(s)`}>
-                                {nbCaisson}C
-                              </span>
-                            )}
-                            {nbTablier > 0 && (
-                              <span className="px-1 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-500/30 text-[10px]" title={`${nbTablier} volet(s)`}>
-                                {nbTablier}V
-                              </span>
-                            )}
-                            {nbMstq > 0 && (
-                              <span className="px-1 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-500/30 text-[10px]" title={`${nbMstq} moustiquaire(s)`}>
-                                {nbMstq}M
-                              </span>
-                            )}
-                            {nbPrecadre > 0 && (
-                              <span className="px-1 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-500/30 text-[10px]" title={`${nbPrecadre} précadre(s)`}>
-                                {nbPrecadre}P
-                              </span>
-                            )}
+                            <div className="flex items-center gap-0.5 text-[10px]">
+                              {nbCaisson > 0 && (
+                                <span className="px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30" title={`${nbCaisson} caisson(s)`}>
+                                  {nbCaisson}C
+                                </span>
+                              )}
+                              {nbTablier > 0 && (
+                                <span className="px-1 py-0.2 rounded bg-sky-950 text-sky-300 border border-sky-500/30" title={`${nbTablier} volet(s)`}>
+                                  {nbTablier}V
+                                </span>
+                              )}
+                              {nbMstq > 0 && (
+                                <span className="px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/30" title={`${nbMstq} moustiquaire(s)`}>
+                                  {nbMstq}M
+                                </span>
+                              )}
+                              {nbPrecadre > 0 && (
+                                <span className="px-1 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-500/30" title={`${nbPrecadre} précadre(s)`}>
+                                  {nbPrecadre}P
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </td>
                       )}

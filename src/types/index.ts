@@ -267,6 +267,7 @@ export interface DossierCommandeGlobal {
   articlesMoustiquaires: BesoinMoustiquaire[];
   articlesCaissons: CommandeCaisson[];
   articlesPrecadres: CommandePrecadre[];
+  destination?: string;
   notes?: string;
   statut: StatutDossier;
   commandesConfirmees?: string[]; // Références des commandes confirmées individuellement au sein du dossier
@@ -495,6 +496,7 @@ export interface SuiviOF {
   dateLivraisonPrevisionnelleISO?: string; // Date ISO prévisionnelle (ex: "2026-09-16")
   delaiPrevisionnelJours?: number;
   estPrioritaire?: boolean; // Commande prioritaire / urgente
+  typePriorite?: TypePrioriteCommande; // 'INSTANTANE' | 'DIFFERE' | 'NORMAL'
   motifPriorite?: string;   // Motif de la priorité
   nomChauffeur?: string;
   estEnPause?: boolean;     // OF suspendu temporairement (rupture profilé, attente client)
@@ -587,11 +589,22 @@ export interface ParametresFamilleProduction {
   delaiFixeJours?: number;            // Marge fixe optionnelle en jours ouvrés (0 par défaut)
 }
 
+export interface RegleTourneeDestination {
+  id: string;
+  nom: string;                        // ex: "CONSTANTINE", "ORAN", "ALGER / SOMADAL / CRISTAL"
+  keywords: string[];                 // ex: ["CONSTANTINE", "CNE"], ["ORAN"], ["ALGER", "SOMADAL", "CRISTAL"]
+  joursLivraison: number[];           // 0: Dimanche, 1: Lundi, 2: Mardi, 3: Mercredi, 4: Jeudi, 5: Vendredi, 6: Samedi
+  delaiExpressPetitesCommandes: boolean; // Si true, pour <= maxPiecesExpress
+  maxPiecesExpress: number;           // Seuil nombre de pièces (ex: 2 pièces)
+  actif: boolean;
+}
+
 export interface ParametresProductionAtelier {
   // Jours ouvrés activés (0: Dimanche, 1: Lundi, 2: Mardi, 3: Mercredi, 4: Jeudi, 5: Vendredi, 6: Samedi)
   joursOuvres: number[];
   heuresTravailParJour: number;       // ex: 8 heures (ou 10h)
   familles: Record<FamilleProduit, ParametresFamilleProduction>;
+  tourneesDestinations?: RegleTourneeDestination[];
 }
 
 export interface DetailOFEnCours {

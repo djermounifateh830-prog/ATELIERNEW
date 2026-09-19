@@ -52,8 +52,10 @@ import {
   Activity,
   Zap,
   Scale,
-  FolderOpen
+  FolderOpen,
+  Undo2
 } from 'lucide-react';
+import { extraireNumeroSansPrefixe } from '../../services/codificationService';
 
 interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
@@ -122,6 +124,48 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
   const [isDossierDetailOpen, setIsDossierDetailOpen] = useState<boolean>(false);
 
+  const matchCmdInDossier = (d: DossierCommandeGlobal, query: string): boolean => {
+    if (!query) return false;
+    const q = query.toLowerCase().trim();
+    const qClean = extraireNumeroSansPrefixe(q, clientCodifications).toLowerCase().trim();
+
+    // 1. refCommande principale
+    const ref = (d.refCommande || '').toLowerCase().trim();
+    const refClean = extraireNumeroSansPrefixe(ref, clientCodifications).toLowerCase().trim();
+    if (ref && (ref === q || ref.includes(q) || q.includes(ref))) return true;
+    if (qClean && refClean && (refClean === qClean)) return true;
+
+    // 2. Sous-commandes et commandes confirmées
+    const subRefs = [
+      d.numCommandeCaisson,
+      d.numCommandeSousFace,
+      d.numCommandeTablier,
+      d.numCommandeMoustiquaire,
+      d.numCommandePrecadre,
+      ...(d.commandesConfirmees || [])
+    ].filter(Boolean) as string[];
+
+    if (subRefs.some(s => {
+      const sub = s.toLowerCase().trim();
+      const subClean = extraireNumeroSansPrefixe(sub, clientCodifications).toLowerCase().trim();
+      return sub === q || q.includes(sub) || sub.includes(q) || (qClean && subClean && subClean === qClean);
+    })) return true;
+
+    // 3. Lignes d'articles à l'intérieur du dossier
+    const linesRefs = [
+      ...(d.articlesCaissons || []).map(c => c.refCommande),
+      ...(d.articlesTabliers || []).map(t => t.refCommande),
+      ...(d.articlesMoustiquaires || []).map(m => m.refCommande),
+      ...(d.articlesPrecadres || []).map(p => p.refCommande)
+    ].filter(Boolean) as string[];
+
+    return linesRefs.some(r => {
+      const rLower = r.toLowerCase().trim();
+      const rClean = extraireNumeroSansPrefixe(rLower, clientCodifications).toLowerCase().trim();
+      return rLower === q || q.includes(rLower) || rLower.includes(q) || (qClean && rClean && rClean === qClean);
+    });
+  };
+
   const getLinkedDossierForOF = (of: SuiviOF): DossierCommandeGlobal | null => {
     if (!of) return null;
     const ofCmd = (of.numCommande || '').toLowerCase().trim();
@@ -133,23 +177,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       if (found) return found;
     }
 
-    // 2. Recherche par refCommande exacte ou sous-commandes
+    // 2. Recherche approfondie par ref, sous-références et lignes
     if (ofCmd || ofCode) {
-      const found = dossiers.find(d => {
-        const ref = (d.refCommande || '').toLowerCase().trim();
-        if (ref && (ref === ofCmd || ref.includes(ofCmd) || ofCmd.includes(ref))) return true;
-        const subRefs = [
-          d.numCommandeCaisson,
-          d.numCommandeSousFace,
-          d.numCommandeTablier,
-          d.numCommandeMoustiquaire,
-          d.numCommandePrecadre
-        ].filter(Boolean) as string[];
-        return subRefs.some(s => {
-          const sub = s.toLowerCase().trim();
-          return sub === ofCmd || ofCmd.includes(sub) || sub.includes(ofCmd);
-        });
-      });
+      const found = dossiers.find(d => matchCmdInDossier(d, ofCmd) || (ofCode && matchCmdInDossier(d, ofCode)));
       if (found) return found;
     }
 
@@ -220,6 +250,31 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       })) : []
     };
     return virtualDossier;
+  };
+
+  const handleChargerDossierDansEcosysteme = async (of: SuiviOF) => {
+    let dossier = getLinkedDossierForOF(of);
+    // Si le dossier trouvé est virtuel ou introuvable dans le state local, aller chercher directement dans SQLite frais
+    if (!dossier || dossier.id.startsWith('virt-')) {
+      try {
+        const freshDossiers = await StorageService.getDossiers();
+        if (freshDossiers && freshDossiers.length > 0) {
+          const found = freshDossiers.find(d => 
+            (of.dossierId && d.id === of.dossierId) || 
+            matchCmdInDossier(d, of.numCommande || of.codeOF || '')
+          );
+          if (found) dossier = found;
+        }
+      } catch (e) {
+        console.warn('Erreur chargement SQLite:', e);
+      }
+    }
+
+    if (dossier && onLoadDossierInEcosysteme) {
+      onLoadDossierInEcosysteme(dossier);
+    } else if (onNavigateToTab) {
+      onNavigateToTab('ecosysteme');
+    }
   };
 
   const handleVisualiserCommande = (of: SuiviOF) => {
@@ -296,7 +351,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
   // Tri de la table
   type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille';
-  const [sortKey, setSortKey] = useState<SortKey>('numeroEmission');
+  const [sortKey, setSortKey] = useState<SortKey>('statut');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const handleSort = (key: SortKey) => {
@@ -387,6 +442,32 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         return true;
       })
       .sort((a, b) => {
+        // RÈGLE : Les commandes prioritaires (INSTANTANÉ) sont classées au-devant des autres
+        const isAInstant = a.typePriorite === 'INSTANTANE' || a.estPrioritaire;
+        const isBInstant = b.typePriorite === 'INSTANTANE' || b.estPrioritaire;
+        if (isAInstant && !isBInstant) return -1;
+        if (!isAInstant && isBInstant) return 1;
+
+        if (sortKey === 'statut') {
+          // Tri par statut : EMIS (en cours) au tout début !
+          const STATUT_RANKS: Record<string, number> = {
+            'EMIS': 1,
+            'RETOUR_EN_ATTENTE': 2,
+            'CLOTURE': 3,
+            'LIVRE': 4,
+            'ANNULE': 5
+          };
+          const rankA = STATUT_RANKS[a.statut] || 99;
+          const rankB = STATUT_RANKS[b.statut] || 99;
+          if (rankA !== rankB) {
+            return sortDir === 'asc' ? rankA - rankB : rankB - rankA;
+          }
+          // Si même statut : affichage par numéro d'émission le plus récent
+          const na = a.numeroEmission || 0;
+          const nb = b.numeroEmission || 0;
+          return nb - na;
+        }
+
         if (sortKey === 'numeroEmission') {
           const na = a.numeroEmission || 0;
           const nb = b.numeroEmission || 0;
@@ -454,18 +535,50 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     }
   };
 
-  const handleSupprimerOF = async (of: SuiviOF) => {
+  // Annulation de l'émission : dans Ordres en Cours, la commande ne peut pas être supprimée sèchement,
+  // mais son émission est annulée pour permettre la mise à jour et libérer immédiatement toutes les réservations
+  const handleAnnulerEmissionOF = async (of: SuiviOF) => {
     const isClosed = of.statut === 'CLOTURE' || of.statut === 'LIVRE';
     const message = isClosed
-      ? `Voulez-vous vraiment supprimer l'OF clôturé N° "${of.numCommande}" (${of.nomClient}) ?\n\n⚠️ IMPORTANT : Le stock physique sera intégralement et fidèlement restauré (restitution des barres neuves et chutes consommées, retrait des chutes générées).`
-      : `Voulez-vous vraiment supprimer le suivi de l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nToutes les réservations associées seront libérées.`;
+      ? `Voulez-vous vraiment annuler l'émission de l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\n⚠️ IMPORTANT : Cet OF est déjà clôturé/livré. Le stock sera fidèlement restauré (restitution des barres et chutes consommées), ses réservations seront annulées, et la commande sera ré-ouverte pour mise à jour dans l'Écosystème.`
+      : `Voulez-vous annuler l'émission de l'OF N° "${of.numCommande}" (${of.nomClient}) pour mise à jour ?\n\n✓ Toutes les réservations de barres et de chutes associées seront libérées.\n✓ La commande sera déverrouillée pour permettre sa modification ou mise à jour dans l'Écosystème.`;
 
     if (confirm(message)) {
       try {
+        // 1. Supprimer le suivi de l'OF (libère automatiquement toutes les réservations de stock et de chutes)
         await StorageService.deleteSuiviOF(of.id);
+
+        // 2. Débloquer la commande correspondante dans le dossier global (retirer de commandesConfirmees)
+        try {
+          const freshDossiers = await StorageService.getDossiers();
+          const cmdRefClean = (of.numCommande || '').toLowerCase().trim();
+          let modifDossier = false;
+
+          const updatedDossiers = freshDossiers.map(d => {
+            const isMatch = (of.dossierId && d.id === of.dossierId) || matchCmdInDossier(d, of.numCommande || '');
+            if (isMatch) {
+              modifDossier = true;
+              const newConfirmees = (d.commandesConfirmees || []).filter(c => c.toLowerCase().trim() !== cmdRefClean);
+              const newStatut = newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut;
+              return {
+                ...d,
+                statut: newStatut,
+                commandesConfirmees: newConfirmees
+              };
+            }
+            return d;
+          });
+
+          if (modifDossier) {
+            await StorageService.saveDossiers(updatedDossiers);
+          }
+        } catch (errD) {
+          console.warn('Erreur déblocage dossier associé:', errD);
+        }
+
         onRefreshData();
       } catch (err: any) {
-        alert("Erreur lors de la suppression de l'OF : " + (err.message || err));
+        alert("Erreur lors de l'annulation de l'émission : " + (err.message || err));
       }
     }
   };
@@ -770,13 +883,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'produit') && (
-                  <SortHeader col="famille" label="Famille & Section" className="px-3 min-w-[170px]" />
+                  <SortHeader col="famille" label="Famille & Nbr Pcs" className="px-3 min-w-[160px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'date') && (
                   <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'delai') && (
-                  <th className="py-2.5 px-2 text-center w-36">Délai Prévisionnel</th>
+                  <th className="py-2.5 px-2 text-center w-36">Date Livraison (Fixée)</th>
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'profils') && (
                   <th className="py-2.5 px-2 text-center w-28">Barres &amp; Chutes</th>
@@ -913,7 +1026,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                         </td>
                       )}
 
-                      {/* Famille & Section */}
+                      {/* Famille & Nbr de Pièces (Règle utilisateur: affichez famille nbr de pcs au lieu de section) */}
                       {columnConfigService.isColumnVisible('of_encours', 'produit') && (
                         <td className="py-2.5 px-3">
                           <div className="flex items-center gap-2">
@@ -925,8 +1038,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             }`}>
                               {of.famille}
                             </span>
-                            <span className="font-semibold text-slate-300 text-xs truncate max-w-[220px]" title={of.titreSection}>
-                              {of.titreSection}
+                            <span className="font-bold text-slate-200 text-xs whitespace-nowrap bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700 shadow-xs">
+                              {(() => {
+                                const nb = of.nombrePieces || (of.lignesRetour && of.lignesRetour.length > 0
+                                  ? of.lignesRetour.reduce((acc, l) => acc + (Number(l.quantite) || 1), 0)
+                                  : 1);
+                                return `${nb} pc${nb > 1 ? 's' : ''}`;
+                              })()}
                             </span>
                           </div>
                         </td>
@@ -947,12 +1065,16 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                         </td>
                       )}
 
-                      {/* Délai Prévisionnel & Date de Livraison */}
+                      {/* Date de Livraison Fixée */}
                       {columnConfigService.isColumnVisible('of_encours', 'delai') && (
                         <td className="py-2.5 px-2 text-center font-mono">
                           {(() => {
-                            const texteLivraison = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
-                            const isPrioritaire = !!of.estPrioritaire;
+                            const rawDate = of.dateLivraisonPrevisionnelle || DelaisProductionService.estimerDelaiOF(of, suivisOF).texteFormatte;
+                            const isInstant = of.typePriorite === 'INSTANTANE' || !!of.estPrioritaire;
+                            const cleanDate = rawDate
+                              .replace(/^(⚡\s*INSTANTAN[EÉ]\s*:\s*|⚡\s*PRIORITAIRE\s*:\s*|LIVRAISON\s*PR[EÉ]VUE\s*:\s*|D[EÉ]LAI\s*PR[EÉ]VISIONNEL\s*:\s*|D[EÉ]LAI\s*:\s*|LIVRAISON\s*:\s*)/i, '')
+                              .trim();
+
                             return (
                               <button
                                 type="button"
@@ -961,21 +1083,21 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                                   setIsEditDelaiModalOpen(true);
                                 }}
                                 className="group inline-flex flex-col items-center gap-1 cursor-pointer transition p-1 rounded-lg hover:bg-slate-800/80 max-w-full"
-                                title="Cliquer pour modifier la date de livraison ou définir la priorité atelier"
+                                title="Cliquer pour fixer la date de livraison ou définir la priorité (Instantané / Différé)"
                               >
-                                {isPrioritaire && (
+                                {isInstant && (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black uppercase tracking-wide animate-pulse">
                                     <Zap className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
-                                    <span>Prioritaire</span>
+                                    <span>⚡ Instantané</span>
                                   </span>
                                 )}
                                 <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border font-mono font-bold text-[11px] shadow-xs whitespace-nowrap transition ${
-                                  isPrioritaire
+                                  isInstant
                                     ? 'bg-rose-950/40 border-rose-500/50 text-rose-200 group-hover:border-rose-400 group-hover:bg-rose-900/50'
-                                    : 'bg-amber-500/15 border-amber-500/35 text-amber-300 group-hover:border-amber-400 group-hover:bg-amber-500/25'
+                                    : 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300 group-hover:border-emerald-400 group-hover:bg-emerald-500/25'
                                 }`}>
-                                  <Clock className={`w-3 h-3 ${isPrioritaire ? 'text-rose-400' : 'text-amber-400'} shrink-0`} />
-                                  <span>{texteLivraison}</span>
+                                  <Calendar className={`w-3 h-3 ${isInstant ? 'text-rose-400' : 'text-emerald-400'} shrink-0`} />
+                                  <span>{cleanDate}</span>
                                   <Edit2 className="w-2.5 h-2.5 ml-0.5 opacity-40 group-hover:opacity-100 transition-opacity text-slate-300" />
                                 </div>
                               </button>
@@ -1105,14 +1227,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           {/* Bouton Recharger Commande dans Écosystème */}
                           <button
                             type="button"
-                            onClick={() => {
-                              const dossier = getLinkedDossierForOF(of);
-                              if (dossier && onLoadDossierInEcosysteme) {
-                                onLoadDossierInEcosysteme(dossier);
-                              } else if (onNavigateToTab) {
-                                onNavigateToTab('ecosysteme');
-                              }
-                            }}
+                            onClick={() => handleChargerDossierDansEcosysteme(of)}
                             className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
                             title="Recharger cette commande complète dans l'Écosystème pour mise à jour ou consultation"
                           >
@@ -1174,13 +1289,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             </button>
                           )}
 
-                          {/* Bouton Supprimer */}
+                          {/* Bouton Annuler Émission (Règle utilisateur: dans ordres en cours, on ne peut pas supprimer la commande mais juste annuler son émission pour mise à jour et libérer ses réservations) */}
                           <button
-                            onClick={() => handleSupprimerOF(of)}
-                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
-                            title={isCloture || isLivre ? "Supprimer cet OF (restaure automatiquement le stock)" : "Supprimer cet OF"}
+                            type="button"
+                            onClick={() => handleAnnulerEmissionOF(of)}
+                            className="px-2 py-1 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-rose-100 border border-rose-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                            title="Annuler l'émission : débloque la commande pour mise à jour dans l'Écosystème et annule immédiatement les réservations de barres et chutes"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Undo2 className="w-3 h-3 text-rose-400" />
+                            <span>Annuler émission</span>
                           </button>
                         </div>
                       </td>

@@ -1,6 +1,7 @@
 import {
   FamilleProduit,
   ParametresProductionAtelier,
+  RegleTourneeDestination,
   DossierCommandeGlobal,
   SuiviOF,
   EstimationLivraisonDossier,
@@ -21,10 +22,41 @@ export const NOMS_JOURS_SEMAINE = [
   'SAMEDI'
 ];
 
+export const TOURNEES_DESTINATIONS_DEFAUT: RegleTourneeDestination[] = [
+  {
+    id: 'cne',
+    nom: 'Constantine (CNE)',
+    keywords: ['CONSTANTINE', 'CNE', 'CRISTAL CNE', 'CRISTAL CONSTANTINE', 'SOMADAL CONSTANTINE', 'SOMADAL CNE'],
+    joursLivraison: [1, 3], // Lundi et Mercredi
+    delaiExpressPetitesCommandes: true,
+    maxPiecesExpress: 2,
+    actif: true
+  },
+  {
+    id: 'oran',
+    nom: 'Oran',
+    keywords: ['ORAN', 'CRISTAL ORAN', 'SOMADAL ORAN'],
+    joursLivraison: [0, 2], // Dimanche et Mardi
+    delaiExpressPetitesCommandes: true,
+    maxPiecesExpress: 2,
+    actif: true
+  },
+  {
+    id: 'alger',
+    nom: 'Alger / Somadal / Cristal Alger',
+    keywords: ['ALGER', 'SOMADAL ALGER', 'CRISTAL ALGER', 'SOMADAL', 'CRISTAL', 'ATELIER ALGER'],
+    joursLivraison: [0, 1, 2, 3, 4], // Tous les jours ouvrés (Dimanche au Jeudi)
+    delaiExpressPetitesCommandes: true,
+    maxPiecesExpress: 2,
+    actif: true
+  }
+];
+
 export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
   // Jours ouvrés activés (0: Dimanche, 1: Lundi, 2: Mardi, 3: Mercredi, 4: Jeudi, 6: Samedi - personnalisable)
   joursOuvres: [0, 1, 2, 3, 4], // Dimanche au Jeudi par défaut (semaine standard atelier)
   heuresTravailParJour: 8,
+  tourneesDestinations: TOURNEES_DESTINATIONS_DEFAUT,
   familles: {
     CAISSON: {
       famille: 'CAISSON',
@@ -73,6 +105,9 @@ export class DelaisProductionService {
         cachedParametres = {
           ...PARAMETRES_PRODUCTION_DEFAUT,
           ...parsed,
+          tourneesDestinations: parsed.tourneesDestinations && parsed.tourneesDestinations.length > 0
+            ? parsed.tourneesDestinations
+            : PARAMETRES_PRODUCTION_DEFAUT.tourneesDestinations,
           familles: {
             ...PARAMETRES_PRODUCTION_DEFAUT.familles,
             ...(parsed.familles || {})
@@ -97,6 +132,9 @@ export class DelaisProductionService {
           cachedParametres = {
             ...PARAMETRES_PRODUCTION_DEFAUT,
             ...json.data,
+            tourneesDestinations: json.data.tourneesDestinations && json.data.tourneesDestinations.length > 0
+              ? json.data.tourneesDestinations
+              : PARAMETRES_PRODUCTION_DEFAUT.tourneesDestinations,
             familles: {
               ...PARAMETRES_PRODUCTION_DEFAUT.familles,
               ...(json.data.familles || {})
@@ -402,6 +440,58 @@ export class DelaisProductionService {
   }
 
   /**
+   * Compte le nombre total de pièces dans un dossier toutes familles confondues
+   */
+  static compterPiecesDossierTotal(dossier: DossierCommandeGlobal): number {
+    const counts = this.compterPiecesDossierParFamille(dossier);
+    return (counts.CAISSON || 0) + (counts.PRECADRE || 0) + (counts.MOUSTIQUAIRE || 0) + (counts.TABLIER || 0);
+  }
+
+  /**
+   * Trouve la règle de tournée de livraison correspondant à un client ou donneur d'ordre
+   * (ex: Constantine -> Lundi & Mercredi, Oran -> Dimanche & Mardi, Somadal/Cristal Alger -> délai au plus court)
+   */
+  static trouverTourneeDestination(
+    texteClient: string,
+    params?: ParametresProductionAtelier
+  ): RegleTourneeDestination | null {
+    if (!texteClient) return null;
+    const p = params || this.getParametres();
+    const tournees = p.tourneesDestinations || TOURNEES_DESTINATIONS_DEFAUT;
+    const clean = texteClient.toUpperCase();
+
+    for (const t of tournees) {
+      if (!t.actif) continue;
+      for (const kw of t.keywords) {
+        if (clean.includes(kw.toUpperCase())) {
+          return t;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Calcule la prochaine date de livraison valide pour une tournée donnée
+   * (ex: Constantine = Lundi et Mercredi, Oran = Dimanche et Mardi)
+   */
+  static getProchaineDateLivraisonTournee(datePrete: Date, joursLivraison: number[]): Date {
+    if (!joursLivraison || joursLivraison.length === 0) return new Date(datePrete);
+    const d = new Date(datePrete);
+    d.setHours(0, 0, 0, 0);
+
+    // On avance jour par jour jusqu'à trouver un jour faisant partie des jours de livraison.
+    // Si la commande est prête un jour de tournée, elle peut partir ce jour-là.
+    for (let i = 0; i < 14; i++) {
+      if (joursLivraison.includes(d.getDay())) {
+        return d;
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    return d;
+  }
+
+  /**
    * Détermine le nombre réel de pièces à usiner/fabriquer associées à un OF (quantité réelle de pièces, non de lignes)
    */
   static compterPiecesOF(of: SuiviOF, dossiers?: DossierCommandeGlobal[]): number {
@@ -586,9 +676,34 @@ export class DelaisProductionService {
     // Si 1 jour de travail : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
     // Si N jours de travail : achèvement à (N - 1) jours ouvrés après le jour de démarrage
     const joursAjoutes = Math.max(0, joursProduction - 1) + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
-    const dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursAjoutes, params.joursOuvres);
+    let dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursAjoutes, params.joursOuvres);
+
+    // Prise en compte de la destination et de la taille de commande (<= 2 pièces)
+    const tournee = this.trouverTourneeDestination(`${targetOF.nomClient || ''} ${targetOF.donneurOrdre || ''}`, params);
+    const isInstantane = targetOF.typePriorite === 'INSTANTANE' || targetOF.estPrioritaire;
+
+    if (tournee && tournee.actif) {
+      if (piecesTarget <= (tournee.maxPiecesExpress || 2) && tournee.delaiExpressPetitesCommandes) {
+        // Commande <= 2 pièces : délai le plus court possible
+        if (tournee.id === 'alger' || tournee.nom.toUpperCase().includes('ALGER')) {
+          dateLivraison = ofDateRef;
+        } else {
+          // Pour Oran et Constantine, les pièces sont prêtes immédiatement et livrées au prochain jour de tournée
+          dateLivraison = this.getProchaineDateLivraisonTournee(ofDateRef, tournee.joursLivraison);
+        }
+      } else {
+        // Commande standard : calée sur la prochaine tournée de livraison
+        dateLivraison = this.getProchaineDateLivraisonTournee(dateLivraison, tournee.joursLivraison);
+      }
+    } else if (isInstantane) {
+      dateLivraison = ofDateRef;
+    }
+
     const texteDate = this.formaterDateLivraison(dateLivraison);
-    let texteFinal = targetOF.estPrioritaire ? `⚡ PRIORITAIRE : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}` : texteDate;
+    let texteFinal = isInstantane
+      ? `⚡ INSTANTANÉ : ${texteDate.replace(/^LIVRAISON\s*:\s*/i, '')}`
+      : texteDate;
+
     if (estEnPauseOF) {
       texteFinal = `⏸️ EN PAUSE : ${targetOF.motifPause || 'Rupture'}`;
     }
@@ -597,7 +712,7 @@ export class DelaisProductionService {
       dateLivraison,
       texteFormatte: texteFinal,
       dateLivraisonISO: this.toISODateString(dateLivraison),
-      joursOuvresRequis: targetOF.estPrioritaire ? Math.max(1, Math.ceil(piecesTarget / capaciteJour)) : joursRequis
+      joursOuvresRequis: isInstantane ? 1 : Math.max(1, Math.ceil((dateLivraison.getTime() - ofDateRef.getTime()) / (1000 * 60 * 60 * 24)))
     };
   }
 
@@ -908,10 +1023,44 @@ export class DelaisProductionService {
       };
     }
 
+    // Prise en compte de la destination, des tournées de livraison et des petites commandes (<= 2 pièces)
+    const clientTexteDossier = `${dossier.donneurOrdre || ''} ${dossier.nomClientFinal || ''} ${dossier.destination || ''}`;
+    const tourneeDossier = this.trouverTourneeDestination(clientTexteDossier, params);
+    const totalPiecesDossier = this.compterPiecesDossierTotal(dossier);
+    const isInstantaneDossier = dossier.typePriorite === 'INSTANTANE' || dossier.estPrioritaire;
+
+    if (tourneeDossier && tourneeDossier.actif) {
+      if (totalPiecesDossier <= (tourneeDossier.maxPiecesExpress || 2) && tourneeDossier.delaiExpressPetitesCommandes) {
+        // Commande <= 2 pièces : délai le plus court possible
+        if (tourneeDossier.id === 'alger' || tourneeDossier.nom.toUpperCase().includes('ALGER')) {
+          // Alger / Somadal / Cristal Alger : délai immédiat / au plus court
+          dateMax = dateDepart;
+          joursMax = 1;
+        } else {
+          // Constantine (Lundi & Mercredi) ou Oran (Dimanche & Mardi) :
+          // Production immédiate au plus court (1 jour), livraison calée sur la prochaine tournée de livraison
+          dateMax = this.getProchaineDateLivraisonTournee(dateDepart, tourneeDossier.joursLivraison);
+          joursMax = Math.max(1, Math.ceil((dateMax.getTime() - dateDepart.getTime()) / (1000 * 60 * 60 * 24)));
+        }
+      } else {
+        // Commande > 2 pièces : respecte les journées de livraison de la destination
+        dateMax = this.getProchaineDateLivraisonTournee(dateMax, tourneeDossier.joursLivraison);
+        joursMax = Math.max(joursMax, Math.ceil((dateMax.getTime() - dateDepart.getTime()) / (1000 * 60 * 60 * 24)));
+      }
+    } else if (isInstantaneDossier) {
+      // Priorité instantanée : fabrication immédiate
+      dateMax = dateDepart;
+      joursMax = 1;
+    }
+
     const texteDateDossier = this.formaterDateLivraison(dateMax);
-    const texteFinalDossier = estEnPauseDossier
-      ? `⏸️ EN PAUSE : ${dossier.motifPause || 'Rupture'}`
+    let texteFinalDossier = isInstantaneDossier
+      ? `⚡ INSTANTANÉ : ${texteDateDossier.replace(/^LIVRAISON\s*:\s*/i, '')}`
       : texteDateDossier;
+
+    if (estEnPauseDossier) {
+      texteFinalDossier = `⏸️ EN PAUSE : ${dossier.motifPause || 'Rupture'}`;
+    }
 
     return {
       hasPieces: true,
