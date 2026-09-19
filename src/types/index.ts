@@ -445,6 +445,8 @@ export interface LigneRetourOF {
   remarque?: string;
   /** Identifiant physique exact de la chute en base de données si connue */
   chuteId?: string;
+  /** Quantité de pièces ou barres concernées par cette ligne (optionnel, 1 par défaut) */
+  quantite?: number;
 }
 
 /**
