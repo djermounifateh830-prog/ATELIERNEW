@@ -3607,25 +3607,34 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   }, [editingDossierId, numCommande, familleArticle, clientDeMonClient]);
 
   useEffect(() => {
+    let targetFam: FamilleProduit | undefined = undefined;
+    let bridgeDossier: DossierCommandeGlobal | null = null;
+
+    // Lire le bridge persistant localStorage pour sécuriser le passage inter-onglets
+    try {
+      const stored = localStorage.getItem('3m_dossier_to_load');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed) {
+          targetFam = parsed.targetFamille;
+          bridgeDossier = parsed.dossier || null;
+        }
+        localStorage.removeItem('3m_dossier_to_load');
+      }
+    } catch (e) {
+      console.warn('Erreur lecture bridge dossier localStorage:', e);
+    }
+
     // 1. Depuis props (prioritaire)
     if (selectedDossierToLoad) {
-      handleReprendreCommande(selectedDossierToLoad);
+      handleReprendreCommande(selectedDossierToLoad, targetFam);
       onClearSelectedDossier?.();
       return;
     }
 
-    // 2. Depuis le bridge persistant localStorage pour sécuriser le passage inter-onglets
-    try {
-      const stored = localStorage.getItem('3m_dossier_to_load');
-      if (stored) {
-        localStorage.removeItem('3m_dossier_to_load');
-        const parsed = JSON.parse(stored);
-        if (parsed && parsed.dossier) {
-          handleReprendreCommande(parsed.dossier, parsed.targetFamille);
-        }
-      }
-    } catch (e) {
-      console.warn('Erreur lecture bridge dossier localStorage:', e);
+    // 2. Depuis le bridge localStorage si props non renseigné
+    if (bridgeDossier) {
+      handleReprendreCommande(bridgeDossier, targetFam);
     }
   }, [selectedDossierToLoad, onClearSelectedDossier]);
 
@@ -7885,7 +7894,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimiser Découpe CT &amp; SF</span>
+                      <span>⚡ Optimisation &amp; OF (CT &amp; SF)</span>
                     </button>
 
                     <button
@@ -8155,7 +8164,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimiser Découpe Tabliers &amp; Volets</span>
+                      <span>⚡ Optimisation &amp; OF (Tabliers &amp; Volets)</span>
                     </button>
 
                     <button
@@ -8456,7 +8465,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimiser Découpe Moustiquaires (Maille &amp; Profilés)</span>
+                      <span>⚡ Optimisation &amp; OF (Moustiquaires)</span>
                     </button>
 
                     <button
@@ -9024,7 +9033,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       title="Lancer l'optimisation de découpe directement pour cette commande"
                     >
                       <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimiser Découpe Précadres</span>
+                      <span>⚡ Optimisation &amp; OF (Précadres)</span>
                     </button>
 
                     <button
@@ -9131,7 +9140,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               title="Optimiser toutes les commandes et familles de ce dossier par famille de produit distincte"
             >
               <Zap className="w-4 h-4 text-amber-300" />
-              <span>⚡ Multi-Optimiser Tout le Dossier ({commandesDossierEnCours.length})</span>
+              <span>⚡ Optimisation &amp; OF Tout le Dossier ({commandesDossierEnCours.length})</span>
             </button>
 
             <button

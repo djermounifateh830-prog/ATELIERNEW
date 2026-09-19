@@ -17,7 +17,7 @@ import { SecurityLockOverlay } from './components/common/SecurityLockOverlay';
 import { StorageService } from './services/storage';
 import { userService } from './services/userService';
 import { realtimeSync } from './services/realtimeSync';
-import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert } from './types';
+import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert, FamilleProduit } from './types';
 
 const getInitialTab = (): string => {
   try {
@@ -116,7 +116,12 @@ export default function App() {
     return unsub;
   }, [activeTab, handleSetActiveTab]);
 
-  const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal) => {
+  const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal, targetFamille?: FamilleProduit) => {
+    try {
+      localStorage.setItem('3m_dossier_to_load', JSON.stringify({ dossier, targetFamille }));
+    } catch (e) {
+      console.warn('Erreur stockage bridge dossier localStorage:', e);
+    }
     setSelectedDossierToLoad(dossier);
     handleSetActiveTab('ecosysteme');
   }, [handleSetActiveTab]);

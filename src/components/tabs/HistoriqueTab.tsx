@@ -783,22 +783,27 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                         </td>
                       )}
 
-                      {/* Famille(s) (Demande utilisateur: dans historique affichage par tableau je veux avoir l'info art pcs famille) */}
+                      {/* Famille(s) (Demande utilisateur: dans historique affichage par tableau je veux avoir l'info art pcs famille + visualiser par famille) */}
                       {columnConfigService.isColumnVisible('historique', 'famille') && (
                         <td className="py-2.5 px-3">
                           <div className="flex flex-wrap gap-1">
                             {famillesPresentes.map(f => (
-                              <span
+                              <button
                                 key={f}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
-                                  f === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
-                                  f === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800' :
-                                  f === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
-                                  'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                type="button"
+                                onClick={() => setFamilleFilter(prev => prev === f ? 'TOUTES' : f as any)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 transition cursor-pointer hover:scale-105 active:scale-95 ${
+                                  familleFilter === f ? 'ring-2 ring-white shadow-md ' : ''
+                                }${
+                                  f === 'TABLIER' ? 'bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900' :
+                                  f === 'CAISSON' ? 'bg-sky-950 text-sky-300 border border-sky-800 hover:bg-sky-900' :
+                                  f === 'MOUSTIQUAIRE' ? 'bg-purple-950 text-purple-300 border border-purple-800 hover:bg-purple-900' :
+                                  'bg-emerald-950 text-emerald-300 border border-emerald-800 hover:bg-emerald-900'
                                 }`}
+                                title={`Cliquer pour filtrer uniquement la famille ${f}`}
                               >
                                 {f}
-                              </span>
+                              </button>
                             ))}
                             {famillesPresentes.length === 0 && (
                               <span className="text-slate-500 text-xs">—</span>
@@ -807,30 +812,32 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                         </td>
                       )}
 
-                      {/* Articles / Profilés */}
+                      {/* Articles / Profilés (Détails Articles par Famille) */}
                       {columnConfigService.isColumnVisible('historique', 'articles') && (
-                        <td className="py-2.5 px-3 max-w-[240px]">
-                          <div className="flex flex-wrap gap-1">
-                            {articleLabels.slice(0, 2).map((art, aIdx) => (
-                              <span
-                                key={aIdx}
-                                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[11px] font-medium truncate max-w-[180px] border border-slate-700"
-                                title={art}
-                              >
-                                {art}
-                              </span>
-                            ))}
-                            {articleLabels.length > 2 && (
-                              <span
-                                className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 text-[10px] font-bold border border-slate-700/60"
-                                title={articleLabels.slice(2).join(', ')}
-                              >
-                                +{articleLabels.length - 2}
-                              </span>
-                            )}
-                            {articleLabels.length === 0 && (
-                              <span className="text-slate-500 text-xs">—</span>
-                            )}
+                        <td className="py-2.5 px-3 max-w-[280px]">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex flex-wrap gap-1">
+                              {articleLabels.slice(0, 3).map((art, aIdx) => (
+                                <span
+                                  key={aIdx}
+                                  className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 text-[11px] font-medium truncate max-w-[200px] border border-slate-700"
+                                  title={art}
+                                >
+                                  {art}
+                                </span>
+                              ))}
+                              {articleLabels.length > 3 && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 text-[10px] font-bold border border-slate-700/60"
+                                  title={articleLabels.slice(3).join(', ')}
+                                >
+                                  +{articleLabels.length - 3}
+                                </span>
+                              )}
+                              {articleLabels.length === 0 && (
+                                <span className="text-slate-500 text-xs">—</span>
+                              )}
+                            </div>
                           </div>
                         </td>
                       )}
@@ -838,29 +845,29 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                       {/* Nbr Pièces (Pcs) */}
                       {columnConfigService.isColumnVisible('historique', 'nbArticles') && (
                         <td className="py-2.5 px-3 text-center">
-                          <div className="inline-flex items-center gap-1.5 font-mono">
-                            <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-bold text-xs shadow-xs" title="Total nombre de pièces">
+                          <div className="inline-flex flex-col items-center gap-1 font-mono">
+                            <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-700 text-white font-black text-xs shadow-xs" title="Total nombre de pièces">
                               {totalArticles} pc{totalArticles > 1 ? 's' : ''}
                             </span>
-                            <div className="flex items-center gap-0.5 text-[10px]">
+                            <div className="flex items-center gap-1 text-[10px]">
                               {nbCaisson > 0 && (
-                                <span className="px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30" title={`${nbCaisson} caisson(s)`}>
-                                  {nbCaisson}C
+                                <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold" title={`${nbCaisson} caisson(s)`}>
+                                  {nbCaisson} CT
                                 </span>
                               )}
                               {nbTablier > 0 && (
-                                <span className="px-1 py-0.2 rounded bg-sky-950 text-sky-300 border border-sky-500/30" title={`${nbTablier} volet(s)`}>
-                                  {nbTablier}V
+                                <span className="px-1.5 py-0.2 rounded bg-sky-950 text-sky-300 border border-sky-500/40 font-bold" title={`${nbTablier} volet(s) tablier`}>
+                                  {nbTablier} TB
                                 </span>
                               )}
                               {nbMstq > 0 && (
-                                <span className="px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/30" title={`${nbMstq} moustiquaire(s)`}>
-                                  {nbMstq}M
+                                <span className="px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-500/40 font-bold" title={`${nbMstq} moustiquaire(s)`}>
+                                  {nbMstq} MQ
                                 </span>
                               )}
                               {nbPrecadre > 0 && (
-                                <span className="px-1 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-500/30" title={`${nbPrecadre} précadre(s)`}>
-                                  {nbPrecadre}P
+                                <span className="px-1.5 py-0.2 rounded bg-purple-950 text-purple-300 border border-purple-500/40 font-bold" title={`${nbPrecadre} précadre(s)`}>
+                                  {nbPrecadre} PC
                                 </span>
                               )}
                             </div>
@@ -1326,7 +1333,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                           {fam.dossiers.map((dossier, dIdx) => {
                             const pcs = fam.getPcs(dossier);
                             const arts = Array.from(new Set(fam.getArticles(dossier)));
-                            const dateLiv = formatDelai(dossier);
+                            const dateLiv = getDossierDateLivraison(dossier);
                             const isCloture = dossier.statut === 'CLOTURE' || dossier.statut === 'LIVRE' || dossier.statut === 'TERMINE';
 
                             return (

@@ -61,7 +61,7 @@ interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
   onRefreshData: () => void;
   onNavigateToTab?: (tabId: string) => void;
-  onLoadDossierInEcosysteme?: (dossier: DossierCommandeGlobal) => void;
+  onLoadDossierInEcosysteme?: (dossier: DossierCommandeGlobal, targetFamille?: FamilleProduit) => void;
   dossiers?: DossierCommandeGlobal[];
   clientCodifications?: ClientCodification[];
   fichesTransfert?: FicheTransfert[];
@@ -253,25 +253,70 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   };
 
   const handleChargerDossierDansEcosysteme = async (of: SuiviOF) => {
-    let dossier = getLinkedDossierForOF(of);
-    // Si le dossier trouvé est virtuel ou introuvable dans le state local, aller chercher directement dans SQLite frais
-    if (!dossier || dossier.id.startsWith('virt-')) {
-      try {
-        const freshDossiers = await StorageService.getDossiers();
-        if (freshDossiers && freshDossiers.length > 0) {
-          const found = freshDossiers.find(d => 
-            (of.dossierId && d.id === of.dossierId) || 
-            matchCmdInDossier(d, of.numCommande || of.codeOF || '')
-          );
-          if (found) dossier = found;
+    let dossier: DossierCommandeGlobal | null = null;
+
+    // 1. Chercher d'abord dans SQLite directement (source de vérité la plus fraîche et complète)
+    try {
+      const freshDossiers = await StorageService.getDossiers();
+      if (freshDossiers && freshDossiers.length > 0) {
+        // Recherche prioritaire par ID de dossier lié
+        if (of.dossierId) {
+          dossier = freshDossiers.find(d => d.id === of.dossierId) || null;
         }
-      } catch (e) {
-        console.warn('Erreur chargement SQLite:', e);
+        // Recherche par référence de commande ou code OF
+        if (!dossier) {
+          const ofCmd = (of.numCommande || '').toLowerCase().trim();
+          const ofCode = (of.codeOF || '').toLowerCase().trim();
+          dossier = freshDossiers.find(d => 
+            matchCmdInDossier(d, ofCmd) || (ofCode && matchCmdInDossier(d, ofCode))
+          ) || null;
+        }
+        // Recherche par concordance client final
+        if (!dossier && of.nomClient) {
+          const clientNorm = of.nomClient.toLowerCase().trim();
+          dossier = freshDossiers.find(d => 
+            d.nomClientFinal && d.nomClientFinal.toLowerCase().trim() === clientNorm
+          ) || null;
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur chargement SQLite direct pour reprise dossier:', e);
+    }
+
+    // 2. Si pas trouvé dans SQLite frais, chercher dans la prop dossiers
+    if (!dossier) {
+      if (of.dossierId) {
+        dossier = dossiers.find(d => d.id === of.dossierId) || null;
+      }
+      if (!dossier) {
+        const ofCmd = (of.numCommande || '').toLowerCase().trim();
+        const ofCode = (of.codeOF || '').toLowerCase().trim();
+        dossier = dossiers.find(d => matchCmdInDossier(d, ofCmd) || (ofCode && matchCmdInDossier(d, ofCode))) || null;
       }
     }
 
-    if (dossier && onLoadDossierInEcosysteme) {
-      onLoadDossierInEcosysteme(dossier);
+    // 3. Si toujours introuvable, créer un dossier virtuel complet
+    if (!dossier) {
+      dossier = getLinkedDossierForOF(of);
+    }
+
+    if (dossier) {
+      // Écrire systématiquement dans le localStorage bridge pour sécuriser la transmission inter-onglets
+      try {
+        localStorage.setItem('3m_dossier_to_load', JSON.stringify({
+          dossier,
+          targetFamille: of.famille,
+          targetNumCmd: of.numCommande
+        }));
+      } catch (err) {
+        console.warn('Erreur localStorage bridge:', err);
+      }
+
+      if (onLoadDossierInEcosysteme) {
+        onLoadDossierInEcosysteme(dossier, of.famille);
+      } else if (onNavigateToTab) {
+        onNavigateToTab('ecosysteme');
+      }
     } else if (onNavigateToTab) {
       onNavigateToTab('ecosysteme');
     }
@@ -883,7 +928,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'produit') && (
-                  <SortHeader col="famille" label="Famille & Nbr Pcs" className="px-3 min-w-[160px]" />
+                  <SortHeader col="famille" label="Famille &amp; Nbr de Pièces (Pcs)" className="px-3 min-w-[170px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'date') && (
                   <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
