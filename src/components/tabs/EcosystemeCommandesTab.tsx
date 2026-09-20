@@ -108,6 +108,14 @@ export interface SectionMultiArticleCaisson {
   avecSousFace?: boolean;
   montageSousFace?: string;
   avecPlaque?: boolean;
+  debordement?: number;
+  conditionsCoupe?: {
+    longueurBarre?: number;
+    epaisseurScie?: number;
+    debordement?: number;
+    refusMin?: number;
+    refusMax?: number;
+  };
 }
 
 export const getSectionFamille = (sec: SectionMultiArticleCaisson): FamilleProduit => {
@@ -640,7 +648,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
       const longBarre = ctTechParams.longeur > 0 ? ctTechParams.longeur : (artObj.longeur || 6500);
       const epScie = ctTechParams.lame > 0 ? ctTechParams.lame : (artObj.lame || 4.5);
-      const debord = (ctTechParams.debordement !== undefined && ctTechParams.debordement !== null) ? ctTechParams.debordement : (artObj.debordement || 0);
+      const debord = (ctTechParams.debordement !== undefined && ctTechParams.debordement !== null && ctTechParams.debordement > 0)
+        ? ctTechParams.debordement
+        : (artObj.debordement || 0);
       const rMin = ctTechParams.refus_min > 0 ? ctTechParams.refus_min : (artObj.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
       const rMax = ctTechParams.refus_max > 0 ? ctTechParams.refus_max : (artObj.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
 
@@ -678,6 +688,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
       const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
+      const conditionsCoupeCT = {
+        longueurBarre: longBarre,
+        epaisseurScie: epScie,
+        debordement: debord,
+        refusMin: rMin,
+        refusMax: rMax
+      };
+
       generatedSections.push({
         articleCode: artObj.code_art,
         articleDesignation: artObj.designation,
@@ -689,7 +707,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         avecPeinture: avecPeintureCT,
         avecSousFace: avecSousFaceCT,
         montageSousFace: montageCT,
-        avecPlaque: avecPlaqueCT
+        avecPlaque: avecPlaqueCT,
+        debordement: debord,
+        conditionsCoupe: conditionsCoupeCT
       });
     });
 
@@ -711,7 +731,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
       const longBarreSF = sfTechParams.longeur > 0 ? sfTechParams.longeur : (sfObj.longeur || 6000);
       const epScieSF = sfTechParams.lame > 0 ? sfTechParams.lame : (sfObj.lame || 4.5);
-      const debordSF = (sfTechParams.debordement !== undefined && sfTechParams.debordement !== null) ? sfTechParams.debordement : (sfObj.debordement || 0);
+      const debordSF = (sfTechParams.debordement !== undefined && sfTechParams.debordement !== null && sfTechParams.debordement > 0)
+        ? sfTechParams.debordement
+        : (sfObj.debordement || 0);
       const rMinSF = sfTechParams.refus_min > 0 ? sfTechParams.refus_min : (sfObj.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
       const rMaxSF = sfTechParams.refus_max > 0 ? sfTechParams.refus_max : (sfObj.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
 
@@ -747,6 +769,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       res.nomClient = clientDeMonClient.trim() || 'CLIENT';
       res.donneurOrdre = monClient;
       res.dateCommande = dateCommande;
+
+      const conditionsCoupeSF = {
+        longueurBarre: longBarreSF,
+        epaisseurScie: epScieSF,
+        debordement: debordSF,
+        refusMin: rMinSF,
+        refusMax: rMaxSF
+      };
+
       generatedSections.push({
         articleCode: sfObj.code_art,
         articleDesignation: sfObj.designation,
@@ -754,7 +785,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         resultat: res,
         type: 'SF',
         famille: 'CAISSON',
-        commandesInvolved: refsSFInvolved.length > 0 ? refsSFInvolved : refsInvolved
+        commandesInvolved: refsSFInvolved.length > 0 ? refsSFInvolved : refsInvolved,
+        debordement: debordSF,
+        conditionsCoupe: conditionsCoupeSF
       });
     });
 
@@ -2392,7 +2425,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         isSousFace: sec.type === 'SF',
         famille: fam,
         type: sec.type,
-        commandesInvolved: sec.commandesInvolved
+        commandesInvolved: sec.commandesInvolved,
+        debordement: sec.debordement,
+        conditionsCoupe: sec.conditionsCoupe
       };
     });
   }, [sectionsMultiCaisson]);
@@ -2613,7 +2648,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const longBarre = (ctTechParams.isDirty && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
           const epScie = (ctTechParams.isDirty && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
-          const debord = (ctTechParams.isDirty && ctTechParams.debordement !== undefined) ? ctTechParams.debordement : (artObj?.debordement || 0);
+          const debord = (ctTechParams.debordement !== undefined && ctTechParams.debordement !== null && ctTechParams.debordement > 0)
+            ? ctTechParams.debordement
+            : ((ctTechParams.isDirty && ctTechParams.debordement !== undefined) ? ctTechParams.debordement : (artObj?.debordement || 0));
           const rMin = (ctTechParams.isDirty && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
           const rMax = (ctTechParams.isDirty && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
 
@@ -2641,6 +2678,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const montageCT = lignesGroup.some(c => c.montageSousFace === 'MONTEE_ATELIER') ? 'MONTEE_ATELIER' : 'NON_MONTEE';
           const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
+          const conditionsCoupeCT = {
+            longueurBarre: longBarre,
+            epaisseurScie: epScie,
+            debordement: debord,
+            refusMin: rMin,
+            refusMax: rMax
+          };
+
           generatedSections.push({
             articleCode: artObj?.code_art || artCode,
             articleDesignation: `📦 [CAISSON TUNNEL] ${artObj?.designation || 'Caisson Tunnel'}`,
@@ -2652,7 +2697,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             avecPeinture: avecPeintureCT,
             avecSousFace: avecSousFaceCT,
             montageSousFace: montageCT,
-            avecPlaque: avecPlaqueCT
+            avecPlaque: avecPlaqueCT,
+            debordement: debord,
+            conditionsCoupe: conditionsCoupeCT
           });
         }
 
@@ -2665,7 +2712,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const longBarreSF = (sfTechParams.isDirty && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
           const epScieSF = (sfTechParams.isDirty && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
-          const debordSF = (sfTechParams.isDirty && sfTechParams.debordement !== undefined) ? sfTechParams.debordement : (sfObj?.debordement || 0);
+          const debordSF = (sfTechParams.debordement !== undefined && sfTechParams.debordement !== null && sfTechParams.debordement > 0)
+            ? sfTechParams.debordement
+            : ((sfTechParams.isDirty && sfTechParams.debordement !== undefined) ? sfTechParams.debordement : (sfObj?.debordement || 0));
           const rMinSF = (sfTechParams.isDirty && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
           const rMaxSF = (sfTechParams.isDirty && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
 
@@ -2692,6 +2741,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeSF = {
+            longueurBarre: longBarreSF,
+            epaisseurScie: epScieSF,
+            debordement: debordSF,
+            refusMin: rMinSF,
+            refusMax: rMaxSF
+          };
+
           generatedSections.push({
             articleCode: sfObj?.code_art || sfCode,
             articleDesignation: `📐 [SOUS-FACE ALU] ${sfObj?.designation || 'Sous-Face Alu'}`,
@@ -2699,7 +2756,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'SF',
             famille: 'CAISSON',
-            commandesInvolved: refsSFInvolved
+            commandesInvolved: refsSFInvolved,
+            debordement: debordSF,
+            conditionsCoupe: conditionsCoupeSF
           });
         }
       }

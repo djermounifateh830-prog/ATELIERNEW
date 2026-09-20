@@ -395,7 +395,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   };
 
   // Tri de la table
-  type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille';
+  type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille' | 'dateLivraison';
   const [sortKey, setSortKey] = useState<SortKey>('statut');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -511,6 +511,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           const na = a.numeroEmission || 0;
           const nb = b.numeroEmission || 0;
           return nb - na;
+        }
+
+        if (sortKey === 'dateLivraison') {
+          const isoA = a.dateLivraisonPrevisionnelleISO || (a.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(a.dateLivraisonPrevisionnelle)) : '') || '';
+          const isoB = b.dateLivraisonPrevisionnelleISO || (b.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(b.dateLivraisonPrevisionnelle)) : '') || '';
+          if (!isoA && !isoB) return 0;
+          if (!isoA) return 1;
+          if (!isoB) return -1;
+          return sortDir === 'asc' ? isoA.localeCompare(isoB) : isoB.localeCompare(isoA);
         }
 
         if (sortKey === 'numeroEmission') {
@@ -934,7 +943,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'delai') && (
-                  <th className="py-2.5 px-2 text-center w-36">Date Livraison (Fixée)</th>
+                  <SortHeader col="dateLivraison" label="Date Livraison (Fixée)" className="w-36 px-2 text-center" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'profils') && (
                   <th className="py-2.5 px-2 text-center w-28">Barres &amp; Chutes</th>

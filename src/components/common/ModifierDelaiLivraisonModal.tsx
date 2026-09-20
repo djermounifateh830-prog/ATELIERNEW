@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, Zap, Check, AlertCircle, Sparkles, RefreshCw } from 'lucide-react';
+import { X, Calendar, Clock, Zap, Check, AlertCircle, Sparkles, RefreshCw, PauseCircle, PlayCircle, AlertTriangle } from 'lucide-react';
 import { SuiviOF, DossierCommandeGlobal } from '../../types';
 import { DelaisProductionService } from '../../services/delaisProductionService';
 import { StorageService } from '../../services/storage';
@@ -27,6 +27,10 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // État de mise en pause de la commande (terrain / rupture stock)
+  const [estEnPause, setEstEnPause] = useState<boolean>(false);
+  const [motifPause, setMotifPause] = useState<string>('');
+
   // Initialisation à l'ouverture pour l'OF cible
   useEffect(() => {
     if (!isOpen || !of) return;
@@ -35,6 +39,39 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     setTypePriorite(isInst ? 'INSTANTANE' : 'DIFFERE');
     setEstPrioritaire(isInst);
     setMotifPriorite(of.motifPriorite || '');
+    setEstEnPause(of.estEnPause || of.statut === 'EN_PAUSE' || false);
+    setMotifPause(of.motifPause || '');
+
+    // Synchronisation avec le dossier si présent
+    StorageService.getDossiers().then(dossiers => {
+      const cmdRef = (of.numCommande || '').trim().toLowerCase();
+      const match = dossiers.find(d => {
+        const r = (d.refCommande || '').trim().toLowerCase();
+        const c = (d.numCommandeCaisson || '').trim().toLowerCase();
+        const t = (d.numCommandeTablier || '').trim().toLowerCase();
+        const m = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
+        const p = (d.numCommandePrecadre || '').trim().toLowerCase();
+        return (
+          r === cmdRef || c === cmdRef || t === cmdRef || m === cmdRef || p === cmdRef ||
+          (r && cmdRef.includes(r)) || (c && cmdRef.includes(c)) || (t && cmdRef.includes(t)) || (m && cmdRef.includes(m)) || (p && cmdRef.includes(p))
+        );
+      });
+      if (match) {
+        if (match.estEnPause !== undefined) setEstEnPause(!!match.estEnPause);
+        if (match.motifPause) setMotifPause(match.motifPause);
+        // Si le dossier a une date personnalisée ou par famille
+        const famKey = (of.famille || '').toUpperCase();
+        const customFamDate = match.datesLivraisonCommandes?.[famKey];
+        const dateISOFromDossier = customFamDate?.dateLivraisonISO || match.dateLivraisonPrevisionnelleISO;
+        if (dateISOFromDossier && !of.dateLivraisonPrevisionnelleISO) {
+          setDateSelectionnee(dateISOFromDossier);
+        }
+        if (match.typePriorite && of.typePriorite === undefined) {
+          setTypePriorite(match.typePriorite);
+          setEstPrioritaire(match.typePriorite === 'INSTANTANE');
+        }
+      }
+    }).catch(() => {});
 
     // Récupérer la date existante ou calculée
     if (of.dateLivraisonPrevisionnelleISO) {
@@ -47,6 +84,10 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
 
   // Recalcul du texte de prévisualisation dès que la date ou le statut prioritaire change
   useEffect(() => {
+    if (estEnPause) {
+      setTextePrevisualisation('⏸️ EN PAUSE');
+      return;
+    }
     if (!dateSelectionnee) {
       setTextePrevisualisation('');
       return;
@@ -71,7 +112,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
       // ignore
     }
     setTextePrevisualisation(typePriorite === 'INSTANTANE' ? '⚡ INSTANTANÉ' : 'Date fixée');
-  }, [dateSelectionnee, typePriorite]);
+  }, [dateSelectionnee, typePriorite, estEnPause]);
 
   if (!isOpen || !of) return null;
 
@@ -104,7 +145,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   const dateSystemeAujStr = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const handleSave = async () => {
-    if (!of || !dateSelectionnee) return;
+    if (!of || (!dateSelectionnee && !estEnPause)) return;
     setIsSaving(true);
     setErrorMsg(null);
 
@@ -114,8 +155,12 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
         typePriorite,
         estPrioritaire: typePriorite === 'INSTANTANE',
         motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite.trim() : undefined,
-        dateLivraisonPrevisionnelle: textePrevisualisation,
-        dateLivraisonPrevisionnelleISO: dateSelectionnee
+        dateLivraisonPrevisionnelle: estEnPause ? '⏸️ EN PAUSE' : textePrevisualisation,
+        dateLivraisonPrevisionnelleISO: dateSelectionnee,
+        estEnPause,
+        motifPause: estEnPause ? (motifPause.trim() || 'Interruption terrain / Rupture stock') : undefined,
+        datePause: estEnPause ? (of.datePause || new Date().toISOString()) : undefined,
+        statut: estEnPause ? 'EN_PAUSE' : (of.statut === 'EN_PAUSE' ? 'EMIS' : of.statut)
       };
 
       // 1. Sauvegarde dans SQLite via StorageService
@@ -128,21 +173,40 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
         let dossierModifie = false;
 
         const updatedDossiers = dossiers.map(d => {
-          const matchRef = (d.refCommande || '').trim().toLowerCase() === cmdRef ||
-            (d.numCommandeCaisson || '').trim().toLowerCase() === cmdRef ||
-            (d.numCommandeTablier || '').trim().toLowerCase() === cmdRef ||
-            (d.numCommandeMoustiquaire || '').trim().toLowerCase() === cmdRef ||
-            (d.numCommandePrecadre || '').trim().toLowerCase() === cmdRef;
+          const r = (d.refCommande || '').trim().toLowerCase();
+          const c = (d.numCommandeCaisson || '').trim().toLowerCase();
+          const t = (d.numCommandeTablier || '').trim().toLowerCase();
+          const m = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
+          const p = (d.numCommandePrecadre || '').trim().toLowerCase();
+          const matchRef =
+            r === cmdRef || c === cmdRef || t === cmdRef || m === cmdRef || p === cmdRef ||
+            (r && cmdRef.includes(r)) || (c && cmdRef.includes(c)) || (t && cmdRef.includes(t)) || (m && cmdRef.includes(m)) || (p && cmdRef.includes(p));
 
           if (matchRef) {
             dossierModifie = true;
+            const famKey = (of.famille || '').toUpperCase();
+            const datesLivraisonCommandes = { ...(d.datesLivraisonCommandes || {}) };
+            if (famKey) {
+              datesLivraisonCommandes[famKey] = {
+                dateLivraisonPrevisionnelle: estEnPause ? '⏸️ EN PAUSE' : textePrevisualisation,
+                dateLivraisonISO: dateSelectionnee,
+                joursOuvres: d.delaiPrevisionnelJours || 0,
+                typePriorite
+              };
+            }
+
             return {
               ...d,
               typePriorite,
               estPrioritaire: typePriorite === 'INSTANTANE',
               motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite.trim() : undefined,
-              dateLivraisonPrevisionnelle: textePrevisualisation,
-              dateLivraisonPrevisionnelleISO: dateSelectionnee
+              dateLivraisonPrevisionnelle: estEnPause ? '⏸️ EN PAUSE' : textePrevisualisation,
+              dateLivraisonPrevisionnelleISO: dateSelectionnee,
+              datesLivraisonCommandes,
+              estEnPause,
+              motifPause: estEnPause ? (motifPause.trim() || 'Interruption terrain / Rupture stock') : undefined,
+              datePause: estEnPause ? (d.datePause || new Date().toISOString()) : undefined,
+              statut: estEnPause ? 'EN_PAUSE' : (d.statut === 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut)
             };
           }
           return d;
@@ -241,6 +305,74 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
                 <span className="font-bold capitalize">{dateSystemeAujStr}</span>
               </div>
             </div>
+          </div>
+
+          {/* Mise en pause de la commande (Rupture stock, attente terrain) */}
+          <div className={`p-4 rounded-xl border transition-all ${
+            estEnPause
+              ? 'bg-amber-950/40 border-amber-500 shadow-md ring-1 ring-amber-500/50'
+              : 'bg-slate-950/70 border-slate-800'
+          }`}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                  estEnPause ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  <PauseCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-200">
+                      Mise en pause de la commande
+                    </span>
+                    {estEnPause && (
+                      <span className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black font-mono text-[10px] animate-pulse">
+                        EN PAUSE
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Gèle la production pour rupture de stock ou attente validation terrain.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEstEnPause(!estEnPause)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  estEnPause
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                    : 'bg-amber-600 hover:bg-amber-500 text-white shadow-sm'
+                }`}
+              >
+                {estEnPause ? (
+                  <>
+                    <PlayCircle className="w-3.5 h-3.5" />
+                    <span>Reprendre</span>
+                  </>
+                ) : (
+                  <>
+                    <PauseCircle className="w-3.5 h-3.5" />
+                    <span>Mettre en Pause</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {estEnPause && (
+              <div className="mt-3 pt-3 border-t border-amber-500/30">
+                <label className="block text-[11px] font-semibold text-amber-300 mb-1">
+                  Motif de l'arrêt / rupture de stock (affiché sur l'atelier) :
+                </label>
+                <input
+                  type="text"
+                  value={motifPause}
+                  onChange={(e) => setMotifPause(e.target.value)}
+                  placeholder="ex: Rupture profilé blanc, Attente confirmation dimensions..."
+                  className="w-full bg-slate-900 border border-amber-500/40 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-400"
+                />
+              </div>
+            )}
           </div>
 
           {/* Type de Priorité Commande : Instantané vs Différé */}
@@ -431,7 +563,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSaving || !dateSelectionnee}
+            disabled={isSaving || (!dateSelectionnee && !estEnPause)}
             className={`px-5 py-2 rounded-xl text-white text-xs font-black flex items-center gap-1.5 shadow-lg transition ${
               estPrioritaire
                 ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/30'

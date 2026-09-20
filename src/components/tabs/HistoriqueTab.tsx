@@ -193,14 +193,23 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
           valB = getDossierTotalArticles(b);
           break;
         case 'dateLivraison':
-          valA = getDossierDateLivraison(a);
-          valB = getDossierDateLivraison(b);
+          valA = a.dateLivraisonPrevisionnelleISO || (a.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(a.dateLivraisonPrevisionnelle)) : '') || DelaisProductionService.estimerDelaiDossier(a, dossiers, suivisOF).dateLivraisonISO || '';
+          valB = b.dateLivraisonPrevisionnelleISO || (b.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(b.dateLivraisonPrevisionnelle)) : '') || DelaisProductionService.estimerDelaiDossier(b, dossiers, suivisOF).dateLivraisonISO || '';
           break;
         case 'dateCommande':
         default:
           valA = a.dateCommande || '';
           valB = b.dateCommande || '';
           break;
+      }
+
+      if (sortColumn === 'dateLivraison') {
+        if (!valA && !valB) return 0;
+        if (!valA) return 1;
+        if (!valB) return -1;
+        return sortDirection === 'asc'
+          ? String(valA).localeCompare(String(valB))
+          : String(valB).localeCompare(String(valA));
       }
 
       if (typeof valA === 'number' && typeof valB === 'number') {

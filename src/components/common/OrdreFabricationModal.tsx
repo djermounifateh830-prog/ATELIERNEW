@@ -30,6 +30,14 @@ export interface SectionDebitOF {
   famille?: FamilleProduit | string;
   type?: 'CT' | 'SF' | 'LF' | 'GL' | 'PRC' | 'CADRE' | string;
   commandesInvolved?: string[];
+  debordement?: number;
+  conditionsCoupe?: {
+    longueurBarre?: number;
+    epaisseurLame?: number;
+    debordement?: number;
+    refusMin?: number;
+    refusMax?: number;
+  };
 }
 
 export interface OrdreFabricationModalProps {
@@ -100,6 +108,15 @@ interface SectionTraitee {
   barreLongueur: number;
   lameScie: number;
   margeDebord: number;
+  refusMin: number;
+  refusMax: number;
+  conditionsCoupe?: {
+    longueurBarre?: number;
+    epaisseurLame?: number;
+    debordement?: number;
+    refusMin?: number;
+    refusMax?: number;
+  };
   avecPeinture: boolean;
   avecSousFace: boolean;
   montageSousFace: string;
@@ -519,30 +536,65 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     }
     const nbPiecesOFReelles = Math.max(1, totalPiecesDuOF);
 
-    StorageService.getSuivisOF().then(ofs => {
+    Promise.all([
+      StorageService.getSuivisOF(),
+      StorageService.getDossiers()
+    ]).then(([ofs, dossiers]) => {
       setAllOfsState(ofs);
       // Détection de la famille active
       const familleRecherche = detecterFamilleOF(famille, sections, lignesMoustiquaires, titreProduit, refCommande);
+
+      // Recherche du dossier lié pour récupérer la date paramétrée et le statut de pause
+      const cmdRefLower = (refCommande || '').trim().toLowerCase();
+      const matchedDossier = (dossierId ? dossiers.find(d => d.id === dossierId) : null) ||
+        dossiers.find(d => {
+          const r = (d.refCommande || '').trim().toLowerCase();
+          const c = (d.numCommandeCaisson || '').trim().toLowerCase();
+          const t = (d.numCommandeTablier || '').trim().toLowerCase();
+          const m = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
+          const p = (d.numCommandePrecadre || '').trim().toLowerCase();
+          return (
+            (r && (r === cmdRefLower || cmdRefLower.includes(r))) ||
+            (c && (c === cmdRefLower || cmdRefLower.includes(c))) ||
+            (t && (t === cmdRefLower || cmdRefLower.includes(t))) ||
+            (m && (m === cmdRefLower || cmdRefLower.includes(m))) ||
+            (p && (p === cmdRefLower || cmdRefLower.includes(p)))
+          );
+        });
+
+      const famKey = (familleRecherche || famille || '').toUpperCase();
+      const customFamDate = matchedDossier?.datesLivraisonCommandes?.[famKey];
+
+      // Priorité absolue à la date configurée dans le dossier ou passée en props lors de la saisie
+      const dateConfiguredText = dateLivraisonPrevisionnelle || customFamDate?.dateLivraisonPrevisionnelle || matchedDossier?.dateLivraisonPrevisionnelle;
+      const dateConfiguredISO = dateLivraisonPrevisionnelleISO || customFamDate?.dateLivraisonISO || matchedDossier?.dateLivraisonPrevisionnelleISO;
 
       const match = ofs.find(o =>
         o.numCommande === (refCommande || 'CMD') &&
         (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === familleRecherche || o.famille === famille)
       );
+
+      const isDossierOrOfEnPause = !!(matchedDossier?.estEnPause || matchedDossier?.statut === 'EN_PAUSE' || match?.estEnPause || match?.statut === 'EN_PAUSE');
+
       if (match?.numeroEmission) {
         setEmittedSequence(match.numeroEmission);
         setEmittedCode(match.codeOF || `OF-${String(match.numeroEmission).padStart(3, '0')}`);
         setOfEmis(true);
         if (!match.nombrePieces) match.nombrePieces = nbPiecesOFReelles;
         setMatchedOf(match);
-        if (match.estPrioritaire) setEstPrioritaire(true);
-        if (match.motifPriorite) setMotifPriorite(match.motifPriorite);
-        if (match.dateLivraisonPrevisionnelleISO || dateLivraisonPrevisionnelleISO) {
-          setDateLivraisonISO(match.dateLivraisonPrevisionnelleISO || dateLivraisonPrevisionnelleISO || '');
+        if (match.estPrioritaire || matchedDossier?.estPrioritaire || matchedDossier?.typePriorite === 'INSTANTANE') setEstPrioritaire(true);
+        if (match.motifPriorite || matchedDossier?.motifPriorite) setMotifPriorite(match.motifPriorite || matchedDossier?.motifPriorite || '');
+        
+        if (dateConfiguredISO || match.dateLivraisonPrevisionnelleISO) {
+          setDateLivraisonISO(dateConfiguredISO || match.dateLivraisonPrevisionnelleISO || '');
         }
-        if (match.dateLivraisonPrevisionnelle) {
+
+        if (isDossierOrOfEnPause) {
+          setDateLivraisonPrevisionnelleAffichee('⏸️ EN PAUSE');
+        } else if (dateConfiguredText) {
+          setDateLivraisonPrevisionnelleAffichee(dateConfiguredText);
+        } else if (match.dateLivraisonPrevisionnelle) {
           setDateLivraisonPrevisionnelleAffichee(match.dateLivraisonPrevisionnelle);
-        } else if (dateLivraisonPrevisionnelle) {
-          setDateLivraisonPrevisionnelleAffichee(dateLivraisonPrevisionnelle);
         } else {
           const estim = DelaisProductionService.estimerDelaiOF(match, ofs);
           setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
@@ -553,11 +605,21 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         setNextSequencePreview(maxNum + 1);
         setMatchedOf(null);
 
-        // Si la date a été réglée sur l'Écosystème lors de la saisie de la commande, la garder rigoureusement !
-        if (dateLivraisonPrevisionnelle) {
-          setDateLivraisonPrevisionnelleAffichee(dateLivraisonPrevisionnelle);
-          if (dateLivraisonPrevisionnelleISO) {
-            setDateLivraisonISO(dateLivraisonPrevisionnelleISO);
+        if (matchedDossier?.estPrioritaire || matchedDossier?.typePriorite === 'INSTANTANE') {
+          setEstPrioritaire(true);
+          setMotifPriorite(matchedDossier.motifPriorite || '');
+        }
+
+        if (isDossierOrOfEnPause) {
+          setDateLivraisonPrevisionnelleAffichee('⏸️ EN PAUSE');
+          if (dateConfiguredISO) {
+            setDateLivraisonISO(dateConfiguredISO);
+          }
+        } else if (dateConfiguredText) {
+          // Si la date a été réglée sur l'Écosystème lors de la saisie de la commande, la garder rigoureusement !
+          setDateLivraisonPrevisionnelleAffichee(dateConfiguredText);
+          if (dateConfiguredISO) {
+            setDateLivraisonISO(dateConfiguredISO);
           }
         } else {
           // Calcul prévisionnel initial de livraison si non renseigné
@@ -574,7 +636,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             totalChutesUtiliseesPrevu: 0,
             nombrePieces: nbPiecesOFReelles,
             lignesRetour: [],
-            estPrioritaire
+            estPrioritaire: !!(estPrioritaire || matchedDossier?.estPrioritaire)
           };
           const estim = DelaisProductionService.estimerDelaiOF(ofRef, ofs);
           setDateLivraisonPrevisionnelleAffichee(estim.texteFormatte);
@@ -582,7 +644,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         }
       }
     }).catch(() => {});
-  }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO]);
+  }, [isOpen, refCommande, titreProduit, famille, sections, lignesMoustiquaires, dateCommande, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO, dossierId]);
 
   const currentSequenceNum = emittedSequence || nextSequencePreview || 1;
   const currentCodeOFAffiche = emittedCode || `OF-${String(currentSequenceNum).padStart(3, '0')}`;
@@ -620,9 +682,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       const barresNeuves = Array.isArray(res.barres_neuves) ? res.barres_neuves : [];
       const chutesUtilisees = Array.isArray(res.chutes_utilisees) ? res.chutes_utilisees : [];
 
-      const barreLongueur = art?.longeur || barresNeuves[0]?.longueur_barre || 6000;
-      const lameScie = art?.lame || 4.0;
-      const margeDebord = art?.debordement || 0.0;
+      const barreLongueur = sec.conditionsCoupe?.longueurBarre || art?.longeur || barresNeuves[0]?.longueur_barre || 6000;
+      const lameScie = sec.conditionsCoupe?.epaisseurLame || art?.lame || 4.5;
+      const margeDebord = (sec.conditionsCoupe?.debordement !== undefined && sec.conditionsCoupe?.debordement !== null)
+        ? sec.conditionsCoupe.debordement
+        : (sec.debordement !== undefined && sec.debordement !== null)
+        ? sec.debordement
+        : (art?.debordement || 0.0);
+      const refusMin = sec.conditionsCoupe?.refusMin ?? res.refus_min ?? art?.refus_min ?? 500;
+      const refusMax = sec.conditionsCoupe?.refusMax ?? res.refus_max ?? art?.refus_max ?? 1100;
       const familleCalculee = determinerFamille(sec, famille);
 
       // Groupement BARRES NEUVES
@@ -696,6 +764,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         barreLongueur,
         lameScie,
         margeDebord,
+        refusMin,
+        refusMax,
+        conditionsCoupe: sec.conditionsCoupe,
         avecPeinture: !!sec.avecPeinture,
         avecSousFace: !!sec.avecSousFace,
         montageSousFace: sec.montageSousFace || 'NON_MONTEE',
@@ -956,6 +1027,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         </strong>
         ${total !== undefined && index !== undefined ? `<span style="font-size:13px;font-weight:900;background:#000;color:#fff;padding:3px 10px;border-radius:4px;font-family:Consolas,monospace;letter-spacing:0.5px;">PROFILÉ ${index + 1} / ${total}</span>` : ''}
         ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:12px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:3px 8px;border-radius:4px;">${c}</span>`).join(' ') : ''}
+        <div style="width:100%;border-top:1.5px dashed #000;padding-top:4px;margin-top:4px;font-size:12px;font-family:Consolas,monospace;font-weight:900;color:#000;display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;">
+          <span style="background:#000;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;letter-spacing:0.5px;">CONDITION DE COUPE</span>
+          <span>Barre brute : <strong>${Math.round(sec.barreLongueur || 6000)} mm</strong></span>
+          <span>•</span>
+          <span>Lame scie : <strong>${sec.lameScie || 4.5} mm</strong></span>
+          <span>•</span>
+          <span style="${sec.margeDebord > 0 ? 'background:#fef3c7;border:1px solid #f59e0b;padding:1px 6px;border-radius:3px;' : ''}">Débordement : <strong>${sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : '0 mm'}</strong></span>
+          <span>•</span>
+          <span>Reste min / max : <strong>${sec.refusMin || 500} / ${sec.refusMax || 1100} mm</strong></span>
+        </div>
       </div>
       ${sec.groupesBarresNeuves.length > 0 ? `
       <div style="font-size:14px;font-weight:900;margin:6px 0 4px 0;text-align:center;text-transform:uppercase;color:#000;page-break-after:avoid;break-after:avoid;page-break-inside:avoid;break-inside:avoid;">
@@ -1692,6 +1773,28 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 ))}
               </div>
             )}
+
+            {/* Ligne Conditions de coupe du profilé */}
+            <div className="w-full border-t-2 border-dashed border-black pt-2 mt-1 flex items-center justify-center gap-3 sm:gap-4 flex-wrap text-xs sm:text-sm font-mono font-black text-black">
+              <span className="bg-black text-white px-2.5 py-0.5 rounded text-[11px] uppercase tracking-wider">
+                Condition de coupe
+              </span>
+              <span>
+                Barre brute : <strong>{Math.round(sec.barreLongueur || 6000)} mm</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Lame scie : <strong>{sec.lameScie || 4.5} mm</strong>
+              </span>
+              <span>•</span>
+              <span className={sec.margeDebord > 0 ? 'bg-amber-100 text-amber-900 border border-amber-400 px-2 py-0.5 rounded font-bold' : ''}>
+                Débordement : <strong>{sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : '0 mm'}</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Reste min / max : <strong>{sec.refusMin || 500} / {sec.refusMax || 1100} mm</strong>
+              </span>
+            </div>
           </div>
         </div>
 
