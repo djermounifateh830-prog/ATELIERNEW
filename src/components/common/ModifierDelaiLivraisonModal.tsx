@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Calendar, Clock, Zap, Check, AlertCircle, Sparkles, RefreshCw, PauseCircle, PlayCircle, AlertTriangle } from 'lucide-react';
-import { SuiviOF, DossierCommandeGlobal } from '../../types';
+import { SuiviOF, DossierCommandeGlobal, TypePrioriteCommande, StatutDossier } from '../../types';
 import { DelaisProductionService } from '../../services/delaisProductionService';
 import { StorageService } from '../../services/storage';
 
@@ -19,7 +19,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   suivisOF,
   onSaved
 }) => {
-  const [typePriorite, setTypePriorite] = useState<'INSTANTANE' | 'DIFFERE'>('DIFFERE');
+  const [typePriorite, setTypePriorite] = useState<TypePrioriteCommande>('DIFFERE');
   const [estPrioritaire, setEstPrioritaire] = useState<boolean>(false);
   const [motifPriorite, setMotifPriorite] = useState<string>('');
   const [dateSelectionnee, setDateSelectionnee] = useState<string>('');
@@ -206,7 +206,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
               estEnPause,
               motifPause: estEnPause ? (motifPause.trim() || 'Interruption terrain / Rupture stock') : undefined,
               datePause: estEnPause ? (d.datePause || new Date().toISOString()) : undefined,
-              statut: estEnPause ? 'EN_PAUSE' : (d.statut === 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut)
+              statut: (estEnPause ? 'EN_PAUSE' : (d.statut === 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut)) as StatutDossier
             };
           }
           return d;
