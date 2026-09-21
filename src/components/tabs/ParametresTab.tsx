@@ -452,6 +452,20 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
     }
   };
 
+  const handleTriggerSilentBackup = async () => {
+    setIsBackupRunning(true);
+    setBackupStatusMessage(null);
+    try {
+      const res = await autoBackupService.executeSilentBackup();
+      setBackupStatusMessage(`✅ Sauvegarde silencieuse effectuée : "${res.filename}" créée dans [${res.fullPath}] sans confirmation ni écrasement.`);
+      setTimeout(() => setBackupStatusMessage(null), 6000);
+    } catch (e: any) {
+      setBackupStatusMessage(`Erreur sauvegarde silencieuse : ${e.message}`);
+    } finally {
+      setIsBackupRunning(false);
+    }
+  };
+
   // Restauration
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -759,24 +773,35 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
               </div>
 
               {/* État de la dernière sauvegarde */}
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs space-y-1">
-                <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Statut de la planification quotidienne :</span>
+              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs space-y-1.5">
+                <div className="font-bold text-amber-300 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Sauvegarde Automatique Silencieuse :</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
+                    Sans confirmation requise
+                  </span>
                 </div>
-                <div className="text-slate-300 text-[11px]">
+                <div className="text-slate-300 text-[11px] leading-relaxed">
                   {backupSettings.lastBackupDate ? (
                     <>
-                      Dernière sauvegarde automatique effectuée le{' '}
+                      Dernière sauvegarde silencieuse effectuée le{' '}
                       <span className="font-mono font-bold text-amber-300">{backupSettings.lastBackupDate}</span> à{' '}
                       <span className="font-mono font-bold text-amber-300">{backupSettings.lastBackupTime || '16:30'}</span>.
+                      {backupSettings.lastBackupFilename && (
+                        <div className="mt-1 font-mono text-[10px] text-emerald-300 bg-slate-950/70 px-2 py-1 rounded border border-emerald-500/30 truncate">
+                          📄 {backupSettings.lastBackupFilename}
+                        </div>
+                      )}
                     </>
                   ) : (
                     'Aucune sauvegarde automatique enregistrée aujourd\'hui.'
                   )}
                 </div>
-                <div className="text-[10px] text-slate-400">
-                  Prochaine exécution automatique prévue : Aujourd'hui à {backupSettings.scheduledTime}.
+                <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-amber-500/20">
+                  <span>Prochaine exécution : Aujourd'hui à {backupSettings.scheduledTime}</span>
+                  <span className="text-amber-400 font-medium">✓ Horodatage sans écrasement</span>
                 </div>
               </div>
             </div>
@@ -788,10 +813,10 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
               <div className="border-b border-slate-800 pb-3">
                 <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                   <HardDriveDownload className="w-4 h-4 text-emerald-400" />
-                  <span>Sauvegarde Manuelle Immédiate</span>
+                  <span>Sauvegarde Immédiate (Sans Confirmation &amp; Sans Écrasement)</span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Exportez instantanément l'intégralité de la base de données sans attendre l'heure programmée.
+                  Enregistrez instantanément l'état complet de la base de données. Chaque sauvegarde génère un fichier daté unique sans jamais écraser vos sauvegardes précédentes.
                 </p>
               </div>
 
@@ -803,24 +828,46 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
               )}
 
               <div className="space-y-3">
-                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
+                {/* Bouton de sauvegarde silencieuse immédiate sans dialogue */}
+                <div className="p-4 bg-gradient-to-r from-amber-500/10 to-emerald-500/10 rounded-xl border border-amber-500/30 flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-xs font-bold text-slate-100">Fichier physique SQLite (.db)</div>
+                    <div className="text-xs font-bold text-amber-200 flex items-center gap-1.5">
+                      <span>Sauvegarde Silencieuse Immédiate</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-400/20 text-amber-300 font-bold border border-amber-400/40">Directe</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300 mt-0.5">
+                      Enregistre directement la base avec la date et l'heure dans le nom, <strong>sans aucune boîte de confirmation</strong>.
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleTriggerSilentBackup}
+                    disabled={isBackupRunning}
+                    className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shrink-0"
+                    title="Effectuer une sauvegarde silencieuse immédiate avec horodatage"
+                  >
+                    {isBackupRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <HardDriveDownload className="w-3.5 h-3.5" />}
+                    <span>Sauvegarder Silencieusement</span>
+                  </button>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-bold text-slate-100">Télécharger le fichier SQLite (.db)</div>
                     <div className="text-[11px] text-slate-400">
-                      Télécharge le fichier <code>3m_atelier.db</code> réel contenant toutes les tables.
+                      Télécharge une copie de <code>3m_atelier.db</code> directement dans votre navigateur.
                     </div>
                   </div>
                   <button
                     onClick={() => handleTriggerManualBackup('db')}
                     disabled={isBackupRunning}
-                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs rounded-xl transition disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shrink-0"
                   >
                     {isBackupRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <HardDriveDownload className="w-3.5 h-3.5" />}
                     <span>Télécharger .DB</span>
                   </button>
                 </div>
 
-                <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-bold text-slate-100">Export JSON Structuré (.json)</div>
                     <div className="text-[11px] text-slate-400">
@@ -830,7 +877,7 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
                   <button
                     onClick={() => handleTriggerManualBackup('json')}
                     disabled={isBackupRunning}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer flex items-center gap-1.5 shrink-0"
                   >
                     <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" />
                     <span>Exporter JSON</span>
@@ -840,7 +887,7 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
             </div>
 
             <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-slate-400">
-              💡 <strong>Astuce sécurité :</strong> Il est recommandé de stocker les fichiers de sauvegarde sur une clé USB ou un disque réseau distinct du poste atelier.
+              💡 <strong>Sauvegarde automatique &amp; silencieuse :</strong> Le système sauvegarde automatiquement chaque jour à l'heure fixée en ajoutant la date au nom du fichier. Vos archives précédentes sont toujours conservées sans risque d'écrasement.
             </div>
           </div>
         </div>
@@ -1395,58 +1442,164 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Cadences par famille */}
-            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
-              <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5 border-b border-slate-900 pb-2">
+          {/* Cadences par famille avec minutes et calcul en jours */}
+          <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-900 pb-2">
+              <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                 <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
-                <span>Cadences maximales par jour (Unités / Jour) :</span>
+                <span>Cadences de Production (Temps en Minutes &amp; Calcul en Jours) :</span>
               </div>
-
-              <div className="space-y-3">
-                {[
-                  { key: 'CAISSON' as const, label: 'Caissons & Sous-Faces', unit: 'caissons / jour' },
-                  { key: 'TABLIER' as const, label: 'Tabliers Volets Roulants', unit: 'tabliers / jour' },
-                  { key: 'MOUSTIQUAIRE' as const, label: 'Moustiquaires', unit: 'moustiquaires / jour' },
-                  { key: 'PRECADRE' as const, label: 'Précadres Aluminium', unit: 'précadres / jour' }
-                ].map(item => {
-                  const fam = prodParams.familles?.[item.key] || PARAMETRES_PRODUCTION_DEFAUT.familles[item.key];
-                  return (
-                    <div key={item.key} className="flex items-center justify-between text-xs">
-                      <span className="text-slate-300 font-medium">{item.label}</span>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={1}
-                          value={fam.capaciteJournalierePieces || 10}
-                          onChange={e => {
-                            const val = Math.max(1, parseInt(e.target.value) || 1);
-                            const totalMin = (prodParams.heuresTravailParJour || 8) * 60;
-                            const tps = Math.max(1, Math.round(totalMin / val));
-                            setProdParams(prev => ({
-                              ...prev,
-                              familles: {
-                                ...prev.familles,
-                                [item.key]: {
-                                  ...fam,
-                                  capaciteJournalierePieces: val,
-                                  tempsUnitaireMinutes: tps
-                                }
-                              }
-                            }));
-                          }}
-                          className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-amber-300 font-mono text-center font-bold"
-                        />
-                        <span className="text-[11px] text-slate-500 w-28">{item.unit}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="text-[11px] text-amber-400 font-medium">
+                Base atelier : {prodParams.heuresTravailParJour || 8}h de travail / jour ({(prodParams.heuresTravailParJour || 8) * 60} min)
               </div>
             </div>
 
-            {/* Jours ouvrés & Heures de travail */}
-            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {[
+                {
+                  key: 'CAISSON' as const,
+                  label: 'Caissons & Sous-Faces',
+                  unitSingular: 'caisson',
+                  unitPlural: 'caissons',
+                  unitMinute: 'caisson par minute',
+                  color: 'emerald'
+                },
+                {
+                  key: 'TABLIER' as const,
+                  label: 'Tabliers Volets Roulants',
+                  unitSingular: 'tablier',
+                  unitPlural: 'tabliers',
+                  unitMinute: 'tablier par minute',
+                  color: 'sky'
+                },
+                {
+                  key: 'MOUSTIQUAIRE' as const,
+                  label: 'Moustiquaires',
+                  unitSingular: 'moustiquaire',
+                  unitPlural: 'moustiquaires',
+                  unitMinute: 'moustiquaire par minute',
+                  color: 'purple'
+                },
+                {
+                  key: 'PRECADRE' as const,
+                  label: 'Précadres Aluminium',
+                  unitSingular: 'précadre',
+                  unitPlural: 'précadres',
+                  unitMinute: 'précadre par minute',
+                  color: 'amber'
+                }
+              ].map(item => {
+                const fam = prodParams.familles?.[item.key] || PARAMETRES_PRODUCTION_DEFAUT.familles[item.key];
+                const totalMinutesJour = (prodParams.heuresTravailParJour || 8) * 60;
+                const tempsMin = fam.tempsUnitaireMinutes || Math.max(1, Math.round(totalMinutesJour / (fam.capaciteJournalierePieces || 10)));
+                const capaciteJour = fam.capaciteJournalierePieces || Math.max(1, Math.round(totalMinutesJour / tempsMin));
+                const cadenceParMinute = (1 / tempsMin).toFixed(2);
+                const chargeExemple50 = ((50 * tempsMin) / totalMinutesJour).toFixed(2);
+                const chargeExemple100 = ((100 * tempsMin) / totalMinutesJour).toFixed(2);
+
+                return (
+                  <div key={item.key} className="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-amber-400" />
+                        <span>{item.label}</span>
+                      </span>
+                      <span className="text-[11px] font-mono text-amber-300 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                        {cadenceParMinute} {item.unitMinute}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      {/* Cadence en Minutes */}
+                      <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800">
+                        <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">
+                          Temps par pièce (Minutes) :
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            max={600}
+                            value={tempsMin}
+                            onChange={e => {
+                              const minVal = Math.max(1, parseFloat(e.target.value) || 1);
+                              const newCapacite = Math.max(1, Math.round(totalMinutesJour / minVal));
+                              setProdParams(prev => ({
+                                ...prev,
+                                familles: {
+                                  ...prev.familles,
+                                  [item.key]: {
+                                    ...fam,
+                                    tempsUnitaireMinutes: minVal,
+                                    capaciteJournalierePieces: newCapacite
+                                  }
+                                }
+                              }));
+                            }}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-300 font-mono font-bold text-center focus:border-amber-400 outline-none"
+                          />
+                          <span className="text-[11px] text-slate-400 shrink-0 font-medium">min / pc</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 mt-1 block">
+                          = 1 {item.unitSingular} toutes les {tempsMin} min
+                        </span>
+                      </div>
+
+                      {/* Capacité journalière */}
+                      <div className="p-2.5 bg-slate-950 rounded-lg border border-slate-800">
+                        <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wide">
+                          Capacité Journalière :
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min={1}
+                            max={5000}
+                            value={capaciteJour}
+                            onChange={e => {
+                              const capVal = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              const newTps = Math.max(1, Math.round(totalMinutesJour / capVal));
+                              setProdParams(prev => ({
+                                ...prev,
+                                familles: {
+                                  ...prev.familles,
+                                  [item.key]: {
+                                    ...fam,
+                                    capaciteJournalierePieces: capVal,
+                                    tempsUnitaireMinutes: newTps
+                                  }
+                                }
+                              }));
+                            }}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-emerald-300 font-mono font-bold text-center focus:border-emerald-400 outline-none"
+                          />
+                          <span className="text-[11px] text-slate-400 shrink-0 font-medium">{item.unitPlural}/j</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 mt-1 block">
+                          sur {prodParams.heuresTravailParJour || 8}h ({totalMinutesJour} min)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Calcul en Jours */}
+                    <div className="p-2.5 bg-slate-950/70 rounded-lg border border-slate-800/80 text-[11px] space-y-1">
+                      <div className="flex items-center justify-between text-slate-300 font-medium">
+                        <span className="text-slate-400">📊 Calcul en Jours de travail :</span>
+                        <strong className="text-emerald-400 font-mono">1 jour = {capaciteJour} {item.unitPlural}</strong>
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-slate-800">
+                        <span>Charge 50 {item.unitPlural} = <strong className="text-amber-300 font-mono">{chargeExemple50} jour(s)</strong></span>
+                        <span>Charge 100 {item.unitPlural} = <strong className="text-amber-300 font-mono">{chargeExemple100} jour(s)</strong></span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Jours ouvrés & Heures de travail */}
+          <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">
               <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5 border-b border-slate-900 pb-2">
                 <Calendar className="w-3.5 h-3.5 text-amber-400" />
                 <span>Jours ouvrés de l'Atelier (Semaine de travail) :</span>
@@ -1490,7 +1643,6 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
                 </div>
               </div>
             </div>
-          </div>
 
           {/* Section Tournées de livraison par destination */}
           <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">

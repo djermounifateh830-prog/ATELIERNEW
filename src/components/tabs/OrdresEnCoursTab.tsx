@@ -55,7 +55,9 @@ import {
   FolderOpen,
   Undo2,
   PauseCircle,
-  PlayCircle
+  PlayCircle,
+  Pause,
+  Play
 } from 'lucide-react';
 import { extraireNumeroSansPrefixe } from '../../services/codificationService';
 
@@ -1049,7 +1051,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   <SortHeader col="statut" label="Statut" className="w-28 px-2 text-center" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'actions') && (
-                  <th className="py-2.5 px-2 text-center w-48">Actions Atelier</th>
+                  <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
                 )}
               </tr>
             </thead>
@@ -1300,193 +1302,191 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
                       {/* Actions */}
                       {columnConfigService.isColumnVisible('of_encours', 'actions') && (
-                        <td className="py-2.5 px-2 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
-                          {/* Actions pour ordre EN PAUSE */}
-                          {isPause && (
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Actions pour ordre EN PAUSE */}
+                            {isPause && (
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePauseOF(of)}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
+                                title="Reprendre la fabrication de cet OF et réactiver le dossier"
+                              >
+                                <Play className="w-3 h-3 fill-current" />
+                                <span>Reprendre</span>
+                              </button>
+                            )}
+
+                            {/* Actions selon le statut de l'OF */}
+                            {isEmis && (
+                              /* Un ordre doit être reçu de l'atelier avant de pouvoir être clôturé */
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarquerRetourRecu(of)}
+                                  title="Marquer comme retour reçu de l'atelier pour pouvoir clôturer l'OF"
+                                  className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
+                                >
+                                  <Clock className="w-3 h-3" />
+                                  <span>Reçu</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await handleMarquerRetourRecu(of);
+                                    localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                    localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
+                                    if (onNavigateToTab) {
+                                      onNavigateToTab('cockpit-cloture');
+                                    }
+                                  }}
+                                  title="Marquer le retour atelier comme reçu et ouvrir directement le Cockpit de clôture"
+                                  className="p-1.5 bg-slate-800 hover:bg-emerald-950/80 text-emerald-400 hover:text-emerald-300 rounded-md text-xs transition cursor-pointer border border-slate-700 hover:border-emerald-700/60 shadow-xs"
+                                >
+                                  <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTogglePauseOF(of)}
+                                  className="p-1.5 bg-slate-800 hover:bg-rose-950/80 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer border border-slate-700 hover:border-rose-700/60 shadow-xs"
+                                  title="Mettre cet ordre en pause (rupture de stock matière, attente approvisionnement)"
+                                >
+                                  <Pause className="w-3.5 h-3.5 text-rose-400" />
+                                </button>
+                              </>
+                            )}
+
+                            {isAttente && (
+                              /* Ordre Reçu de l'atelier : prêt pour la clôture */
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                    localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
+                                    if (onNavigateToTab) {
+                                      onNavigateToTab('cockpit-cloture');
+                                    }
+                                  }}
+                                  title="Clôturer rapidement via le Cockpit Éclair"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-md text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
+                                >
+                                  <Scale className="w-3 h-3" />
+                                  <span>Cockpit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    localStorage.setItem('3m_cockpit_selected_of', of.id);
+                                    localStorage.setItem('3m_cockpit_mode', 'CLASSIQUE');
+                                    if (onNavigateToTab) {
+                                      onNavigateToTab('cockpit-cloture');
+                                    }
+                                  }}
+                                  title="Clôturer via la méthode classique détaillée ligne par ligne"
+                                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTogglePauseOF(of)}
+                                  className="p-1.5 bg-slate-800 hover:bg-rose-950/80 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer border border-slate-700 hover:border-rose-700/60 shadow-xs"
+                                  title="Mettre en pause cet ordre"
+                                >
+                                  <Pause className="w-3.5 h-3.5 text-rose-400" />
+                                </button>
+                              </>
+                            )}
+
+                            {(isCloture || isLivre) && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedSuiviForDetails(of);
+                                  }}
+                                  className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 hover:text-purple-100 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-purple-700/60 shadow-xs"
+                                  title="Voir les détails complets de l'OF"
+                                >
+                                  <Eye className="w-3 h-3 text-purple-400" />
+                                  <span>Détails</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRollbackCloture(of)}
+                                  className="p-1.5 bg-slate-800 hover:bg-amber-900/60 text-slate-400 hover:text-amber-300 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                                  title="Annuler la clôture : restituer le stock et rouvrir l'OF pour correction"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                                </button>
+                              </>
+                            )}
+
+                            {/* Bouton Voir Fiche Transfert si Livré */}
+                            {isLivre && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const relatedFiche = fichesTransfert.find(f => f.id === of.ficheTransfertId || (f.lignes && f.lignes.some(l => l.ofId === of.id || (l.numCommande && l.numCommande.includes(of.numCommande)))));
+                                  if (relatedFiche) {
+                                    setSelectedFicheToView(relatedFiche);
+                                    setIsFicheTransfertModalOpen(true);
+                                  } else {
+                                    setSelectedSuiviForDetails(of);
+                                  }
+                                }}
+                                className="p-1.5 bg-slate-800 hover:bg-teal-900/60 text-slate-400 hover:text-teal-300 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                                title="Voir la Fiche de Transfert associée"
+                              >
+                                <Truck className="w-3.5 h-3.5 text-teal-400" />
+                              </button>
+                            )}
+
+                            {/* Bouton Recharger Commande dans Écosystème */}
                             <button
                               type="button"
-                              onClick={() => handleTogglePauseOF(of)}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-sm"
-                              title="Reprendre la fabrication de cet OF et réactiver le dossier"
+                              onClick={() => handleChargerDossierDansEcosysteme(of)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-amber-300 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                              title="Recharger cette commande complète dans l'Écosystème pour mise à jour ou consultation"
                             >
-                              <PlayCircle className="w-3.5 h-3.5 fill-white/20" />
-                              <span>Reprendre</span>
+                              <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
                             </button>
-                          )}
 
-                          {/* Actions selon le statut de l'OF */}
-                          {isEmis && (
-                            /* Un ordre doit être reçu de l'atelier avant de pouvoir être clôturé */
-                            <>
-                              <button
-                                onClick={() => handleMarquerRetourRecu(of)}
-                                title="Marquer comme retour reçu de l'atelier pour pouvoir clôturer l'OF"
-                                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
-                              >
-                                <Clock className="w-3.5 h-3.5" />
-                                <span>Marquer Reçu</span>
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  await handleMarquerRetourRecu(of);
-                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
-                                  localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
-                                  if (onNavigateToTab) {
-                                    onNavigateToTab('cockpit-cloture');
-                                  }
-                                }}
-                                title="Marquer le retour atelier comme reçu et ouvrir directement le Cockpit de clôture"
-                                className="px-2 py-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
-                              >
-                                <Scale className="w-3 h-3" />
-                                <span>Reçu &amp; Cockpit</span>
-                              </button>
+                            {/* Bouton Visualiser Commande Complète */}
+                            <button
+                              type="button"
+                              onClick={() => handleVisualiserCommande(of)}
+                              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-purple-300 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                              title="Visualiser le dossier de commande complet (repères, articles, cotes, statut)"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-purple-400" />
+                            </button>
+
+                            {/* Bouton Annuler OF (si non clôturé) */}
+                            {(isEmis || isAttente) && of.statut !== 'ANNULE' && (
                               <button
                                 type="button"
-                                onClick={() => handleTogglePauseOF(of)}
-                                className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
-                                title="Mettre cet ordre en pause (rupture de stock matière, attente approvisionnement)"
+                                onClick={() => handleAnnulerOF(of)}
+                                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 rounded-md text-xs transition cursor-pointer border border-slate-700 shadow-xs"
+                                title="Annuler cet OF et libérer ses réservations"
                               >
-                                <PauseCircle className="w-3.5 h-3.5 text-rose-400" />
-                                <span>Pause</span>
+                                <Ban className="w-3.5 h-3.5" />
                               </button>
-                            </>
-                          )}
+                            )}
 
-                          {isAttente && (
-                            /* Ordre Reçu de l'atelier : prêt pour la clôture */
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleTogglePauseOF(of)}
-                                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
-                                title="Mettre en pause cet ordre"
-                              >
-                                <PauseCircle className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
-                                  localStorage.setItem('3m_cockpit_mode', 'COCKPIT');
-                                  if (onNavigateToTab) {
-                                    onNavigateToTab('cockpit-cloture');
-                                  }
-                                }}
-                                title="Clôturer rapidement via le Cockpit Éclair"
-                                className="px-2.5 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-md text-[11px] flex items-center gap-1 shadow-sm transition cursor-pointer"
-                              >
-                                <Scale className="w-3.5 h-3.5" />
-                                <span>Cockpit</span>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  localStorage.setItem('3m_cockpit_selected_of', of.id);
-                                  localStorage.setItem('3m_cockpit_mode', 'CLASSIQUE');
-                                  if (onNavigateToTab) {
-                                    onNavigateToTab('cockpit-cloture');
-                                  }
-                                }}
-                                title="Clôturer via la méthode classique détaillée ligne par ligne"
-                                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer border border-slate-700"
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>Classique</span>
-                              </button>
-                            </>
-                          )}
-
-                          {(isCloture || isLivre) && (
+                            {/* Bouton Annuler Émission */}
                             <button
-                              onClick={() => {
-                                setSelectedSuiviForDetails(of);
-                              }}
-                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer border border-slate-700"
-                              title="Voir les détails de l'OF"
+                              type="button"
+                              onClick={() => handleAnnulerEmissionOF(of)}
+                              className="p-1.5 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded-md text-xs transition cursor-pointer border border-slate-700 hover:border-rose-700/60 shadow-xs"
+                              title="Annuler l'émission : débloque la commande pour mise à jour dans l'Écosystème et annule immédiatement les réservations de barres et chutes"
                             >
-                              <Eye className="w-3 h-3" />
-                              <span>Détails</span>
+                              <Undo2 className="w-3.5 h-3.5 text-rose-400" />
                             </button>
-                          )}
-
-                          {/* Bouton Recharger Commande dans Écosystème */}
-                          <button
-                            type="button"
-                            onClick={() => handleChargerDossierDansEcosysteme(of)}
-                            className="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
-                            title="Recharger cette commande complète dans l'Écosystème pour mise à jour ou consultation"
-                          >
-                            <FolderOpen className="w-3 h-3 text-amber-400" />
-                            <span>Écosystème</span>
-                          </button>
-
-                          {/* Bouton Visualiser Commande Complète */}
-                          <button
-                            type="button"
-                            onClick={() => handleVisualiserCommande(of)}
-                            className="px-2 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
-                            title="Visualiser le dossier de commande complet (repères, articles, cotes, statut)"
-                          >
-                            <FileText className="w-3 h-3 text-purple-400" />
-                            <span>Commande</span>
-                          </button>
-
-                          {/* Bouton Annuler Clôture / Rouvrir l'OF (Point 3.3 de l'audit) */}
-                          {(isCloture || isLivre) && (
-                            <button
-                              onClick={() => handleRollbackCloture(of)}
-                              className="px-2 py-1 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                              title="Annuler la clôture : restituer le stock et rouvrir l'OF pour correction"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              <span>Rouvrir</span>
-                            </button>
-                          )}
-
-                          {/* Bouton Annuler OF (si non clôturé) */}
-                          {(isEmis || isAttente) && of.statut !== 'ANNULE' && (
-                            <button
-                              onClick={() => handleAnnulerOF(of)}
-                              className="p-1 text-slate-500 hover:text-amber-400 hover:bg-slate-800 rounded transition cursor-pointer"
-                              title="Annuler cet OF et libérer ses réservations"
-                            >
-                              <Ban className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-
-                          {/* Bouton Voir Fiche Transfert si Livré */}
-                          {isLivre && (
-                            <button
-                              onClick={() => {
-                                const relatedFiche = fichesTransfert.find(f => f.id === of.ficheTransfertId || (f.lignes && f.lignes.some(l => l.ofId === of.id || (l.numCommande && l.numCommande.includes(of.numCommande)))));
-                                if (relatedFiche) {
-                                  setSelectedFicheToView(relatedFiche);
-                                  setIsFicheTransfertModalOpen(true);
-                                } else {
-                                  setSelectedSuiviForDetails(of);
-                                }
-                              }}
-                              className="px-2 py-1 bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer"
-                              title="Voir la Fiche de Transfert associée"
-                            >
-                              <Truck className="w-3 h-3" />
-                              <span>Fiche</span>
-                            </button>
-                          )}
-
-                          {/* Bouton Annuler Émission (Règle utilisateur: dans ordres en cours, on ne peut pas supprimer la commande mais juste annuler son émission pour mise à jour et libérer ses réservations) */}
-                          <button
-                            type="button"
-                            onClick={() => handleAnnulerEmissionOF(of)}
-                            className="px-2 py-1 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-rose-100 border border-rose-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
-                            title="Annuler l'émission : débloque la commande pour mise à jour dans l'Écosystème et annule immédiatement les réservations de barres et chutes"
-                          >
-                            <Undo2 className="w-3 h-3 text-rose-400" />
-                            <span>Annuler émission</span>
-                          </button>
-                        </div>
-                      </td>
-                    )}
+                          </div>
+                        </td>
+                      )}
                   </tr>
                 );
               })

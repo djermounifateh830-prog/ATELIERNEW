@@ -354,6 +354,20 @@ export function sqlitePlugin(): Plugin {
           }
         }
 
+        // --- 11 bis. SAUVEGARDE SILENCIEUSE SUR DISQUE SANS CONFIRMATION NI ÉCRASEMENT ---
+        if (url === '/api/db/backup-silent' && method === 'POST') {
+          const body = await parseBody(req);
+          const backupInfo = atelierDb.createSilentBackup(body?.defaultPath, body?.prefix);
+          broadcastEvent({ type: 'backup_created', target: 'all', data: backupInfo });
+          return sendJson(res, backupInfo);
+        }
+
+        // --- 11 ter. LISTE DES SAUVEGARDES DISPONIBLES ---
+        if (url === '/api/db/backups' && method === 'GET') {
+          const list = atelierDb.listBackups();
+          return sendJson(res, { success: true, backups: list });
+        }
+
         // --- 12. VIDER COMPLÈTEMENT LA BASE SQLITE ---
         if (url === '/api/db/wipe' && method === 'POST') {
           atelierDb.wipeAllData();

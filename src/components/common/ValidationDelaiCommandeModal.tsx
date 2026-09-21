@@ -11,7 +11,10 @@ import {
   TrendingUp,
   Save,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  PauseCircle,
+  PlayCircle,
+  Pause
 } from 'lucide-react';
 import { FamilleProduit, EstimationLivraisonDossier, EstimationDelaiDetail } from '../../types';
 import { DelaisProductionService } from '../../services/delaisProductionService';
@@ -23,8 +26,18 @@ interface ValidationDelaiCommandeModalProps {
     dateFinaleISO: string,
     dateFinaleTexte: string,
     estPrioritaire: boolean,
-    motifPriorite?: string
+    motifPriorite?: string,
+    estEnPause?: boolean,
+    motifPause?: string
   ) => Promise<void> | void;
+  onApplyOnly?: (
+    dateFinaleISO: string,
+    dateFinaleTexte: string,
+    estPrioritaire: boolean,
+    motifPriorite?: string,
+    estEnPause?: boolean,
+    motifPause?: string
+  ) => void;
   refCommande: string;
   nomClient: string;
   donneurOrdre?: string;
@@ -35,12 +48,15 @@ interface ValidationDelaiCommandeModalProps {
   initialEstPrioritaire?: boolean;
   initialMotifPriorite?: string;
   initialDateLivraisonISO?: string;
+  initialEstEnPause?: boolean;
+  initialMotifPause?: string;
 }
 
 export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModalProps> = ({
   isOpen,
   onClose,
   onConfirmSave,
+  onApplyOnly,
   refCommande,
   nomClient,
   donneurOrdre,
@@ -50,10 +66,14 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
   isUpdate = false,
   initialEstPrioritaire = false,
   initialMotifPriorite = '',
-  initialDateLivraisonISO = ''
+  initialDateLivraisonISO = '',
+  initialEstEnPause = false,
+  initialMotifPause = ''
 }) => {
   const [estPrioritaire, setEstPrioritaire] = useState<boolean>(initialEstPrioritaire);
   const [motifPriorite, setMotifPriorite] = useState<string>(initialMotifPriorite);
+  const [estEnPause, setEstEnPause] = useState<boolean>(initialEstEnPause);
+  const [motifPause, setMotifPause] = useState<string>(initialMotifPause);
   const [dateSelectionneeISO, setDateSelectionneeISO] = useState<string>('');
   const [modeDate, setModeDate] = useState<'AUTO' | 'MANUEL'>('AUTO');
   const [expandedFamilles, setExpandedFamilles] = useState<Record<string, boolean>>({});
@@ -76,6 +96,8 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
 
     setEstPrioritaire(initialEstPrioritaire);
     setMotifPriorite(initialMotifPriorite);
+    setEstEnPause(initialEstEnPause);
+    setMotifPause(initialMotifPause || '');
 
     if (initialDateLivraisonISO && initialDateLivraisonISO !== estimationGlobale.dateLivraisonISO) {
       setDateSelectionneeISO(initialDateLivraisonISO);
@@ -91,7 +113,7 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
       setDateSelectionneeISO(auj);
       setModeDate('AUTO');
     }
-  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, estimationGlobale.dateLivraisonISO, estimationGlobale.dateMaximale]);
+  }, [isOpen, initialDateLivraisonISO, initialEstPrioritaire, initialMotifPriorite, initialEstEnPause, initialMotifPause, estimationGlobale.dateLivraisonISO, estimationGlobale.dateMaximale]);
 
   // Synchronisation dynamique si en mode AUTO
   useEffect(() => {
@@ -448,6 +470,91 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
               </div>
             </div>
 
+            {/* Mise en Pause de la Commande */}
+            <div className={`p-3 rounded-xl border transition ${
+              estEnPause
+                ? 'bg-amber-950/40 border-amber-500/60 ring-1 ring-amber-500/40'
+                : 'bg-slate-900/50 border-slate-800'
+            }`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-1.5 rounded-lg ${estEnPause ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-800 text-slate-400'}`}>
+                    <PauseCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white block">
+                        Mise en Pause de la Commande
+                      </span>
+                      {estEnPause && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black border border-amber-500/40 animate-pulse">
+                          ⏸️ EN PAUSE
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-slate-400">
+                      Gèle la production de la commande (ex : rupture matière, attente validation client ou dimensions).
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEstEnPause(!estEnPause)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      estEnPause
+                        ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 shadow-md shadow-amber-500/20'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                    }`}
+                  >
+                    {estEnPause ? (
+                      <>
+                        <PlayCircle className="w-3.5 h-3.5" />
+                        <span>Reprendre</span>
+                      </>
+                    ) : (
+                      <>
+                        <Pause className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Mettre en Pause</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={estEnPause}
+                    onClick={() => setEstEnPause(!estEnPause)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                      estEnPause ? 'bg-amber-500' : 'bg-slate-700'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                        estEnPause ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {estEnPause && (
+                <div className="mt-2.5 pt-2 border-t border-amber-500/20 space-y-1.5">
+                  <input
+                    type="text"
+                    value={motifPause}
+                    onChange={(e) => setMotifPause(e.target.value)}
+                    placeholder="Motif de la mise en pause (ex: Attente profilés 9010, modification côtes client...)"
+                    className="w-full bg-slate-900 border border-amber-500/50 rounded-lg px-2.5 py-1 text-xs text-amber-200 placeholder-slate-500 focus:outline-hidden focus:ring-1 focus:ring-amber-500"
+                  />
+                  <p className="text-[10px] text-amber-300/80 italic">
+                    ℹ️ Les délais de livraison seront gelés et marqués "⏸️ EN PAUSE" sur le planning atelier et le dossier.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* Commande Prioritaire */}
             <div className={`p-3 rounded-xl border transition ${
               estPrioritaire
@@ -506,22 +613,47 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
         </div>
 
         {/* Footer avec Boutons d'Action */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-slate-800 bg-slate-950/80">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isSaving}
-            className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
-          >
-            Annuler
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-t border-slate-800 bg-slate-950/80">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSaving}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+            >
+              Annuler
+            </button>
+            {onApplyOnly && (
+              <button
+                type="button"
+                onClick={() => {
+                  const txtFormatte = getDateAfficheeFormatee(dateSelectionneeISO);
+                  const dateFinaleTexte = estEnPause
+                    ? '⏸️ EN PAUSE'
+                    : estPrioritaire
+                    ? `⚡ PRIORITAIRE : ${txtFormatte.replace(/^LIVRAISON\s*:\s*/i, '')}`
+                    : txtFormatte;
+                  onApplyOnly(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite, estEnPause, motifPause);
+                  onClose();
+                }}
+                disabled={isSaving || (!dateSelectionneeISO && !estEnPause)}
+                className="px-4 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+                title="Appliquer cette date et priorité à la commande sans enregistrer immédiatement"
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Appliquer à la Commande</span>
+              </button>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={handleValider}
-            disabled={isSaving || !dateSelectionneeISO}
+            disabled={isSaving || (!dateSelectionneeISO && !estEnPause)}
             className={`px-5 py-2.5 rounded-xl text-white text-xs font-black flex items-center gap-2 shadow-lg transition active:scale-95 ${
-              estPrioritaire
+              estEnPause
+                ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/30'
+                : estPrioritaire
                 ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/30'
                 : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
             } disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
@@ -535,7 +667,11 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
               <>
                 <Save className="w-4 h-4" />
                 <span>
-                  {isUpdate ? 'Valider et Mettre à jour' : 'Valider le Délai et Enregistrer'}
+                  {estEnPause
+                    ? 'Valider la Mise en Pause'
+                    : isUpdate
+                    ? 'Valider et Mettre à jour'
+                    : 'Valider le Délai et Enregistrer'}
                 </span>
               </>
             )}

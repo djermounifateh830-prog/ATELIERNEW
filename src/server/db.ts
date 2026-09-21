@@ -2638,6 +2638,95 @@ class AtelierDatabase {
     return DB_PATH;
   }
 
+  createSilentBackup(customDir?: string, prefix?: string): {
+    success: boolean;
+    filename: string;
+    fullPath: string;
+    sizeBytes: number;
+    timestamp: string;
+    date: string;
+    time: string;
+  } {
+    try {
+      this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+      console.warn('Checkpoint WAL avant sauvegarde:', e);
+    }
+
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    const timeStr = `${hh}h${min}m${ss}`;
+
+    const sanitizedPrefix = (prefix || '3m_atelier_backup').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const baseFilename = `${sanitizedPrefix}_${dateStr}_${timeStr}.db`;
+
+    const targetDir = customDir && customDir.trim().length > 0
+      ? path.resolve(process.cwd(), customDir.trim())
+      : path.resolve(process.cwd(), 'Sauvegardes_3M_Atelier');
+
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    let finalFilename = baseFilename;
+    let targetPath = path.join(targetDir, finalFilename);
+    let counter = 1;
+    while (fs.existsSync(targetPath)) {
+      finalFilename = `${sanitizedPrefix}_${dateStr}_${timeStr}_${counter}.db`;
+      targetPath = path.join(targetDir, finalFilename);
+      counter++;
+    }
+
+    fs.copyFileSync(DB_PATH, targetPath);
+
+    const stats = fs.statSync(targetPath);
+    return {
+      success: true,
+      filename: finalFilename,
+      fullPath: targetPath,
+      sizeBytes: stats.size,
+      timestamp: `${dateStr} ${hh}:${min}:${ss}`,
+      date: dateStr,
+      time: `${hh}:${min}:${ss}`
+    };
+  }
+
+  listBackups(customDir?: string) {
+    const targetDir = customDir && customDir.trim().length > 0
+      ? path.resolve(process.cwd(), customDir.trim())
+      : path.resolve(process.cwd(), 'Sauvegardes_3M_Atelier');
+
+    if (!fs.existsSync(targetDir)) {
+      return [];
+    }
+
+    try {
+      const files = fs.readdirSync(targetDir);
+      return files
+        .filter(f => f.endsWith('.db') || f.endsWith('.json'))
+        .map(f => {
+          const fp = path.join(targetDir, f);
+          const st = fs.statSync(fp);
+          return {
+            filename: f,
+            fullPath: fp,
+            sizeBytes: st.size,
+            modifiedAt: st.mtime.toISOString(),
+            isAuto: f.includes('backup')
+          };
+        })
+        .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    } catch {
+      return [];
+    }
+  }
+
   restoreRawDatabase(buffer: Buffer) {
     try {
       this.db.close();

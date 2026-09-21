@@ -93,7 +93,8 @@ import {
   Lock,
   History,
   Pause,
-  TrendingUp
+  TrendingUp,
+  PlusCircle
 } from 'lucide-react';
 
 export interface SectionMultiArticleCaisson {
@@ -1736,7 +1737,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [dureePauseJours, setDureePauseJours] = useState<number>(0);
   const [afficherEditeurLivraison, setAfficherEditeurLivraison] = useState<boolean>(false);
   const [showValidationDelaiModal, setShowValidationDelaiModal] = useState<boolean>(false);
-  const [statutCiblePourEnregistrement, setStatutCiblePourEnregistrement] = useState<'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS'>('EN_ATTENTE');
+  const [statutCiblePourEnregistrement, setStatutCiblePourEnregistrement] = useState<'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' | 'EN_PAUSE'>('EN_ATTENTE');
   const [isSavingDossier, setIsSavingDossier] = useState<boolean>(false);
 
   // Charger les OFs pour les calculs de files d'attente
@@ -1751,7 +1752,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     refreshSuivisOF();
   }, [refreshSuivisOF, dossiers]);
 
-  const ouvrirValidationDelaiModal = useCallback(async (statut?: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS') => {
+  const ouvrirValidationDelaiModal = useCallback(async (statut?: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' | 'EN_PAUSE') => {
     if (statut) {
       setStatutCiblePourEnregistrement(statut);
     }
@@ -4364,7 +4365,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // Enregistrer ou Mettre à Jour le dossier complet dans l'historique SQLite avec les délais confirmés
   const executerSauvegardeDossier = async (
-    statutCible: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' = 'EN_ATTENTE',
+    statutCible: 'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' | 'EN_PAUSE' = 'EN_ATTENTE',
     customDateISO?: string,
     customDateTexte?: string,
     customEstPrioritaire?: boolean,
@@ -4683,24 +4684,36 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               </button>
             )}
 
-            {/* BOUTON HISTORIQUE AVEC LIEN NOUVEL ONGLET */}
-            <a
-              href="?tab=historique"
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => {
-                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                  e.preventDefault();
-                  onNavigateToTab('historique');
-                }
-              }}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-purple-500/30 hover:border-purple-400 shadow-md transition active:scale-95 cursor-pointer"
-              title="Ouvrir l'Historique (Clic normal ou Clic-droit / Ctrl+Clic pour ouvrir dans un nouvel onglet)"
-            >
-              <History className="w-4 h-4 text-purple-400" />
-              <span>📜 Historique</span>
-              <ExternalLink className="w-3 h-3 text-purple-400/70" />
-            </a>
+            {/* BOUTON HISTORIQUE (SI AUCUN DOSSIER ACTIF) OU NOUVELLE COMMANDE (SI DOSSIER ACTIF) */}
+            {(editingDossierId || (clientDeMonClient && clientDeMonClient.trim().length > 0) || totalLignesEnCours > 0) ? (
+              <button
+                type="button"
+                onClick={handleNouvelleCommande}
+                className="px-3.5 py-2 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-sky-600/20 transition active:scale-95 cursor-pointer"
+                title={`Saisir une nouvelle commande pour ce même dossier (${clientDeMonClient || 'client en cours'})`}
+              >
+                <PlusCircle className="w-4 h-4 text-sky-200" />
+                <span>➕ Nouvelle Commande</span>
+              </button>
+            ) : (
+              <a
+                href="?tab=historique"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => {
+                  if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
+                    e.preventDefault();
+                    onNavigateToTab('historique');
+                  }
+                }}
+                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-purple-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-purple-500/30 hover:border-purple-400 shadow-md transition active:scale-95 cursor-pointer"
+                title="Ouvrir l'Historique (Clic normal ou Clic-droit / Ctrl+Clic pour ouvrir dans un nouvel onglet)"
+              >
+                <History className="w-4 h-4 text-purple-400" />
+                <span>📜 Historique</span>
+                <ExternalLink className="w-3 h-3 text-purple-400/70" />
+              </a>
+            )}
 
             {/* BOUTON 1 : NOUVEAU DOSSIER */}
             <button
@@ -4736,10 +4749,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
         )}
 
-        {/* Formulaire En-tête : Mon Client / Client de Mon Client / Date / Délai & Livraison */}
+        {/* Formulaire En-tête : Mon Client / Client de Mon Client / Date Dossier */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3.5 items-center bg-slate-950/80 p-3.5 rounded-xl border border-slate-800/80">
           {/* Mon Client (Donneur d'ordre) */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-4">
             <label className="block text-[11px] font-semibold text-sky-300 mb-1 flex items-center justify-between">
               <span className="flex items-center gap-1">
                 <Building2 className="w-3.5 h-3.5" />
@@ -4798,7 +4811,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
 
           {/* Le Client de Mon Client (Client final / Chantier avec mémoire incrémentale) */}
-          <div className="lg:col-span-4 relative">
+          <div className="lg:col-span-5 relative">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-[11px] font-semibold text-emerald-300 flex items-center gap-1">
                 <User className="w-3.5 h-3.5" />
@@ -4903,7 +4916,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           </div>
 
           {/* Date de la Commande */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-3">
             <label className="block text-[11px] font-semibold text-purple-300 mb-1 flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
               <span>Date Dossier *</span>
@@ -4922,306 +4935,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               className="w-full bg-slate-900 border border-purple-500/40 rounded-lg px-3 py-2 text-xs text-purple-200 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-inner"
             />
           </div>
-
-          {/* Date de Livraison Fixée & Priorité Atelier */}
-          <div className="lg:col-span-3">
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-[11px] font-semibold text-emerald-300 flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Date Livraison (Fixée)</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = typePriorite === 'INSTANTANE' ? 'DIFFERE' : 'INSTANTANE';
-                    setTypePriorite(next);
-                    setEstPrioritaire(next === 'INSTANTANE');
-                  }}
-                  className={`text-[10px] px-1.5 py-0.5 rounded font-black uppercase transition cursor-pointer flex items-center gap-1 ${
-                    typePriorite === 'INSTANTANE'
-                      ? 'bg-rose-500 text-white shadow-xs'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="Basculer entre Instantané (fabrication immédiate) et Différé"
-                >
-                  <Zap className={`w-2.5 h-2.5 ${typePriorite === 'INSTANTANE' ? 'fill-current' : ''}`} />
-                  <span>{typePriorite === 'INSTANTANE' ? '⚡ Instantané' : '⏳ Différé'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAfficherEditeurLivraison(prev => !prev)}
-                  className="text-[10px] text-amber-400 hover:text-amber-300 underline font-medium flex items-center gap-0.5 cursor-pointer"
-                  title="Fixer ou ajuster la date de livraison"
-                >
-                  <Edit2 className="w-3 h-3" />
-                  <span>Fixer</span>
-                </button>
-              </div>
-            </div>
-
-            <div
-              onClick={() => setAfficherEditeurLivraison(prev => !prev)}
-              className={`w-full border rounded-lg px-2.5 py-1.5 flex items-center justify-between cursor-pointer transition shadow-inner ${
-                estEnPause
-                  ? 'bg-red-950/40 border-red-500/60 text-red-200 hover:bg-red-950/60'
-                  : typePriorite === 'INSTANTANE'
-                  ? 'bg-rose-950/40 border-rose-500/60 text-rose-200 hover:bg-rose-950/60'
-                  : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-600'
-              }`}
-              title="Cliquer pour afficher/masquer le panneau de fixation de la date et priorité"
-            >
-              <div className="flex flex-col min-w-0">
-                <span className="text-[11px] font-mono font-bold truncate flex items-center gap-1.5">
-                  {estEnPause ? (
-                    <span className="text-red-400 font-black flex items-center gap-1">
-                      <Pause className="w-3 h-3 text-red-400 animate-pulse" />
-                      EN PAUSE
-                    </span>
-                  ) : typePriorite === 'INSTANTANE' ? (
-                    <span className="text-rose-400 font-black flex items-center gap-1">
-                      <Zap className="w-3 h-3 text-rose-400 fill-rose-400" />
-                      ⚡ INSTANTANÉ :
-                    </span>
-                  ) : (
-                    <span className="text-emerald-400 font-bold flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-emerald-400" />
-                      DATE :
-                    </span>
-                  )}
-                  <span className="truncate">
-                    {(() => {
-                      const raw = delaiFixeManuellement && dateLivraisonPrevisionnelle
-                        ? dateLivraisonPrevisionnelle
-                        : estimationLivraisonLive.dateLivraisonFormattee;
-                      return raw.replace(/^(⚡\s*INSTANTAN[EÉ]\s*:\s*|⚡\s*PRIORITAIRE\s*:\s*|LIVRAISON\s*PR[EÉ]VUE\s*:\s*|D[EÉ]LAI\s*PR[EÉ]VISIONNEL\s*:\s*|D[EÉ]LAI\s*:\s*|LIVRAISON\s*:\s*)/i, '').trim();
-                    })()}
-                  </span>
-                </span>
-                <span className="text-[9px] text-slate-400 truncate">
-                  {estEnPause
-                    ? `Interruption : +${dureePauseJours}j (Pause en cours)`
-                    : typePriorite === 'INSTANTANE'
-                    ? 'Fabrication immédiate (en tête de file)'
-                    : 'Date de livraison fixée'}
-                </span>
-              </div>
-              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${afficherEditeurLivraison ? 'rotate-180 text-amber-400' : ''}`} />
-            </div>
-          </div>
         </div>
-
-        {/* Panneau dépliable de fixation de la Date & Priorité Commande */}
-        {afficherEditeurLivraison && (
-          <div className="mt-2.5 bg-slate-950 p-3.5 rounded-xl border border-emerald-500/40 shadow-xl space-y-3 animate-fade-in text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-emerald-400" />
-                <span className="font-bold text-slate-100">Fixer la Date de Livraison &amp; Priorité Commande</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAfficherEditeurLivraison(false)}
-                className="text-slate-400 hover:text-slate-200 text-xs px-2 py-0.5 rounded hover:bg-slate-800 transition cursor-pointer"
-              >
-                ✕ Fermer
-              </button>
-            </div>
-
-            {/* Sélecteur Instantané vs Différé */}
-            <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-white block">Priorité de Fabrication de la Commande :</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Les commandes <strong>Instantanées</strong> sont fabriquées immédiatement et classées au-devant des autres dans la file atelier.
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTypePriorite('INSTANTANE');
-                    setEstPrioritaire(true);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-black transition flex items-center gap-1.5 cursor-pointer ${
-                    typePriorite === 'INSTANTANE'
-                      ? 'bg-rose-600 text-white shadow-md ring-1 ring-rose-400'
-                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-                  }`}
-                >
-                  <Zap className={`w-3.5 h-3.5 ${typePriorite === 'INSTANTANE' ? 'fill-current' : ''}`} />
-                  <span>⚡ Instantané</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTypePriorite('DIFFERE');
-                    setEstPrioritaire(false);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    typePriorite === 'DIFFERE'
-                      ? 'bg-sky-600 text-white shadow-md ring-1 ring-sky-400'
-                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>⏳ Différé</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-              {/* Date ISO de livraison */}
-              <div className="md:col-span-4 space-y-1">
-                <label className="block text-[10px] uppercase font-bold text-slate-300">
-                  Date de livraison fixée
-                </label>
-                <input
-                  type="date"
-                  value={dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO || ''}
-                  onChange={e => {
-                    const iso = e.target.value;
-                    setDateLivraisonPrevisionnelleISO(iso);
-                    if (iso) {
-                      const parts = iso.split('-');
-                      if (parts.length === 3) {
-                        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
-                        if (!isNaN(d.getTime())) {
-                          const txt = DelaisProductionService.formaterDateLivraison(d);
-                          setDateLivraisonPrevisionnelle(txt);
-                        }
-                      }
-                    }
-                    setDelaiFixeManuellement(true);
-                  }}
-                  className="w-full bg-slate-900 border border-amber-500/50 rounded-lg px-3 py-1.5 text-xs text-amber-200 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-500"
-                />
-              </div>
-
-              {/* Raccourcis rapides */}
-              <div className="md:col-span-8 space-y-1">
-                <label className="block text-[10px] uppercase font-bold text-slate-300">
-                  Raccourcis Délais Ouvrés &amp; Calcul Atelier
-                </label>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => appliquerRaccourciLivraison(0)}
-                    className="px-2.5 py-1 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/50 text-rose-300 rounded font-bold text-[11px] transition cursor-pointer flex items-center gap-1 shadow-xs"
-                    title={`Livraison aujourd'hui (${new Date().toLocaleDateString('fr-FR')})`}
-                  >
-                    <Zap className="w-3 h-3 fill-rose-400" />
-                    <span>Aujourd'hui</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => appliquerRaccourciLivraison(1)}
-                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
-                  >
-                    +1j Ouvré
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => appliquerRaccourciLivraison(2)}
-                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
-                  >
-                    +2j Ouvrés
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => appliquerRaccourciLivraison(3)}
-                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
-                  >
-                    +3j Ouvrés
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => appliquerRaccourciLivraison(5)}
-                    className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded font-bold text-[11px] transition cursor-pointer"
-                  >
-                    +5j (1 Semaine)
-                  </button>
-                  {delaiFixeManuellement && (
-                    <button
-                      type="button"
-                      onClick={reinitialiserDelaiAutomatique}
-                      className="px-2 py-1 bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 text-sky-300 rounded font-bold text-[11px] transition cursor-pointer flex items-center gap-1"
-                      title="Repasser au calcul automatique d'atelier basé sur la cadence réelle"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>↺ Revenir au Calcul Auto</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => ouvrirValidationDelaiModal()}
-                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-[11px] transition cursor-pointer flex items-center gap-1 shadow"
-                    title="Ouvrir l'analyse détaillée des volumes par famille et files d'attente atelier"
-                  >
-                    <TrendingUp className="w-3 h-3 stroke-[2.5]" />
-                    <span>Détail Charge & Délais</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Section Mise en Pause pour rupture ou attente client */}
-            <div className="p-2.5 rounded-xl border bg-slate-900/60 border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={togglePauseCommande}
-                  className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-md ${
-                    estEnPause
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                      : 'bg-red-600/90 hover:bg-red-500 text-white'
-                  }`}
-                  title={estEnPause ? "Reprendre la production du dossier" : "Mettre en pause (rupture profilé, attente client...)"}
-                >
-                  {estEnPause ? (
-                    <>
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>▶️ Reprendre Production</span>
-                    </>
-                  ) : (
-                    <>
-                      <Pause className="w-3.5 h-3.5 fill-current" />
-                      <span>⏸️ Mettre en Pause (Rupture / Attente)</span>
-                    </>
-                  )}
-                </button>
-
-                <div className="space-y-0.5">
-                  <div className="text-[11px] text-slate-200 font-semibold flex items-center gap-1.5">
-                    <span>Statut :</span>
-                    {estEnPause ? (
-                      <span className="text-red-400 font-bold bg-red-950/80 border border-red-500/40 px-2 py-0.5 rounded">
-                        EN PAUSE (Date pause : {datePause || 'Aujourd\'hui'})
-                      </span>
-                    ) : (
-                      <span className="text-emerald-400 font-bold">En cours de traitement</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-slate-400">
-                    Les jours d'interruption sont automatiquement déduits du calcul pour reporter la date de livraison.
-                  </p>
-                </div>
-              </div>
-
-              {estEnPause && (
-                <div className="w-full md:w-auto flex-1 md:max-w-xs">
-                  <input
-                    type="text"
-                    value={motifPause}
-                    onChange={e => setMotifPause(e.target.value)}
-                    placeholder="Motif de pause (ex: Rupture profilé CT SOMO 30...)"
-                    className="w-full bg-slate-950 border border-red-500/40 rounded-lg px-2.5 py-1 text-xs text-red-200 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* BANDEAU DE SYNTHÈSE DES DÉLAIS CALCULÉS PAR COMMANDE ET PAR FAMILLE */}
         {estimationLivraisonLive.hasPieces && Object.keys(estimationLivraisonLive.detailsParFamille).length > 0 && (
@@ -8071,43 +7785,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </tbody>
                 </table>
               </div>
-
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT & CONFIRMATION COMMANDE DIRECTE */}
-              {lignesCaissons.length > 0 && (
-                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-emerald-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                      <span>Découpe Caissons &amp; Sous-Faces :</span>
-                      <span className="text-[10px] text-amber-300 font-mono bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/30">
-                        {lignesCaissons.length} caisson(s) CT • {lignesCaissons.filter(c => c.avecSousFace).length} sous-face(s) SF
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOptimiserCaissonsEtSousFaces()}
-                      className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-emerald-500/20 transition active:scale-95 cursor-pointer"
-                      title="Lancer l'optimisation de découpe directement pour cette commande"
-                    >
-                      <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimisation &amp; OF (CT &amp; SF)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>💾 Enregistrer</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
             </div>
           )}
 
@@ -8341,42 +8018,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </tbody>
                 </table>
               </div>
-
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT TABLIERS & VOLETS */}
-              {lignesTabliers.length > 0 && (
-                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
-                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                      <span>Découpe Volets &amp; Tabliers :</span>
-                      <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
-                        {lignesTabliers.length} tablier(s) • {lignesTabliers.filter(t => t.avecLameFinale).length} lame(s) finale(s) • {lignesTabliers.filter(t => t.typeFabrication === 'VOLET_COMPLET').length * 2} coulisse(s)
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOptimiserTabliersEtVolets()}
-                      className="px-4 py-2 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-sky-500/20 transition active:scale-95 cursor-pointer"
-                      title="Lancer l'optimisation de découpe directement pour cette commande"
-                    >
-                      <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimisation &amp; OF (Tabliers &amp; Volets)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>💾 Enregistrer</span>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -8633,51 +8274,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </tbody>
                 </table>
               </div>
-
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉCOUPE MOUSTIQUAIRES */}
-              {lignesMoustiquaires.length > 0 && (
-                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-sky-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
-                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                      <span>Découpe Moustiquaires :</span>
-                      <span className="text-[10px] text-sky-300 font-mono bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30">
-                        {lignesMoustiquaires.length} moustiquaire(s)
-                        {lignesMoustiquaires.some(m => m.typeFabrication !== 'PROFILES_SEULS') && (
-                          <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'PROFILES_SEULS').length} maille(s)</>
-                        )}
-                        {lignesMoustiquaires.some(m => m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
-                          <> • {lignesMoustiquaires.filter(m => m.typeFabrication !== 'SEMI_FINI_MAILLE').length} cadre(s)</>
-                        )}
-                        {lignesMoustiquaires.some(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE') && (
-                          <> • {lignesMoustiquaires.filter(m => m.avecBarreInferieure && m.typeFabrication !== 'SEMI_FINI_MAILLE').length} barre(s) inf.</>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOptimiserMoustiquaires()}
-                      className="px-4 py-2 bg-gradient-to-r from-sky-500 to-blue-500 hover:from-sky-400 hover:to-blue-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-sky-500/20 transition active:scale-95 cursor-pointer"
-                      title="Lancer l'optimisation de découpe directement pour cette commande"
-                    >
-                      <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimisation &amp; OF (Moustiquaires)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>💾 Enregistrer</span>
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* MODAL RÉSULTATS OPTIMISATION MOUSTIQUAIRE COMPLÈTE (MAILLE + PROFILÉS ALU) */}
               {modalDebitMSTQOpen && (
@@ -9210,42 +8806,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </tbody>
                 </table>
               </div>
-
-              {/* BARRE D'ACTIONS : OPTIMISATION DÉBIT PRÉCADRES */}
-              {lignesPrecadres.length > 0 && (
-                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-purple-500/40 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse"></span>
-                    <div className="text-xs font-black text-slate-100 flex items-center gap-2">
-                      <span>Découpe Précadres :</span>
-                      <span className="text-[10px] text-purple-300 font-mono bg-purple-950/60 px-2 py-0.5 rounded border border-purple-500/30">
-                        {lignesPrecadres.length} précadre(s) • {lignesPrecadres.reduce((s, p) => s + p.quantite * 2, 0)} montants verticaux
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleOptimiserPrecadres()}
-                      className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-2 shadow-md shadow-purple-500/20 transition active:scale-95 cursor-pointer"
-                      title="Lancer l'optimisation de découpe directement pour cette commande"
-                    >
-                      <Scissors className="w-4 h-4" />
-                      <span>⚡ Optimisation &amp; OF (Précadres)</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
-                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-lg text-xs flex items-center gap-1.5 border border-slate-700 transition active:scale-95 cursor-pointer"
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      <span>💾 Enregistrer</span>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -9254,7 +8814,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         {/* 5. ACTIONS INFÉRIEURES : ENREGISTRER / METTRE À JOUR                      */}
         {/* ========================================================================= */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={() => handleEnregistrerDossier('EN_ATTENTE')}
               disabled={totalLignesEnCours === 0}
@@ -9262,6 +8822,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             >
               <Save className="w-4 h-4" />
               <span>{editingDossierId ? `Mettre à jour la Commande ${numCommande}` : `Enregistrer la Commande ${numCommande}`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => ouvrirValidationDelaiModal()}
+              className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition active:scale-95 cursor-pointer"
+              title="Gérer et ajuster les délais de fabrication et date de livraison de la commande"
+            >
+              <Clock className="w-4 h-4 stroke-[2.5]" />
+              <span>⏱️ Gestion Délais de Livraison Commande</span>
             </button>
           </div>
         </div>
@@ -9317,16 +8887,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
-              onClick={() => handleNouveauDossier(true)}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-sky-500/30 shadow transition active:scale-95 cursor-pointer"
-              title="Démarrer un nouveau dossier vierge à 0 pour un autre client"
-            >
-              <FolderPlus className="w-4 h-4 text-sky-400" />
-              <span>📁 Nouveau Dossier Vierge</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => {
                 if (commandesDossierEnCours.length === 0) {
                   showFlashNotification('⚠️ Aucune commande à optimiser dans ce dossier. Renseignez et enregistrez au moins une commande.', 'warn');
@@ -9341,33 +8901,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <Zap className="w-4 h-4 text-amber-300" />
               <span>⚡ Optimisation &amp; OF Tout le Dossier ({commandesDossierEnCours.length})</span>
             </button>
-
-            <button
-              type="button"
-              onClick={handleNouvelleCommande}
-              className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>➕ Autre Commande pour ce Client</span>
-            </button>
-
-            <a
-              href="?tab=historique"
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => {
-                if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                  e.preventDefault();
-                  onNavigateToTab('historique');
-                }
-              }}
-              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
-              title="Consulter l'Historique (Clic normal ou Clic-droit / Ctrl+Clic pour ouvrir dans un nouvel onglet)"
-            >
-              <History className="w-3.5 h-3.5 text-purple-400" />
-              <span>📜 Historique Global ({dossiers.length})</span>
-              <ExternalLink className="w-3 h-3 text-purple-400/80" />
-            </a>
           </div>
         </div>
 
@@ -10009,13 +9542,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         <ValidationDelaiCommandeModal
           isOpen={showValidationDelaiModal}
           onClose={() => setShowValidationDelaiModal(false)}
-          onConfirmSave={async (dateFinaleISO, dateFinaleTexte, estPrio, motifPrio) => {
+          onConfirmSave={async (dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause) => {
+            if (estPause !== undefined) {
+              setEstEnPause(estPause);
+            }
+            if (motifDePause !== undefined) {
+              setMotifPause(motifDePause);
+            }
             await executerSauvegardeDossier(
-              statutCiblePourEnregistrement,
+              estPause ? 'EN_PAUSE' : statutCiblePourEnregistrement,
               dateFinaleISO,
-              dateFinaleTexte,
+              estPause ? '⏸️ EN PAUSE' : dateFinaleTexte,
               estPrio,
               motifPrio
+            );
+          }}
+          onApplyOnly={(dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause) => {
+            if (estPause !== undefined) {
+              setEstEnPause(estPause);
+            }
+            if (motifDePause !== undefined) {
+              setMotifPause(motifDePause);
+            }
+            setDateLivraisonPrevisionnelleISO(dateFinaleISO);
+            setDateLivraisonPrevisionnelle(estPause ? '⏸️ EN PAUSE' : dateFinaleTexte);
+            setDelaiFixeManuellement(true);
+            setEstPrioritaire(estPrio);
+            setTypePriorite(estPrio ? 'INSTANTANE' : 'DIFFERE');
+            if (motifPrio !== undefined) {
+              setMotifPriorite(motifPrio);
+            }
+            showFlashNotification(
+              estPause
+                ? '⏸️ Commande mise en pause avec succès !'
+                : '✅ Date et délai de livraison appliqués à la commande !',
+              'success'
             );
           }}
           refCommande={getActiveNumCommande() || numCommande || 'CMD'}
@@ -10027,6 +9588,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           isUpdate={!!editingDossierId}
           initialEstPrioritaire={estPrioritaire}
           initialMotifPriorite={motifPriorite}
+          initialEstEnPause={estEnPause}
+          initialMotifPause={motifPause}
           initialDateLivraisonISO={delaiFixeManuellement ? (dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO) : ''}
         />
       )}

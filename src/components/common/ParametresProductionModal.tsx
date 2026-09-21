@@ -329,6 +329,17 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {(['CAISSON', 'PRECADRE', 'MOUSTIQUAIRE', 'TABLIER'] as FamilleProduit[]).map(fam => {
                 const conf = params.familles[fam] || PARAMETRES_PRODUCTION_DEFAUT.familles[fam];
+                const totalMinutesJour = (params.heuresTravailParJour || 8) * 60;
+                const tempsMin = conf.tempsUnitaireMinutes || Math.max(1, Math.round(totalMinutesJour / (conf.capaciteJournalierePieces || 10)));
+                const capaciteJour = conf.capaciteJournalierePieces || Math.max(1, Math.round(totalMinutesJour / tempsMin));
+                const cadenceParMinute = (1 / tempsMin).toFixed(2);
+                
+                const unitSingular = fam === 'CAISSON' ? 'caisson' : fam === 'TABLIER' ? 'tablier' : fam === 'MOUSTIQUAIRE' ? 'moustiquaire' : 'précadre';
+                const unitPlural = fam === 'CAISSON' ? 'caissons' : fam === 'TABLIER' ? 'tabliers' : fam === 'MOUSTIQUAIRE' ? 'moustiquaires' : 'précadres';
+                const unitMinute = `${unitSingular} par minute`;
+                const charge50 = ((50 * tempsMin) / totalMinutesJour).toFixed(2);
+                const charge100 = ((100 * tempsMin) / totalMinutesJour).toFixed(2);
+
                 return (
                   <div
                     key={fam}
@@ -347,7 +358,7 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
                         </div>
                       </div>
                       <span className="text-xs font-mono font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded">
-                        {conf.capaciteJournalierePieces} pcs/jour
+                        {cadenceParMinute} {unitMinute}
                       </span>
                     </div>
 
@@ -355,49 +366,62 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
                       {/* Temps unitaire en minutes */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Temps unitaire :
+                          Temps unitaire (Minutes) :
                         </label>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
                             min="1"
                             max="600"
-                            value={conf.tempsUnitaireMinutes}
+                            value={tempsMin}
                             onChange={e =>
                               updateFamille(fam, 'tempsUnitaireMinutes', parseFloat(e.target.value) || 1)
                             }
-                            className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono font-bold text-white text-center focus:border-amber-400 outline-hidden"
+                            className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono font-bold text-amber-300 text-center focus:border-amber-400 outline-hidden"
                           />
-                          <span className="text-xs text-slate-400 font-semibold">min/pc</span>
+                          <span className="text-xs text-slate-400 font-semibold shrink-0">min / pc</span>
                         </div>
+                        <span className="text-[10px] text-slate-500 mt-0.5 block">
+                          = 1 {unitSingular} / {tempsMin} min
+                        </span>
                       </div>
 
                       {/* Capacité journalière en pièces */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Capacité journalière :
+                          Capacité Journalière :
                         </label>
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number"
                             min="1"
                             max="2000"
-                            value={conf.capaciteJournalierePieces}
+                            value={capaciteJour}
                             onChange={e =>
                               updateFamille(fam, 'capaciteJournalierePieces', parseInt(e.target.value, 10) || 1)
                             }
-                            className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono font-bold text-white text-center focus:border-amber-400 outline-hidden"
+                            className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-sm font-mono font-bold text-emerald-400 text-center focus:border-emerald-400 outline-hidden"
                           />
-                          <span className="text-xs text-slate-400 font-semibold">pcs/j</span>
+                          <span className="text-xs text-slate-400 font-semibold shrink-0">{unitPlural} / j</span>
                         </div>
+                        <span className="text-[10px] text-slate-500 mt-0.5 block">
+                          sur {params.heuresTravailParJour || 8}h/jour
+                        </span>
                       </div>
                     </div>
 
-                    <div className="text-[11px] text-slate-400 bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex items-center justify-between">
-                      <span className="italic">Cadence calculée :</span>
-                      <strong className="text-emerald-400 font-mono">
-                        ≈ {(conf.capaciteJournalierePieces / (params.heuresTravailParJour || 8)).toFixed(1)} pcs / heure
-                      </strong>
+                    {/* Calcul en jours explicite */}
+                    <div className="text-[11px] text-slate-400 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80 space-y-1">
+                      <div className="flex items-center justify-between text-slate-300 font-medium">
+                        <span className="italic">📊 Calcul en jours ouvrés :</span>
+                        <strong className="text-emerald-400 font-mono">
+                          1 jour = {capaciteJour} {unitPlural} ({totalMinutesJour} min)
+                        </strong>
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800">
+                        <span>Charge 50 {unitPlural} = <strong className="text-amber-300 font-mono">{charge50} j</strong></span>
+                        <span>Charge 100 {unitPlural} = <strong className="text-amber-300 font-mono">{charge100} j</strong></span>
+                      </div>
                     </div>
                   </div>
                 );

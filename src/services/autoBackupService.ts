@@ -4,9 +4,10 @@ import { logger } from './logger';
 export interface BackupSettings {
   enabled: boolean;
   scheduledTime: string; // "16:30"
-  defaultPath: string; // "D:\\Sauvegardes_3M\\" ou "Téléchargements / 3M_Backups"
+  defaultPath: string; // "D:\\Sauvegardes_3M\\" ou "Sauvegardes_3M_Atelier"
   lastBackupDate: string | null; // "2026-09-18"
   lastBackupTime: string | null; // "16:30:00"
+  lastBackupFilename: string | null; // "3m_atelier_backup_2026-09-21_12h00m00.db"
   backupFormat: 'db' | 'json';
 }
 
@@ -18,6 +19,7 @@ export const DEFAULT_BACKUP_SETTINGS: BackupSettings = {
   defaultPath: 'Sauvegardes_3M_Atelier',
   lastBackupDate: null,
   lastBackupTime: null,
+  lastBackupFilename: null,
   backupFormat: 'db'
 };
 
@@ -91,7 +93,50 @@ class AutoBackupService {
     }
   }
 
+  public async executeSilentBackup(): Promise<{ filename: string; fullPath: string }> {
+    try {
+      const res = await fetch('/api/db/backup-silent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultPath: this.settings.defaultPath,
+          prefix: '3m_atelier_backup'
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Erreur serveur HTTP ${res.status} lors de la sauvegarde silencieuse`);
+      }
+
+      const result = await res.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Échec de la sauvegarde silencieuse');
+      }
+
+      this.settings.lastBackupDate = result.date;
+      this.settings.lastBackupTime = result.time;
+      this.settings.lastBackupFilename = result.filename;
+      this.save();
+
+      const logMsg = `Sauvegarde automatique silencieuse effectuée avec succès sans écrasement : ${result.filename} dans [${result.fullPath}].`;
+      logger.action('Sauvegarde Base', logMsg);
+
+      return { filename: result.filename, fullPath: result.fullPath };
+    } catch (err: any) {
+      console.error('Erreur lors de la sauvegarde silencieuse:', err);
+      logger.error('Sauvegarde Base', `Échec de la sauvegarde silencieuse : ${err.message}`);
+      throw err;
+    }
+  }
+
   public async executeBackup(isAutomatic = false): Promise<void> {
+    if (isAutomatic) {
+      // Sauvegarde silencieuse automatique : aucune boîte de dialogue, aucune confirmation
+      await this.executeSilentBackup();
+      return;
+    }
+
+    // Sauvegarde manuelle (téléchargement direct initié par l'utilisateur)
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
@@ -99,7 +144,7 @@ class AutoBackupService {
     const todayStr = `${currentYear}-${currentMonth}-${currentDay}`;
     const timeFormatted = now.toTimeString().split(' ')[0];
 
-    const timestampName = `${todayStr}_${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}`;
+    const timestampName = `${todayStr}_${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}m${String(now.getSeconds()).padStart(2, '0')}`;
     const filename = `3m_atelier_backup_${timestampName}.${this.settings.backupFormat}`;
 
     try {
@@ -121,15 +166,13 @@ class AutoBackupService {
 
       this.settings.lastBackupDate = todayStr;
       this.settings.lastBackupTime = timeFormatted;
+      this.settings.lastBackupFilename = filename;
       this.save();
 
-      const logMsg = isAutomatic
-        ? `Sauvegarde automatique programmée exécutée avec succès (${filename}) à destination de [${this.settings.defaultPath}].`
-        : `Sauvegarde manuelle générée avec succès (${filename}).`;
-
+      const logMsg = `Sauvegarde manuelle exportée avec succès (${filename}).`;
       logger.action('Sauvegarde Base', logMsg);
     } catch (err: any) {
-      console.error('Erreur lors de la sauvegarde:', err);
+      console.error('Erreur lors de la sauvegarde manuelle:', err);
       logger.error('Sauvegarde Base', `Échec de la sauvegarde : ${err.message}`);
       throw err;
     }
