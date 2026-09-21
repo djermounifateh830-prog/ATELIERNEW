@@ -646,13 +646,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[artObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarre = ctTechParams.longeur > 0 ? ctTechParams.longeur : (artObj.longeur || 6500);
-      const epScie = ctTechParams.lame > 0 ? ctTechParams.lame : (artObj.lame || 4.5);
-      const debord = (ctTechParams.debordement !== undefined && ctTechParams.debordement !== null && ctTechParams.debordement > 0)
-        ? ctTechParams.debordement
-        : (artObj.debordement || 0);
-      const rMin = ctTechParams.refus_min > 0 ? ctTechParams.refus_min : (artObj.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
-      const rMax = ctTechParams.refus_max > 0 ? ctTechParams.refus_max : (artObj.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
+      // Les paramètres techniques saisis dans le panneau (ctTechParams) ne doivent s'appliquer
+      // QUE si l'article actuellement affiché dans le panneau est bien celui de CE groupe.
+      // Sinon on prend systématiquement les valeurs de l'article réel (BDD) : fiabilité garantie
+      // même quand la commande mélange plusieurs codes articles caisson.
+      const ctParamsApplicables = caissonConfig.ctArticleCode === artObj.code_art;
+      const longBarre = (ctParamsApplicables && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj.longeur || 6500);
+      const epScie = (ctParamsApplicables && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj.lame || 4.5);
+      const debord = (ctParamsApplicables && ctTechParams.debordement !== undefined && ctTechParams.debordement !== null) ? ctTechParams.debordement : (artObj.debordement || 0);
+      const rMin = (ctParamsApplicables && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
+      const rMax = (ctParamsApplicables && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
 
       const opt = new OptimiseurCoupe1D({
         longueurBarre: longBarre,
@@ -729,13 +732,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[sfObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarreSF = sfTechParams.longeur > 0 ? sfTechParams.longeur : (sfObj.longeur || 6000);
-      const epScieSF = sfTechParams.lame > 0 ? sfTechParams.lame : (sfObj.lame || 4.5);
-      const debordSF = (sfTechParams.debordement !== undefined && sfTechParams.debordement !== null && sfTechParams.debordement > 0)
-        ? sfTechParams.debordement
-        : (sfObj.debordement || 0);
-      const rMinSF = sfTechParams.refus_min > 0 ? sfTechParams.refus_min : (sfObj.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
-      const rMaxSF = sfTechParams.refus_max > 0 ? sfTechParams.refus_max : (sfObj.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
+      const sfParamsApplicables = caissonConfig.sfArticleCode === sfObj.code_art;
+      const longBarreSF = (sfParamsApplicables && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj.longeur || 6000);
+      const epScieSF = (sfParamsApplicables && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj.lame || 4.5);
+      const debordSF = (sfParamsApplicables && sfTechParams.debordement !== undefined && sfTechParams.debordement !== null) ? sfTechParams.debordement : (sfObj.debordement || 0);
+      const rMinSF = (sfParamsApplicables && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
+      const rMaxSF = (sfParamsApplicables && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
 
       const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
       const refTitreSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || refTitre || 'CMD-01');
@@ -1141,11 +1143,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[artObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarre = tblTechParams.longeur || artObj.longeur || 6000;
-      const epScie = tblTechParams.lame || artObj.lame || 4.0;
-      const debord = tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj.debordement || 0);
-      const rMin = tblTechParams.refus_min ?? artObj.refus_min ?? 250;
-      const rMax = tblTechParams.refus_max ?? artObj.refus_max ?? 1000;
+      const tblParamsApplicables = tablierConfig.articleCode === artObj.code_art;
+      const longBarre = (tblParamsApplicables && tblTechParams.longeur > 0) ? tblTechParams.longeur : (artObj.longeur || 6000);
+      const epScie = (tblParamsApplicables && tblTechParams.lame > 0) ? tblTechParams.lame : (artObj.lame || 4.0);
+      const debord = (tblParamsApplicables && tblTechParams.debordement !== undefined && tblTechParams.debordement !== null) ? tblTechParams.debordement : (artObj.debordement || 0);
+      const rMin = (tblParamsApplicables && tblTechParams.refus_min > 0) ? tblTechParams.refus_min : (artObj.refus_min ?? 250);
+      const rMax = (tblParamsApplicables && tblTechParams.refus_max > 0) ? tblTechParams.refus_max : (artObj.refus_max ?? 1000);
 
       const opt = new OptimiseurCoupe1D({
         longueurBarre: longBarre,
@@ -1166,7 +1169,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         // Règle Volet : 43mm -> -65mm, 55mm -> -28mm. Tablier seul -> débord standard
         const dedTablier = isAvecVolet 
           ? (hLame === 55 ? -28 : -65) 
-          : (tblTechParams.isDirty && tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj.debordement || 0));
+          : debord;
         const lenLame = c.largeur + dedTablier;
 
         piecesToCut.push({
@@ -1210,11 +1213,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[lfObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarreLF = lfTechParams.longeur || lfObj.longeur || 6000;
-      const epScieLF = lfTechParams.lame || lfObj.lame || 4.0;
-      const debordLF = lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj.debordement || 0);
-      const rMinLF = lfTechParams.refus_min ?? lfObj.refus_min ?? 250;
-      const rMaxLF = lfTechParams.refus_max ?? lfObj.refus_max ?? 1000;
+      const lfParamsApplicables = tablierConfig.lfArticleCode === lfObj.code_art;
+      const longBarreLF = (lfParamsApplicables && lfTechParams.longeur > 0) ? lfTechParams.longeur : (lfObj.longeur || 6000);
+      const epScieLF = (lfParamsApplicables && lfTechParams.lame > 0) ? lfTechParams.lame : (lfObj.lame || 4.0);
+      const debordLF = (lfParamsApplicables && lfTechParams.debordement !== undefined && lfTechParams.debordement !== null) ? lfTechParams.debordement : (lfObj.debordement || 0);
+      const rMinLF = (lfParamsApplicables && lfTechParams.refus_min > 0) ? lfTechParams.refus_min : (lfObj.refus_min ?? 250);
+      const rMaxLF = (lfParamsApplicables && lfTechParams.refus_max > 0) ? lfTechParams.refus_max : (lfObj.refus_max ?? 1000);
 
       const opt = new OptimiseurCoupe1D({
         longueurBarre: longBarreLF,
@@ -1232,7 +1236,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         // Règle Volet : LF = -65mm pour 43mm, -28mm pour 55mm. Tablier seul -> débord standard
         const dedLF = isAvecVolet 
           ? (hLame === 55 ? -28 : -65) 
-          : (lfTechParams.isDirty && lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj.debordement || 0));
+          : debordLF;
         const lenLF = c.largeur + dedLF;
 
         return {
@@ -1276,12 +1280,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[glObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarreGL = glTechParams.longeur || glObj.longeur || 6000;
-      const epScieGL = glTechParams.lame || glObj.lame || 4.0;
-      // Règle Volet : Hauteur des 2 coulisses = Hauteur saisie dans la ligne de commande (déduction 0 mm)
-      const debordGL = (glTechParams.isDirty && glTechParams.debordement !== undefined) ? glTechParams.debordement : 0;
-      const rMinGL = glTechParams.refus_min ?? glObj.refus_min ?? 300;
-      const rMaxGL = glTechParams.refus_max ?? glObj.refus_max ?? 1200;
+      const glParamsApplicables = tablierConfig.glArticleCode === glObj.code_art;
+      const longBarreGL = (glParamsApplicables && glTechParams.longeur > 0) ? glTechParams.longeur : (glObj.longeur || 6000);
+      const epScieGL = (glParamsApplicables && glTechParams.lame > 0) ? glTechParams.lame : (glObj.lame || 4.0);
+      // Règle Volet : Hauteur des 2 coulisses = Hauteur saisie dans la ligne de commande (déduction 0 mm si pas de débord configuré)
+      const debordGL = (glParamsApplicables && glTechParams.debordement !== undefined && glTechParams.debordement !== null) ? glTechParams.debordement : (glObj.debordement || 0);
+      const rMinGL = (glParamsApplicables && glTechParams.refus_min > 0) ? glTechParams.refus_min : (glObj.refus_min ?? 300);
+      const rMaxGL = (glParamsApplicables && glTechParams.refus_max > 0) ? glTechParams.refus_max : (glObj.refus_max ?? 1200);
 
       const opt = new OptimiseurCoupe1D({
         longueurBarre: longBarreGL,
@@ -2646,13 +2651,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[artObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarre = (ctTechParams.isDirty && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
-          const epScie = (ctTechParams.isDirty && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
-          const debord = (ctTechParams.debordement !== undefined && ctTechParams.debordement !== null && ctTechParams.debordement > 0)
-            ? ctTechParams.debordement
-            : ((ctTechParams.isDirty && ctTechParams.debordement !== undefined) ? ctTechParams.debordement : (artObj?.debordement || 0));
-          const rMin = (ctTechParams.isDirty && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
-          const rMax = (ctTechParams.isDirty && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
+          const ctParamsApplicables = caissonConfig.ctArticleCode === artObj?.code_art;
+          const longBarre = (ctParamsApplicables && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
+          const epScie = (ctParamsApplicables && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
+          const debord = (ctParamsApplicables && ctTechParams.debordement !== undefined && ctTechParams.debordement !== null) ? ctTechParams.debordement : (artObj?.debordement || 0);
+          const rMin = (ctParamsApplicables && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
+          const rMax = (ctParamsApplicables && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
 
           const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
           const piecesToCut = lignesGroup.map(c => {
@@ -2710,13 +2714,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[sfObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarreSF = (sfTechParams.isDirty && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
-          const epScieSF = (sfTechParams.isDirty && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
-          const debordSF = (sfTechParams.debordement !== undefined && sfTechParams.debordement !== null && sfTechParams.debordement > 0)
-            ? sfTechParams.debordement
-            : ((sfTechParams.isDirty && sfTechParams.debordement !== undefined) ? sfTechParams.debordement : (sfObj?.debordement || 0));
-          const rMinSF = (sfTechParams.isDirty && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
-          const rMaxSF = (sfTechParams.isDirty && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
+          const sfParamsApplicables = caissonConfig.sfArticleCode === sfObj?.code_art;
+          const longBarreSF = (sfParamsApplicables && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
+          const epScieSF = (sfParamsApplicables && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
+          const debordSF = (sfParamsApplicables && sfTechParams.debordement !== undefined && sfTechParams.debordement !== null) ? sfTechParams.debordement : (sfObj?.debordement || 0);
+          const rMinSF = (sfParamsApplicables && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
+          const rMaxSF = (sfParamsApplicables && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
 
           const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
           const titreRefSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || titreRefCaissons || 'SOUS-FACES');
@@ -2777,11 +2780,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[artObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarre = tblTechParams.longeur || artObj?.longeur || 6000;
-          const epScie = tblTechParams.lame || artObj?.lame || 4.0;
-          const debord = tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0);
-          const rMin = tblTechParams.refus_min ?? artObj?.refus_min ?? 250;
-          const rMax = tblTechParams.refus_max ?? artObj?.refus_max ?? 1000;
+          const tblParamsApplicables = tablierConfig.articleCode === artObj?.code_art;
+          const longBarre = (tblParamsApplicables && tblTechParams.longeur > 0) ? tblTechParams.longeur : (artObj?.longeur || 6000);
+          const epScie = (tblParamsApplicables && tblTechParams.lame > 0) ? tblTechParams.lame : (artObj?.lame || 4.0);
+          const debord = (tblParamsApplicables && tblTechParams.debordement !== undefined && tblTechParams.debordement !== null) ? tblTechParams.debordement : (artObj?.debordement || 0);
+          const rMin = (tblParamsApplicables && tblTechParams.refus_min > 0) ? tblTechParams.refus_min : (artObj?.refus_min ?? 250);
+          const rMax = (tblParamsApplicables && tblTechParams.refus_max > 0) ? tblTechParams.refus_max : (artObj?.refus_max ?? 1000);
 
           const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
           const piecesToCut: any[] = [];
@@ -2794,7 +2798,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
             const dedTablier = isAvecVolet 
               ? (hLame === 55 ? -28 : -65) 
-              : (tblTechParams.isDirty && tblTechParams.debordement !== undefined ? tblTechParams.debordement : (artObj?.debordement || 0));
+              : debord;
             const lenLame = c.largeur + dedTablier;
 
             piecesToCut.push({
@@ -2831,11 +2835,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[lfObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarreLF = lfTechParams.longeur || lfObj?.longeur || 6000;
-          const epScieLF = lfTechParams.lame || lfObj?.lame || 4.0;
-          const debordLF = lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0);
-          const rMinLF = lfTechParams.refus_min ?? lfObj?.refus_min ?? 250;
-          const rMaxLF = lfTechParams.refus_max ?? lfObj?.refus_max ?? 1000;
+          const lfParamsApplicables = tablierConfig.lfArticleCode === lfObj?.code_art;
+          const longBarreLF = (lfParamsApplicables && lfTechParams.longeur > 0) ? lfTechParams.longeur : (lfObj?.longeur || 6000);
+          const epScieLF = (lfParamsApplicables && lfTechParams.lame > 0) ? lfTechParams.lame : (lfObj?.lame || 4.0);
+          const debordLF = (lfParamsApplicables && lfTechParams.debordement !== undefined && lfTechParams.debordement !== null) ? lfTechParams.debordement : (lfObj?.debordement || 0);
+          const rMinLF = (lfParamsApplicables && lfTechParams.refus_min > 0) ? lfTechParams.refus_min : (lfObj?.refus_min ?? 250);
+          const rMaxLF = (lfParamsApplicables && lfTechParams.refus_max > 0) ? lfTechParams.refus_max : (lfObj?.refus_max ?? 1000);
 
           const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreLF, epaisseurScie: epScieLF, refusMin: rMinLF, refusMax: rMaxLF, mode: optMode, poidsTemps });
           const piecesToCut = lignesGroup.map(c => {
@@ -2843,7 +2848,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || lfObj?.designation, c.hauteur_lame_tablier);
             const dedLF = isAvecVolet 
               ? (hLame === 55 ? -28 : -65) 
-              : (lfTechParams.isDirty && lfTechParams.debordement !== undefined ? lfTechParams.debordement : (lfObj?.debordement || 0));
+              : debordLF;
             const lenLF = c.largeur + dedLF;
             const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
 
@@ -2881,11 +2886,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[glObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarreGL = glTechParams.longeur || glObj?.longeur || 6000;
-          const epScieGL = glTechParams.lame || glObj?.lame || 4.0;
-          const debordGL = (glTechParams.isDirty && glTechParams.debordement !== undefined) ? glTechParams.debordement : 0;
-          const rMinGL = glTechParams.refus_min ?? glObj?.refus_min ?? 300;
-          const rMaxGL = glTechParams.refus_max ?? glObj?.refus_max ?? 1200;
+          const glParamsApplicables = tablierConfig.glArticleCode === glObj?.code_art;
+          const longBarreGL = (glParamsApplicables && glTechParams.longeur > 0) ? glTechParams.longeur : (glObj?.longeur || 6000);
+          const epScieGL = (glParamsApplicables && glTechParams.lame > 0) ? glTechParams.lame : (glObj?.lame || 4.0);
+          const debordGL = (glParamsApplicables && glTechParams.debordement !== undefined && glTechParams.debordement !== null) ? glTechParams.debordement : (glObj?.debordement || 0);
+          const rMinGL = (glParamsApplicables && glTechParams.refus_min > 0) ? glTechParams.refus_min : (glObj?.refus_min ?? 300);
+          const rMaxGL = (glParamsApplicables && glTechParams.refus_max > 0) ? glTechParams.refus_max : (glObj?.refus_max ?? 1200);
 
           const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreGL, epaisseurScie: epScieGL, refusMin: rMinGL, refusMax: rMaxGL, mode: optMode, poidsTemps });
           const piecesToCut: any[] = [];

@@ -53,7 +53,9 @@ import {
   Zap,
   Scale,
   FolderOpen,
-  Undo2
+  Undo2,
+  PauseCircle,
+  PlayCircle
 } from 'lucide-react';
 import { extraireNumeroSansPrefixe } from '../../services/codificationService';
 
@@ -83,7 +85,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   mapping = {}
 }) => {
   const [recherche, setRecherche] = useState<string>('');
-  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE'>('TOUS');
+  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE' | 'EN_PAUSE'>('TOUS');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
   const [filtreClient, setFiltreClient] = useState<string>('TOUS');
   const [filtrePrioritaireSeulement, setFiltrePrioritaireSeulement] = useState<boolean>(false);
@@ -424,7 +426,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     return suivisOF
       .filter(of => {
         // Filtre Statut
-        if (filtreStatut !== 'TOUS' && of.statut !== filtreStatut) return false;
+        if (filtreStatut !== 'TOUS') {
+          if (filtreStatut === 'EN_PAUSE') {
+            if (of.statut !== 'EN_PAUSE' && !of.estEnPause) return false;
+          } else if (filtreStatut === 'EMIS') {
+            if (of.statut !== 'EMIS' || of.estEnPause) return false;
+          } else {
+            if (of.statut !== filtreStatut) return false;
+          }
+        }
         // Filtre Famille
         if (filtreFamille !== 'TOUTES' && of.famille !== filtreFamille) return false;
         // Filtre Client
@@ -494,16 +504,17 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         if (!isAInstant && isBInstant) return 1;
 
         if (sortKey === 'statut') {
-          // Tri par statut : EMIS (en cours) au tout début !
+          // Tri par statut : EN_PAUSE puis EMIS (en cours) au tout début !
           const STATUT_RANKS: Record<string, number> = {
+            'EN_PAUSE': 0,
             'EMIS': 1,
             'RETOUR_EN_ATTENTE': 2,
             'CLOTURE': 3,
             'LIVRE': 4,
             'ANNULE': 5
           };
-          const rankA = STATUT_RANKS[a.statut] || 99;
-          const rankB = STATUT_RANKS[b.statut] || 99;
+          const rankA = a.estEnPause || a.statut === 'EN_PAUSE' ? 0 : (STATUT_RANKS[a.statut] || 99);
+          const rankB = b.estEnPause || b.statut === 'EN_PAUSE' ? 0 : (STATUT_RANKS[b.statut] || 99);
           if (rankA !== rankB) {
             return sortDir === 'asc' ? rankA - rankB : rankB - rankA;
           }
@@ -551,15 +562,78 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   // Statistiques globales
   const stats = useMemo(() => {
     const total = suivisOF.length;
-    const emis = suivisOF.filter(o => o.statut === 'EMIS').length;
+    const enPause = suivisOF.filter(o => o.statut === 'EN_PAUSE' || o.estEnPause).length;
+    const emis = suivisOF.filter(o => o.statut === 'EMIS' && !o.estEnPause).length;
     const retourEnAttente = suivisOF.filter(o => o.statut === 'RETOUR_EN_ATTENTE').length;
     const clotures = suivisOF.filter(o => o.statut === 'CLOTURE').length;
     const livres = suivisOF.filter(o => o.statut === 'LIVRE').length;
     const totalBarresNeuves = suivisOF.reduce((acc, o) => acc + (o.totalBarresNeuvesPrevu || 0), 0);
     const totalChutesRecyclees = suivisOF.reduce((acc, o) => acc + (o.totalChutesUtiliseesPrevu || 0), 0);
 
-    return { total, emis, retourEnAttente, clotures, livres, totalBarresNeuves, totalChutesRecyclees };
+    return { total, enPause, emis, retourEnAttente, clotures, livres, totalBarresNeuves, totalChutesRecyclees };
   }, [suivisOF]);
+
+  const handleTogglePauseOF = async (of: SuiviOF) => {
+    const isCurrentlyPaused = of.statut === 'EN_PAUSE' || Boolean(of.estEnPause);
+    const newPauseState = !isCurrentlyPaused;
+    const nowIso = new Date().toISOString();
+
+    const updatedOF: SuiviOF = {
+      ...of,
+      statut: newPauseState ? 'EN_PAUSE' : 'EMIS',
+      estEnPause: newPauseState,
+      datePause: newPauseState ? (of.datePause || nowIso) : undefined,
+      motifPause: newPauseState ? (of.motifPause || 'Rupture matière / Pause atelier') : undefined
+    };
+
+    try {
+      await StorageService.upsertSuiviOF(updatedOF);
+
+      // Synchroniser le dossier parent dans SQLite
+      try {
+        const allDossiers = await StorageService.getDossiers();
+        const targetDossier = (of.dossierId ? allDossiers.find(d => d.id === of.dossierId) : null) ||
+          allDossiers.find(d => {
+            const c = (of.numCommande || '').trim().toLowerCase();
+            if (!c) return false;
+            return [d.refCommande, d.numCommandeCaisson, d.numCommandeTablier, d.numCommandeMoustiquaire, d.numCommandePrecadre]
+              .filter(Boolean)
+              .some(r => r!.trim().toLowerCase() === c || (r!.length >= 3 && (r!.toLowerCase().includes(c) || c.includes(r!.toLowerCase()))));
+          });
+
+        if (targetDossier) {
+          if (newPauseState) {
+            targetDossier.statut = 'EN_PAUSE';
+            targetDossier.estEnPause = true;
+            targetDossier.datePause = nowIso;
+            targetDossier.motifPause = updatedOF.motifPause;
+          } else {
+            const allOfs = await StorageService.getSuivisOF();
+            const otherPaused = allOfs.some(o => o.id !== of.id && (o.dossierId === targetDossier.id || o.numCommande === of.numCommande) && (o.statut === 'EN_PAUSE' || o.estEnPause));
+            if (!otherPaused) {
+              targetDossier.statut = 'EN_COURS';
+              targetDossier.estEnPause = false;
+              targetDossier.datePause = undefined;
+            }
+          }
+          await StorageService.saveDossiers(allDossiers);
+        }
+      } catch (errDossier) {
+        console.warn('Sync dossier non bloquante lors de la pause:', errDossier);
+      }
+
+      onRefreshData();
+      setReparationFeedback(
+        newPauseState
+          ? `⏸️ L'ordre ${of.codeOF || of.numCommande} a été mis en pause.`
+          : `▶️ L'ordre ${of.codeOF || of.numCommande} a repris sa fabrication active.`
+      );
+      setTimeout(() => setReparationFeedback(null), 4000);
+    } catch (err) {
+      console.error('Erreur mise en pause OF:', err);
+      alert('Erreur lors du changement de statut de pause');
+    }
+  };
 
   const handleMarquerRetourRecu = async (of: SuiviOF) => {
     const updated: SuiviOF = { ...of, statut: 'RETOUR_EN_ATTENTE' };
@@ -709,7 +783,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
       </div>
 
       {/* ── KPIs & Compteurs ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 sm:gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 sm:gap-3">
         <div
           onClick={() => setFiltreStatut('TOUS')}
           className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
@@ -724,6 +798,22 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           </div>
           <div className="text-xl sm:text-2xl font-black text-slate-100 font-mono mt-1">{stats.total}</div>
           <div className="text-[11px] text-slate-500 mt-0.5">Toutes fiches</div>
+        </div>
+
+        <div
+          onClick={() => setFiltreStatut('EN_PAUSE')}
+          className={`p-3 sm:p-3.5 rounded-xl border transition cursor-pointer ${
+            filtreStatut === 'EN_PAUSE'
+              ? 'bg-rose-950/80 border-rose-500 shadow-md ring-1 ring-rose-500'
+              : 'bg-slate-900 border-slate-800 hover:border-rose-900/60'
+          }`}
+        >
+          <div className="flex items-center justify-between text-xs text-rose-400 font-medium">
+            <span>⏸️ En Pause</span>
+            <PauseCircle className="w-4 h-4 text-rose-400" />
+          </div>
+          <div className="text-xl sm:text-2xl font-black text-rose-400 font-mono mt-1">{stats.enPause}</div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Arrêt atelier / Matière</div>
         </div>
 
         <div
@@ -855,13 +945,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
         {/* Boutons rapides Statut */}
         <div className="flex items-center gap-1 flex-wrap">
-          {(['TOUS', 'EMIS', 'RETOUR_EN_ATTENTE', 'CLOTURE', 'LIVRE'] as const).map(st => (
+          {(['TOUS', 'EN_PAUSE', 'EMIS', 'RETOUR_EN_ATTENTE', 'CLOTURE', 'LIVRE'] as const).map(st => (
             <button
               key={st}
               onClick={() => setFiltreStatut(st)}
               className={`px-2.5 py-1 text-xs font-bold rounded-lg transition border cursor-pointer ${
                 filtreStatut === st
-                  ? st === 'EMIS'
+                  ? st === 'EN_PAUSE'
+                    ? 'bg-rose-600 text-white border-rose-500 shadow-sm'
+                    : st === 'EMIS'
                     ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
                     : st === 'RETOUR_EN_ATTENTE'
                     ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
@@ -873,9 +965,14 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white hover:border-slate-700'
               }`}
             >
-              {st === 'TOUS' ? 'Tous' : st === 'EMIS' ? '📤 Émis' : st === 'RETOUR_EN_ATTENTE' ? '📋 Retour reçu' : st === 'CLOTURE' ? '✅ Clôturés' : '🚚 Livrés'}
+              {st === 'TOUS' ? 'Tous' : st === 'EN_PAUSE' ? '⏸️ En pause' : st === 'EMIS' ? '📤 Émis' : st === 'RETOUR_EN_ATTENTE' ? '📋 Retour reçu' : st === 'CLOTURE' ? '✅ Clôturés' : '🚚 Livrés'}
               <span className="ml-1 text-[10px] font-mono">
-                ({suivisOF.filter(o => st === 'TOUS' || o.statut === st).length})
+                ({suivisOF.filter(o => {
+                  if (st === 'TOUS') return true;
+                  if (st === 'EN_PAUSE') return o.statut === 'EN_PAUSE' || o.estEnPause;
+                  if (st === 'EMIS') return o.statut === 'EMIS' && !o.estEnPause;
+                  return o.statut === st;
+                }).length})
               </span>
             </button>
           ))}
@@ -969,7 +1066,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                 </tr>
               ) : (
                 displayedOFs.map(of => {
-                  const isEmis = of.statut === 'EMIS';
+                  const isPause = of.statut === 'EN_PAUSE' || Boolean(of.estEnPause);
+                  const isEmis = (of.statut === 'EMIS') && !isPause;
                   const isAttente = of.statut === 'RETOUR_EN_ATTENTE';
                   const isCloture = of.statut === 'CLOTURE';
                   const isLivre = of.statut === 'LIVRE';
@@ -993,7 +1091,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                     <tr
                       key={of.id}
                       className={`hover:bg-slate-800/40 transition ${
-                        isEmis
+                        isPause
+                          ? 'bg-rose-950/20'
+                          : isEmis
                           ? 'bg-slate-900/40'
                           : isAttente
                           ? 'bg-amber-950/20'
@@ -1094,9 +1194,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             </span>
                             <span className="font-bold text-slate-200 text-xs whitespace-nowrap bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700 shadow-xs">
                               {(() => {
-                                const nb = of.nombrePieces || (of.lignesRetour && of.lignesRetour.length > 0
-                                  ? of.lignesRetour.reduce((acc, l) => acc + (Number(l.quantite) || 1), 0)
-                                  : 1);
+                                const nb = DelaisProductionService.compterPiecesOF(of, dossiers);
                                 return `${nb} pc${nb > 1 ? 's' : ''}`;
                               })()}
                             </span>
@@ -1178,7 +1276,9 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       {columnConfigService.isColumnVisible('of_encours', 'statut') && (
                         <td className="py-2.5 px-2 text-center whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
-                            isEmis
+                            isPause
+                              ? 'bg-rose-950 text-rose-300 border-rose-700/80 shadow-xs'
+                              : isEmis
                               ? 'bg-blue-950 text-blue-300 border-blue-700/60'
                               : isAttente
                               ? 'bg-amber-950 text-amber-300 border-amber-700/60 animate-pulse'
@@ -1186,12 +1286,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                               ? 'bg-teal-950 text-teal-300 border-teal-700/60'
                               : 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
                           }`}>
+                            {isPause && <PauseCircle className="w-3 h-3 text-rose-400" />}
                             {isEmis && <Clock className="w-3 h-3" />}
                             {isAttente && <AlertCircle className="w-3 h-3" />}
                             {isCloture && <CheckCircle2 className="w-3 h-3" />}
                             {isLivre && <Truck className="w-3 h-3 text-teal-400" />}
                             <span>
-                              {isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
+                              {isPause ? 'En Pause' : isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
                             </span>
                           </span>
                         </td>
@@ -1201,6 +1302,19 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       {columnConfigService.isColumnVisible('of_encours', 'actions') && (
                         <td className="py-2.5 px-2 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
+                          {/* Actions pour ordre EN PAUSE */}
+                          {isPause && (
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePauseOF(of)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-md text-[11px] transition cursor-pointer flex items-center gap-1 shadow-sm"
+                              title="Reprendre la fabrication de cet OF et réactiver le dossier"
+                            >
+                              <PlayCircle className="w-3.5 h-3.5 fill-white/20" />
+                              <span>Reprendre</span>
+                            </button>
+                          )}
+
                           {/* Actions selon le statut de l'OF */}
                           {isEmis && (
                             /* Un ordre doit être reçu de l'atelier avant de pouvoir être clôturé */
@@ -1228,12 +1342,29 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                                 <Scale className="w-3 h-3" />
                                 <span>Reçu &amp; Cockpit</span>
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePauseOF(of)}
+                                className="px-2 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-700/60 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                                title="Mettre cet ordre en pause (rupture de stock matière, attente approvisionnement)"
+                              >
+                                <PauseCircle className="w-3.5 h-3.5 text-rose-400" />
+                                <span>Pause</span>
+                              </button>
                             </>
                           )}
 
                           {isAttente && (
                             /* Ordre Reçu de l'atelier : prêt pour la clôture */
                             <>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePauseOF(of)}
+                                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition cursor-pointer"
+                                title="Mettre en pause cet ordre"
+                              >
+                                <PauseCircle className="w-3.5 h-3.5" />
+                              </button>
                               <button
                                 onClick={() => {
                                   localStorage.setItem('3m_cockpit_selected_of', of.id);

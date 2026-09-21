@@ -495,18 +495,11 @@ export class DelaisProductionService {
    * Détermine le nombre réel de pièces à usiner/fabriquer associées à un OF (quantité réelle de pièces, non de lignes)
    */
   static compterPiecesOF(of: SuiviOF, dossiers?: DossierCommandeGlobal[]): number {
-    // 1. Si déjà explicitement compté ou enregistré dans l'OF
-    if ((of as any).nombrePieces && Number((of as any).nombrePieces) > 0) {
-      return Number((of as any).nombrePieces);
-    }
-    if ((of as any).totalPieces && Number((of as any).totalPieces) > 0) {
-      return Number((of as any).totalPieces);
-    }
-
-    // 2. Recherche dans le dossier parent si disponible (source de vérité absolue des quantités)
-    if (dossiers && dossiers.length > 0 && of.numCommande) {
-      const ofCmd = of.numCommande.toLowerCase().trim();
+    // 1. Recherche prioritaire dans le dossier parent si disponible (source de vérité absolue des quantités d'articles commandés)
+    if (dossiers && dossiers.length > 0) {
+      const ofCmd = (of.numCommande || '').toLowerCase().trim();
       const parent = dossiers.find(d => {
+        if (of.dossierId && d.id === of.dossierId) return true;
         const refs = [d.refCommande, d.numCommandeCaisson, d.numCommandeTablier, d.numCommandeMoustiquaire, d.numCommandePrecadre]
           .filter(Boolean).map(r => r!.toLowerCase().trim());
         return refs.some(r => r === ofCmd || (r.length >= 3 && ofCmd.length >= 3 && (r.startsWith(ofCmd) || ofCmd.startsWith(r))));
@@ -518,6 +511,14 @@ export class DelaisProductionService {
           return famCounts[famKey];
         }
       }
+    }
+
+    // 2. Si déjà explicitement compté ou enregistré dans l'OF
+    if ((of as any).nombrePieces && Number((of as any).nombrePieces) > 0) {
+      return Number((of as any).nombrePieces);
+    }
+    if ((of as any).totalPieces && Number((of as any).totalPieces) > 0) {
+      return Number((of as any).totalPieces);
     }
 
     // 3. D'après les lignes de retour (source principale après optimisation)

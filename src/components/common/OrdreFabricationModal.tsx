@@ -513,29 +513,6 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Calcul du volume réel de pièces de cet OF d'après les lignes de coupe ou moustiquaires
-    let totalPiecesDuOF = 0;
-    if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
-      totalPiecesDuOF = lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
-    } else if (Array.isArray(sections) && sections.length > 0) {
-      sections.forEach(s => {
-        if (s.resultat?.barres_neuves) {
-          s.resultat.barres_neuves.forEach(b => {
-            totalPiecesDuOF += Array.isArray(b.pieces) ? b.pieces.length : 1;
-          });
-        }
-        if (s.resultat?.chutes_utilisees) {
-          s.resultat.chutes_utilisees.forEach(c => {
-            totalPiecesDuOF += Array.isArray(c.pieces) ? c.pieces.length : 1;
-          });
-        }
-      });
-      if (totalPiecesDuOF === 0) {
-        totalPiecesDuOF = sections.reduce((sum, s) => sum + (s.resultat?.total_barres_neuves || 1) * 3, 0);
-      }
-    }
-    const nbPiecesOFReelles = Math.max(1, totalPiecesDuOF);
-
     Promise.all([
       StorageService.getSuivisOF(),
       StorageService.getDossiers()
@@ -561,6 +538,39 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             (p && (p === cmdRefLower || cmdRefLower.includes(p)))
           );
         });
+
+      // Calcul cohérent du nombre de pièces réelles (unités finies, non de traits de scie)
+      let totalPiecesDuOF = 0;
+      if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
+        totalPiecesDuOF = lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+      } else if (matchedDossier) {
+        const famCounts = DelaisProductionService.compterPiecesDossierParFamille(matchedDossier);
+        const famKeyObj = ((familleRecherche as string) === 'SOUS_FACE' ? 'CAISSON' : (familleRecherche || famille || 'TABLIER')) as FamilleProduit;
+        if (famCounts[famKeyObj] && famCounts[famKeyObj] > 0) {
+          totalPiecesDuOF = famCounts[famKeyObj];
+        }
+      }
+
+      if (totalPiecesDuOF === 0 && Array.isArray(sections) && sections.length > 0) {
+        const distinctReperes = new Set<string>();
+        sections.forEach(s => {
+          const scan = (pieces?: any[]) => {
+            if (!Array.isArray(pieces)) return;
+            pieces.forEach(p => {
+              if (p?.repere) {
+                const clean = String(p.repere).replace(/\s*[-_ ]\s*(lame|lf|coulisse|seuil|montant|traverse|ct|sf).*$/i, '').trim();
+                if (clean) distinctReperes.add(clean);
+              }
+            });
+          };
+          s.resultat?.barres_neuves?.forEach(b => scan(b.pieces));
+          s.resultat?.chutes_utilisees?.forEach(c => scan(c.pieces));
+        });
+        if (distinctReperes.size > 0) {
+          totalPiecesDuOF = distinctReperes.size;
+        }
+      }
+      const nbPiecesOFReelles = Math.max(1, totalPiecesDuOF);
 
       const famKey = (familleRecherche || famille || '').toUpperCase();
       const customFamDate = matchedDossier?.datesLivraisonCommandes?.[famKey];
@@ -909,17 +919,28 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
       return lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
     }
-    let sumPieces = 0;
+    if (matchedOf?.nombrePieces && matchedOf.nombrePieces > 0) {
+      return matchedOf.nombrePieces;
+    }
+    const distinctReperes = new Set<string>();
     listeSections.forEach(sec => {
-      sec.resultat?.barres_neuves?.forEach(b => {
-        sumPieces += Array.isArray(b.pieces) ? b.pieces.length : 1;
-      });
-      sec.resultat?.chutes_utilisees?.forEach(c => {
-        sumPieces += Array.isArray(c.pieces) ? c.pieces.length : 1;
-      });
+      const scan = (pieces?: any[]) => {
+        if (!Array.isArray(pieces)) return;
+        pieces.forEach(p => {
+          if (p?.repere) {
+            const clean = String(p.repere).replace(/\s*[-_ ]\s*(lame|lf|coulisse|seuil|montant|traverse|ct|sf).*$/i, '').trim();
+            if (clean) distinctReperes.add(clean);
+          }
+        });
+      };
+      sec.resultat?.barres_neuves?.forEach(b => scan(b.pieces));
+      sec.resultat?.chutes_utilisees?.forEach(c => scan(c.pieces));
     });
-    return sumPieces > 0 ? sumPieces : totalBarresNeuvesToutesSections * 3;
-  }, [listeSections, lignesMoustiquaires, totalBarresNeuvesToutesSections]);
+    if (distinctReperes.size > 0) {
+      return distinctReperes.size;
+    }
+    return Math.max(1, totalBarresNeuvesToutesSections);
+  }, [listeSections, lignesMoustiquaires, matchedOf, totalBarresNeuvesToutesSections]);
 
   if (!isOpen) return null;
   if (listeSections.length === 0) return null;
