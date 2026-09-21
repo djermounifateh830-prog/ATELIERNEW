@@ -587,11 +587,14 @@ class AtelierDatabase {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const a of articles) {
+        const stockPhys = a.stock_physique ?? 0;
+        const stockMin = a.stock_min ?? 5;
+        const statut = stockPhys <= stockMin ? 'ALERTE' : (a.statut || 'NORMAL');
         stmt.run(
-          a.code_art, a.designation, a.statut || 'NORMAL', a.hauteur || 0,
+          a.code_art, a.designation, statut, a.hauteur || 0,
           a.longeur ?? 6000, a.lame ?? 4.5, a.debordement ?? 0,
-          a.refus_min ?? 300, a.refus_max ?? 1200, a.stock_physique ?? 0,
-          a.quantite_reservee ?? 0, a.prix_unitaire ?? 0, a.stock_min ?? 5
+          a.refus_min ?? 300, a.refus_max ?? 1200, stockPhys,
+          a.quantite_reservee ?? 0, a.prix_unitaire ?? 0, stockMin
         );
       }
       this.db.exec('COMMIT');
@@ -609,11 +612,14 @@ class AtelierDatabase {
         quantite_reservee, prix_unitaire, stock_min
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const stockPhys = art.stock_physique ?? 0;
+    const stockMin = art.stock_min ?? 5;
+    const statut = stockPhys <= stockMin ? 'ALERTE' : (art.statut || 'NORMAL');
     stmt.run(
-      art.code_art, art.designation, art.statut || 'NORMAL', art.hauteur ?? 0,
+      art.code_art, art.designation, statut, art.hauteur ?? 0,
       art.longeur ?? 6000, art.lame ?? 4.5, art.debordement ?? 0,
-      art.refus_min ?? 300, art.refus_max ?? 1200, art.stock_physique ?? 0,
-      art.quantite_reservee ?? 0, art.prix_unitaire ?? 0, art.stock_min ?? 5
+      art.refus_min ?? 300, art.refus_max ?? 1200, stockPhys,
+      art.quantite_reservee ?? 0, art.prix_unitaire ?? 0, stockMin
     );
   }
 
@@ -1819,12 +1825,15 @@ class AtelierDatabase {
     const mvts = this.db.prepare('SELECT * FROM mouvements_stock WHERE of_id = ?').all() as any[];
 
     for (const m of mvts) {
-      // 1. Restituer les barres neuves et accessoires consommés
+      // 1. Restituer les barres neuves et accessoires consommés + mise à jour statut article
       if ((m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_ACCESSOIRE' || m.type === 'SORTIE_ARTICLE') && m.article_code) {
         const qte = m.quantite || 1;
-        this.db.prepare(
-          'UPDATE articles SET stock_physique = stock_physique + ? WHERE code_art = ?'
-        ).run(qte, m.article_code);
+        this.db.prepare(`
+          UPDATE articles 
+          SET stock_physique = stock_physique + ?,
+              statut = CASE WHEN (stock_physique + ?) <= stock_min THEN 'ALERTE' ELSE 'NORMAL' END
+          WHERE code_art = ?
+        `).run(qte, qte, m.article_code);
       }
 
       // 2. Traiter les chutes
@@ -1844,24 +1853,53 @@ class AtelierDatabase {
 
           if (isMaille) {
             if (m.type === 'SORTIE_CHUTE') {
-              const plis = Math.max(1, Math.round(m.longueur_mm / 20));
+              // Récupérer les métadonnées exactes de la maille débitée si sauvegardées dans la remarque [MAILLEDATA:dim:plis:id]
+              let dim = m.longueur_mm;
+              let plis = 0;
+              let originalChuteId = m.chute_id;
+
+              const matchData = m.remarque?.match(/\[MAILLEDATA:([\d.]+):(\d+)(?::([^\]]+))?\]/);
+              if (matchData) {
+                dim = parseFloat(matchData[1]) || m.longueur_mm;
+                plis = parseInt(matchData[2], 10) || 0;
+                if (matchData[3]) originalChuteId = matchData[3];
+              }
+              if (plis <= 0) {
+                plis = Math.max(1, Math.round(dim / 20));
+              }
               this.db.prepare(
                 'INSERT INTO chutes_maille (id, dimension_fixe, plis) VALUES (?, ?, ?)'
-              ).run(m.chute_id || `cht-m-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, m.longueur_mm, plis);
+              ).run(originalChuteId || `cht-m-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, dim, plis);
             } else if (m.type === 'ENTREE_CHUTE') {
-              const matchedMaille = this.db.prepare(
-                'SELECT id FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
-              ).get(m.longueur_mm) as any;
-              if (matchedMaille?.id) {
-                this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchedMaille.id);
+              // Annuler l'entrée de chute générée lors de la clôture
+              let deleted = false;
+              const matchCreatedId = m.remarque?.match(/\[CREATED_CHUTE_ID:([^\]]+)\]/);
+              if (matchCreatedId && matchCreatedId[1]) {
+                const info = this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchCreatedId[1]);
+                if (info.changes > 0) deleted = true;
+              }
+              if (!deleted) {
+                const matchedMaille = this.db.prepare(
+                  'SELECT id FROM chutes_maille WHERE ABS(dimension_fixe - ?) <= 1.0 ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
+                ).get(m.longueur_mm, m.longueur_mm) as any;
+                if (matchedMaille?.id) {
+                  this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchedMaille.id);
+                }
               }
             }
           } else {
             // Profilés barres alu
             if (m.type === 'SORTIE_CHUTE') {
+              // Récupérer l'identifiant exact de la chute débitée sauvegardé lors de closeOF
+              let chuteIdToRestore = m.chute_id;
+              const matchChute = m.remarque?.match(/\[CHUTEDATA:([^:]+):([\d.]+)\]/);
+              if (matchChute && matchChute[1]) {
+                chuteIdToRestore = matchChute[1];
+              }
+
               let reinserted = false;
-              if (m.chute_id) {
-                const existingById = this.db.prepare('SELECT id, quantite FROM chutes_barres WHERE id = ?').get(m.chute_id) as any;
+              if (chuteIdToRestore) {
+                const existingById = this.db.prepare('SELECT id, quantite FROM chutes_barres WHERE id = ?').get(chuteIdToRestore) as any;
                 if (existingById?.id) {
                   this.db.prepare('UPDATE chutes_barres SET quantite = quantite + ? WHERE id = ?').run(quantite, existingById.id);
                   reinserted = true;
@@ -1876,19 +1914,36 @@ class AtelierDatabase {
                 } else {
                   this.db.prepare(
                     'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
-                  ).run(m.chute_id || `cht-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueur_mm, quantite);
+                  ).run(chuteIdToRestore || `cht-rst-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueur_mm, quantite);
                 }
               }
             } else if (m.type === 'ENTREE_CHUTE') {
-              const matched = this.db.prepare(
-                'SELECT rowid, id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 2.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
-              ).get(sheetName, m.longueur_mm, m.longueur_mm) as any;
+              // Annuler l'entrée de nouvelle chute : cibler la chute créée via son ID ou par correspondance précise
+              let deleted = false;
+              const matchCreatedId = m.remarque?.match(/\[CREATED_CHUTE_ID:([^\]]+)\]/);
+              if (matchCreatedId && matchCreatedId[1]) {
+                const existing = this.db.prepare('SELECT rowid, id, quantite FROM chutes_barres WHERE id = ?').get(matchCreatedId[1]) as any;
+                if (existing?.rowid) {
+                  if (existing.quantite <= quantite) {
+                    this.db.prepare('DELETE FROM chutes_barres WHERE rowid = ?').run(existing.rowid);
+                  } else {
+                    this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, existing.rowid);
+                  }
+                  deleted = true;
+                }
+              }
 
-              if (matched?.rowid) {
-                if (matched.quantite <= quantite) {
-                  this.db.prepare('DELETE FROM chutes_barres WHERE rowid = ?').run(matched.rowid);
-                } else {
-                  this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, matched.rowid);
+              if (!deleted) {
+                const matched = this.db.prepare(
+                  'SELECT rowid, id, quantite FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 1.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
+                ).get(sheetName, m.longueur_mm, m.longueur_mm) as any;
+
+                if (matched?.rowid) {
+                  if (matched.quantite <= quantite) {
+                    this.db.prepare('DELETE FROM chutes_barres WHERE rowid = ?').run(matched.rowid);
+                  } else {
+                    this.db.prepare('UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?').run(quantite, matched.rowid);
+                  }
                 }
               }
             }
@@ -1924,12 +1979,15 @@ class AtelierDatabase {
           m.chuteId || null
         );
 
-        // 1. Décompte des barres neuves et accessoires (Joues, bouchons, articles magasin)
+        // 1. Décompte des barres neuves et accessoires (Joues, bouchons, articles magasin) + mise à jour statut article
         if ((m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_ACCESSOIRE' || m.type === 'SORTIE_ARTICLE') && m.articleCode) {
           const quantite = m.quantite || 1;
-          this.db.prepare(
-            'UPDATE articles SET stock_physique = stock_physique - ? WHERE code_art = ?'
-          ).run(quantite, m.articleCode);
+          this.db.prepare(`
+            UPDATE articles 
+            SET stock_physique = stock_physique - ?,
+                statut = CASE WHEN (stock_physique - ?) <= stock_min THEN 'ALERTE' ELSE 'NORMAL' END
+            WHERE code_art = ?
+          `).run(quantite, quantite, m.articleCode);
         }
 
         // 2. Traitement des chutes (Profilés alu ou Toiles moustiquaires)
@@ -1953,45 +2011,75 @@ class AtelierDatabase {
 
             if (isMaille) {
               if (m.type === 'SORTIE_CHUTE') {
-                const matchedMaille = this.db.prepare(
-                  'SELECT id, dimension_fixe, plis FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
-                ).get(m.longueurMm) as { id?: string; dimension_fixe?: number; plis?: number } | undefined;
+                let matchedMaille: { id?: string; dimension_fixe?: number; plis?: number } | undefined;
+                if (m.chuteId) {
+                  matchedMaille = this.db.prepare(
+                    'SELECT id, dimension_fixe, plis FROM chutes_maille WHERE id = ?'
+                  ).get(m.chuteId) as { id?: string; dimension_fixe?: number; plis?: number } | undefined;
+                }
+                if (!matchedMaille) {
+                  matchedMaille = this.db.prepare(
+                    'SELECT id, dimension_fixe, plis FROM chutes_maille ORDER BY ABS(dimension_fixe - ?) ASC LIMIT 1'
+                  ).get(m.longueurMm) as { id?: string; dimension_fixe?: number; plis?: number } | undefined;
+                }
+
                 if (matchedMaille?.id) {
+                  const savedDim = matchedMaille.dimension_fixe || m.longueurMm;
+                  const savedPlis = matchedMaille.plis || 0;
+                  this.db.prepare(
+                    "UPDATE mouvements_stock SET remarque = coalesce(remarque, '') || ' [MAILLEDATA:' || ? || ':' || ? || ':' || ? || ']' WHERE id = ?"
+                  ).run(savedDim, savedPlis, matchedMaille.id, m.id);
                   this.db.prepare('DELETE FROM chutes_maille WHERE id = ?').run(matchedMaille.id);
                 }
               } else if (m.type === 'ENTREE_CHUTE' && m.longueurMm > 0) {
-                const plis = Math.max(1, Math.round(m.longueurMm / 20));
+                let plis = 0;
+                const matchPlis = m.remarque?.match(/\[PLIS:(\d+)\]/);
+                if (matchPlis) {
+                  plis = parseInt(matchPlis[1], 10);
+                }
+                if (plis <= 0) {
+                  plis = Math.max(1, Math.round(m.longueurMm / 20));
+                }
+                const newMailleId = `cht-m-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
                 this.db.prepare(
                   'INSERT INTO chutes_maille (id, dimension_fixe, plis) VALUES (?, ?, ?)'
-                ).run(`cht-m-${Date.now()}-${Math.floor(Math.random() * 1000)}`, m.longueurMm, plis);
+                ).run(newMailleId, m.longueurMm, plis);
+                this.db.prepare(
+                  "UPDATE mouvements_stock SET remarque = coalesce(remarque, '') || ' [CREATED_CHUTE_ID:' || ? || ']' WHERE id = ?"
+                ).run(newMailleId, m.id);
               }
             } else {
               // Profilés Barres Aluminium
               if (m.type === 'SORTIE_CHUTE') {
                 let matched: { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
 
-                // Point 3.7 : Recherche prioritaire par identifiant unique de chute
+                // 1. Recherche prioritaire par identifiant unique de chute
                 if (m.chuteId) {
                   matched = this.db.prepare(
                     'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE id = ? AND quantite > 0'
                   ).get(m.chuteId) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
                 }
 
+                // 2. Recherche par longueur exacte (+/- 1.0mm)
                 if (!matched) {
-                  // Tolérance stricte +/- 10mm
+                  matched = this.db.prepare(
+                    'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 1.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
+                  ).get(sheetName, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
+                }
+
+                // 3. Recherche de tolérance de proximité (+/- 10mm)
+                if (!matched) {
                   matched = this.db.prepare(
                     'SELECT rowid, id, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND ABS(longueur - ?) <= 10.0 AND quantite > 0 ORDER BY ABS(longueur - ?) ASC LIMIT 1'
                   ).get(sheetName, m.longueurMm, m.longueurMm) as { rowid?: number; id?: string; quantite?: number; longueur?: number } | undefined;
                 }
 
-                if (!matched) {
-                  // Chute de longueur supérieure
-                  matched = this.db.prepare(
-                    'SELECT rowid, quantite, longueur FROM chutes_barres WHERE sheet_name = ? AND longueur >= ? - 10.0 AND quantite > 0 ORDER BY longueur ASC LIMIT 1'
-                  ).get(sheetName, m.longueurMm) as { rowid?: number; quantite?: number; longueur?: number } | undefined;
-                }
-
                 if (matched?.rowid) {
+                  if (matched.id) {
+                    this.db.prepare(
+                      "UPDATE mouvements_stock SET remarque = coalesce(remarque, '') || ' [CHUTEDATA:' || ? || ':' || ? || ']' WHERE id = ?"
+                    ).run(matched.id, matched.longueur || m.longueurMm, m.id);
+                  }
                   this.db.prepare(
                     'UPDATE chutes_barres SET quantite = quantite - ? WHERE rowid = ?'
                   ).run(quantite, matched.rowid);
@@ -2006,10 +2094,17 @@ class AtelierDatabase {
 
                 if (existingSameLg?.id) {
                   this.db.prepare('UPDATE chutes_barres SET quantite = quantite + ? WHERE id = ?').run(quantite, existingSameLg.id);
+                  this.db.prepare(
+                    "UPDATE mouvements_stock SET remarque = coalesce(remarque, '') || ' [CREATED_CHUTE_ID:' || ? || ']' WHERE id = ?"
+                  ).run(existingSameLg.id, m.id);
                 } else {
+                  const newChuteId = `cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
                   this.db.prepare(
                     'INSERT INTO chutes_barres (id, sheet_name, longueur, quantite) VALUES (?, ?, ?, ?)'
-                  ).run(`cht-${Date.now()}-${Math.floor(Math.random() * 1000)}`, sheetName, m.longueurMm, quantite);
+                  ).run(newChuteId, sheetName, m.longueurMm, quantite);
+                  this.db.prepare(
+                    "UPDATE mouvements_stock SET remarque = coalesce(remarque, '') || ' [CREATED_CHUTE_ID:' || ? || ']' WHERE id = ?"
+                  ).run(newChuteId, m.id);
                 }
               }
             }

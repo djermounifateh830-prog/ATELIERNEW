@@ -29,6 +29,7 @@ import {
 import { INITIAL_CLIENT_CODIFICATIONS } from '../../data/initialCodifications';
 import { StorageService } from '../../services/storage';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { logger } from '../../services/logger';
 import { calculerBesoinMaille, PARAMETRES_MAILLE_DEFAUT } from '../../services/moteurMoustiquaire';
 import { getDimensionsPrecadrePiece } from '../../utils/precadreCalculs';
@@ -651,17 +652,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       // Sinon on prend systématiquement les valeurs de l'article réel (BDD) : fiabilité garantie
       // même quand la commande mélange plusieurs codes articles caisson.
       const ctParamsApplicables = caissonConfig.ctArticleCode === artObj.code_art;
-      const longBarre = (ctParamsApplicables && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj.longeur || 6500);
-      const epScie = (ctParamsApplicables && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj.lame || 4.5);
-      const debord = (ctParamsApplicables && ctTechParams.debordement !== undefined && ctTechParams.debordement !== null) ? ctTechParams.debordement : (artObj.debordement || 0);
-      const rMin = (ctParamsApplicables && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
-      const rMax = (ctParamsApplicables && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
+      const cutParamsCT = getArticleCuttingParams(artObj, ctParamsApplicables ? ctTechParams : null);
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarre,
-        epaisseurScie: epScie,
-        refusMin: rMin,
-        refusMax: rMax,
+        longueurBarre: cutParamsCT.longueurBarre,
+        epaisseurScie: cutParamsCT.epaisseurScie,
+        refusMin: cutParamsCT.refusMin,
+        refusMax: cutParamsCT.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
@@ -669,7 +666,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const piecesToCut = lignesGroup.map(c => {
         const cmdTag = (c.refCommande || numCommandeCaisson || '').trim();
         return {
-          longueur: c.longueur + debord,
+          longueur: c.longueur + cutParamsCT.debordement,
           quantite: c.quantite,
           label: `${c.repere} (${artObj.designation})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
           repere: c.repere,
@@ -692,11 +689,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
       const conditionsCoupeCT = {
-        longueurBarre: longBarre,
-        epaisseurScie: epScie,
-        debordement: debord,
-        refusMin: rMin,
-        refusMax: rMax
+        longueurBarre: cutParamsCT.longueurBarre,
+        epaisseurScie: cutParamsCT.epaisseurScie,
+        debordement: cutParamsCT.debordement,
+        refusMin: cutParamsCT.refusMin,
+        refusMax: cutParamsCT.refusMax
       };
 
       generatedSections.push({
@@ -711,7 +708,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         avecSousFace: avecSousFaceCT,
         montageSousFace: montageCT,
         avecPlaque: avecPlaqueCT,
-        debordement: debord,
+        debordement: cutParamsCT.debordement,
         conditionsCoupe: conditionsCoupeCT
       });
     });
@@ -733,20 +730,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
       const sfParamsApplicables = caissonConfig.sfArticleCode === sfObj.code_art;
-      const longBarreSF = (sfParamsApplicables && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj.longeur || 6000);
-      const epScieSF = (sfParamsApplicables && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj.lame || 4.5);
-      const debordSF = (sfParamsApplicables && sfTechParams.debordement !== undefined && sfTechParams.debordement !== null) ? sfTechParams.debordement : (sfObj.debordement || 0);
-      const rMinSF = (sfParamsApplicables && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
-      const rMaxSF = (sfParamsApplicables && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
+      const cutParamsSF = getArticleCuttingParams(sfObj, sfParamsApplicables ? sfTechParams : null);
 
       const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
       const refTitreSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || refTitre || 'CMD-01');
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarreSF,
-        epaisseurScie: epScieSF,
-        refusMin: rMinSF,
-        refusMax: rMaxSF,
+        longueurBarre: cutParamsSF.longueurBarre,
+        epaisseurScie: cutParamsSF.epaisseurScie,
+        refusMin: cutParamsSF.refusMin,
+        refusMax: cutParamsSF.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
@@ -756,7 +749,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         const repSF = (c.repere || '').trim() || `C-${i + 1}`;
         const cmdTag = (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim();
         return {
-          longueur: c.longueur + debordSF,
+          longueur: c.longueur + cutParamsSF.debordement,
           quantite: c.quantite,
           label: `${repSF} (${sfObj.designation})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
           repere: repSF,
@@ -773,11 +766,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       res.dateCommande = dateCommande;
 
       const conditionsCoupeSF = {
-        longueurBarre: longBarreSF,
-        epaisseurScie: epScieSF,
-        debordement: debordSF,
-        refusMin: rMinSF,
-        refusMax: rMaxSF
+        longueurBarre: cutParamsSF.longueurBarre,
+        epaisseurScie: cutParamsSF.epaisseurScie,
+        debordement: cutParamsSF.debordement,
+        refusMin: cutParamsSF.refusMin,
+        refusMax: cutParamsSF.refusMax
       };
 
       generatedSections.push({
@@ -788,7 +781,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         type: 'SF',
         famille: 'CAISSON',
         commandesInvolved: refsSFInvolved.length > 0 ? refsSFInvolved : refsInvolved,
-        debordement: debordSF,
+        debordement: cutParamsSF.debordement,
         conditionsCoupe: conditionsCoupeSF
       });
     });
@@ -1144,17 +1137,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
       const tblParamsApplicables = tablierConfig.articleCode === artObj.code_art;
-      const longBarre = (tblParamsApplicables && tblTechParams.longeur > 0) ? tblTechParams.longeur : (artObj.longeur || 6000);
-      const epScie = (tblParamsApplicables && tblTechParams.lame > 0) ? tblTechParams.lame : (artObj.lame || 4.0);
-      const debord = (tblParamsApplicables && tblTechParams.debordement !== undefined && tblTechParams.debordement !== null) ? tblTechParams.debordement : (artObj.debordement || 0);
-      const rMin = (tblParamsApplicables && tblTechParams.refus_min > 0) ? tblTechParams.refus_min : (artObj.refus_min ?? 250);
-      const rMax = (tblParamsApplicables && tblTechParams.refus_max > 0) ? tblTechParams.refus_max : (artObj.refus_max ?? 1000);
+      const cutParamsTBL = getArticleCuttingParams(artObj, tblParamsApplicables ? tblTechParams : null);
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarre,
-        epaisseurScie: epScie,
-        refusMin: rMin,
-        refusMax: rMax,
+        longueurBarre: cutParamsTBL.longueurBarre,
+        epaisseurScie: cutParamsTBL.epaisseurScie,
+        refusMin: cutParamsTBL.refusMin,
+        refusMax: cutParamsTBL.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
@@ -1169,7 +1158,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         // Règle Volet : 43mm -> -65mm, 55mm -> -28mm. Tablier seul -> débord standard
         const dedTablier = isAvecVolet 
           ? (hLame === 55 ? -28 : -65) 
-          : debord;
+          : cutParamsTBL.debordement;
         const lenLame = c.largeur + dedTablier;
 
         piecesToCut.push({
@@ -1214,17 +1203,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
       const lfParamsApplicables = tablierConfig.lfArticleCode === lfObj.code_art;
-      const longBarreLF = (lfParamsApplicables && lfTechParams.longeur > 0) ? lfTechParams.longeur : (lfObj.longeur || 6000);
-      const epScieLF = (lfParamsApplicables && lfTechParams.lame > 0) ? lfTechParams.lame : (lfObj.lame || 4.0);
-      const debordLF = (lfParamsApplicables && lfTechParams.debordement !== undefined && lfTechParams.debordement !== null) ? lfTechParams.debordement : (lfObj.debordement || 0);
-      const rMinLF = (lfParamsApplicables && lfTechParams.refus_min > 0) ? lfTechParams.refus_min : (lfObj.refus_min ?? 250);
-      const rMaxLF = (lfParamsApplicables && lfTechParams.refus_max > 0) ? lfTechParams.refus_max : (lfObj.refus_max ?? 1000);
+      const cutParamsLF = getArticleCuttingParams(lfObj, lfParamsApplicables ? lfTechParams : null);
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarreLF,
-        epaisseurScie: epScieLF,
-        refusMin: rMinLF,
-        refusMax: rMaxLF,
+        longueurBarre: cutParamsLF.longueurBarre,
+        epaisseurScie: cutParamsLF.epaisseurScie,
+        refusMin: cutParamsLF.refusMin,
+        refusMax: cutParamsLF.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
@@ -1236,7 +1221,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         // Règle Volet : LF = -65mm pour 43mm, -28mm pour 55mm. Tablier seul -> débord standard
         const dedLF = isAvecVolet 
           ? (hLame === 55 ? -28 : -65) 
-          : debordLF;
+          : cutParamsLF.debordement;
         const lenLF = c.largeur + dedLF;
 
         return {
@@ -1281,24 +1266,19 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
       const glParamsApplicables = tablierConfig.glArticleCode === glObj.code_art;
-      const longBarreGL = (glParamsApplicables && glTechParams.longeur > 0) ? glTechParams.longeur : (glObj.longeur || 6000);
-      const epScieGL = (glParamsApplicables && glTechParams.lame > 0) ? glTechParams.lame : (glObj.lame || 4.0);
-      // Règle Volet : Hauteur des 2 coulisses = Hauteur saisie dans la ligne de commande (déduction 0 mm si pas de débord configuré)
-      const debordGL = (glParamsApplicables && glTechParams.debordement !== undefined && glTechParams.debordement !== null) ? glTechParams.debordement : (glObj.debordement || 0);
-      const rMinGL = (glParamsApplicables && glTechParams.refus_min > 0) ? glTechParams.refus_min : (glObj.refus_min ?? 300);
-      const rMaxGL = (glParamsApplicables && glTechParams.refus_max > 0) ? glTechParams.refus_max : (glObj.refus_max ?? 1200);
+      const cutParamsGL = getArticleCuttingParams(glObj, glParamsApplicables ? glTechParams : null);
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarreGL,
-        epaisseurScie: epScieGL,
-        refusMin: rMinGL,
-        refusMax: rMaxGL,
+        longueurBarre: cutParamsGL.longueurBarre,
+        epaisseurScie: cutParamsGL.epaisseurScie,
+        refusMin: cutParamsGL.refusMin,
+        refusMax: cutParamsGL.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
 
       const piecesToCut = lignesGroup.map(c => {
-        const lenGL = c.hauteur + debordGL; // = c.hauteur si debordGL=0
+        const lenGL = c.hauteur + cutParamsGL.debordement;
         return {
           longueur: lenGL,
           quantite: c.quantite * 2, // 2 Coulisses par volet
@@ -1362,13 +1342,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         if (!cadreObj) return;
         const mappedSheet = mapping[cadreObj.code_art] || null;
         const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-        const longBarre = mstqCadreTechParams.longeur || cadreObj.longeur || 6000;
-        const epScie = mstqCadreTechParams.lame || cadreObj.lame || 4.0;
-        const ded = mstqCadreTechParams.debordement ?? cadreObj.debordement ?? -62;
-        const rMin = mstqCadreTechParams.refus_min ?? cadreObj.refus_min ?? 350;
-        const rMax = mstqCadreTechParams.refus_max ?? cadreObj.refus_max ?? 1200;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+        const cutParamsCadre = getArticleCuttingParams(cadreObj, mstqCadreTechParams);
+        const opt = new OptimiseurCoupe1D({
+          longueurBarre: cutParamsCadre.longueurBarre,
+          epaisseurScie: cutParamsCadre.epaisseurScie,
+          refusMin: cutParamsCadre.refusMin,
+          refusMax: cutParamsCadre.refusMax,
+          mode: optMode,
+          poidsTemps
+        });
 
         // Générer les pièces :
         // - Si avec Barre Inférieure : 2 Montants (H-37) + 1 Traverse Haute (L-62)
@@ -1415,13 +1397,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         if (!coulisseObj) return;
         const mappedSheet = mapping[coulisseObj.code_art] || null;
         const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-        const longBarre = mstqCoulisseTechParams.longeur || coulisseObj.longeur || 6000;
-        const epScie = mstqCoulisseTechParams.lame || coulisseObj.lame || 4.0;
-        const ded = mstqCoulisseTechParams.debordement ?? coulisseObj.debordement ?? -46;
-        const rMin = mstqCoulisseTechParams.refus_min ?? coulisseObj.refus_min ?? 300;
-        const rMax = mstqCoulisseTechParams.refus_max ?? coulisseObj.refus_max ?? 1200;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+        const cutParamsCoulisse = getArticleCuttingParams(coulisseObj, mstqCoulisseTechParams);
+        const opt = new OptimiseurCoupe1D({
+          longueurBarre: cutParamsCoulisse.longueurBarre,
+          epaisseurScie: cutParamsCoulisse.epaisseurScie,
+          refusMin: cutParamsCoulisse.refusMin,
+          refusMax: cutParamsCoulisse.refusMax,
+          mode: optMode,
+          poidsTemps
+        });
 
         const pieces: { longueur: number; quantite: number; label: string; repere?: string; refCommande?: string }[] = [];
         for (const m of lignesGroup) {
@@ -1466,18 +1450,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         if (!biObj) return;
         const mappedSheet = mapping[biObj.code_art] || null;
         const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-        const longBarre = mstqBarreInfTechParams.longeur || biObj.longeur || 6000;
-        const epScie = mstqBarreInfTechParams.lame || biObj.lame || 4.0;
-        const ded = mstqBarreInfTechParams.debordement ?? biObj.debordement ?? -13;
-        const rMin = mstqBarreInfTechParams.refus_min ?? biObj.refus_min ?? 300;
-        const rMax = mstqBarreInfTechParams.refus_max ?? biObj.refus_max ?? 1200;
-
-        const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+        const cutParamsBI = getArticleCuttingParams(biObj, mstqBarreInfTechParams);
+        const opt = new OptimiseurCoupe1D({
+          longueurBarre: cutParamsBI.longueurBarre,
+          epaisseurScie: cutParamsBI.epaisseurScie,
+          refusMin: cutParamsBI.refusMin,
+          refusMax: cutParamsBI.refusMax,
+          mode: optMode,
+          poidsTemps
+        });
 
         const pieces: { longueur: number; quantite: number; label: string; repere?: string; refCommande?: string }[] = [];
         for (const m of lignesGroup) {
           const Q = Math.max(1, m.quantite);
-          const lenBI = m.largeur + ded;
+          const lenBI = m.largeur + cutParamsBI.debordement;
           pieces.push({ longueur: lenBI, quantite: 1 * Q, label: `BI-${m.repere} (Barre Inférieure ${lenBI}mm)`, repere: `BI-${m.repere}`, refCommande: m.refCommande });
         }
 
@@ -1953,27 +1939,31 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         );
       }
 
-      if (editingDossierId) {
-        const allDossiers = await StorageService.getDossiers();
-        const d = allDossiers.find(dos => dos.id === editingDossierId);
-        if (d) {
-          if (newPauseState) {
-            d.estEnPause = true;
-            d.statut = 'EN_PAUSE';
-            d.datePause = getTodayDateString();
-            d.motifPause = 'Commande mise en pause';
-          } else {
-            const refreshedOFs = await StorageService.getSuivisOF();
-            const otherPaused = refreshedOFs.some(o => o.dossierId === d.id && (o.statut === 'EN_PAUSE' || o.estEnPause));
-            if (!otherPaused) {
-              d.estEnPause = false;
-              d.statut = 'EN_COURS';
-              d.datePause = undefined;
-            }
+      const allDossiers = await StorageService.getDossiers();
+      const targetDossier = (editingDossierId ? allDossiers.find(dos => dos.id === editingDossierId) : null) ||
+        allDossiers.find(dos => {
+          return [dos.refCommande, dos.numCommandeCaisson, dos.numCommandeTablier, dos.numCommandeMoustiquaire, dos.numCommandePrecadre]
+            .filter(Boolean)
+            .some(r => r!.trim().toLowerCase() === cleanRef || (r!.length >= 3 && (r!.toLowerCase().includes(cleanRef) || cleanRef.includes(r!.toLowerCase()))));
+        });
+
+      if (targetDossier) {
+        if (newPauseState) {
+          targetDossier.estEnPause = true;
+          targetDossier.statut = 'EN_PAUSE';
+          targetDossier.datePause = getTodayDateString();
+          targetDossier.motifPause = 'Commande mise en pause';
+        } else {
+          const refreshedOFs = await StorageService.getSuivisOF();
+          const otherPaused = refreshedOFs.some(o => o.dossierId === targetDossier.id && (o.statut === 'EN_PAUSE' || o.estEnPause));
+          if (!otherPaused) {
+            targetDossier.estEnPause = false;
+            targetDossier.statut = 'EN_COURS';
+            targetDossier.datePause = undefined;
           }
-          await StorageService.saveDossiers(allDossiers);
-          if (onDossiersUpdated) onDossiersUpdated();
         }
+        await StorageService.saveDossiers(allDossiers);
+        if (onDossiersUpdated) onDossiersUpdated();
       }
 
       if (refreshSuivisOF) refreshSuivisOF();
@@ -2342,16 +2332,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const mappedSheetName = mapping[artObj.code_art] || null;
       const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
 
-      const longBarre = prcTechParams.longeur || artObj.longeur || 6000;
-      const epScie = prcTechParams.lame || artObj.lame || 4.0;
-      const rMin = prcTechParams.refus_min ?? artObj.refus_min ?? 300;
-      const rMax = prcTechParams.refus_max ?? artObj.refus_max ?? 1200;
+      const cutParamsPRC = getArticleCuttingParams(artObj, prcTechParams);
 
       const opt = new OptimiseurCoupe1D({
-        longueurBarre: longBarre,
-        epaisseurScie: epScie,
-        refusMin: rMin,
-        refusMax: rMax,
+        longueurBarre: cutParamsPRC.longueurBarre,
+        epaisseurScie: cutParamsPRC.epaisseurScie,
+        refusMin: cutParamsPRC.refusMin,
+        refusMax: cutParamsPRC.refusMax,
         mode: optMode,
         poidsTemps: poidsTemps
       });
@@ -2768,17 +2755,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const mappedSheetName = mapping[artObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const ctParamsApplicables = caissonConfig.ctArticleCode === artObj?.code_art;
-          const longBarre = (ctParamsApplicables && ctTechParams.longeur > 0) ? ctTechParams.longeur : (artObj?.longeur || 6500);
-          const epScie = (ctParamsApplicables && ctTechParams.lame > 0) ? ctTechParams.lame : (artObj?.lame || 4.5);
-          const debord = (ctParamsApplicables && ctTechParams.debordement !== undefined && ctTechParams.debordement !== null) ? ctTechParams.debordement : (artObj?.debordement || 0);
-          const rMin = (ctParamsApplicables && ctTechParams.refus_min > 0) ? ctTechParams.refus_min : (artObj?.refus_min && artObj.refus_min > 0 ? artObj.refus_min : 500);
-          const rMax = (ctParamsApplicables && ctTechParams.refus_max > 0) ? ctTechParams.refus_max : (artObj?.refus_max && artObj.refus_max > 0 ? artObj.refus_max : 1100);
+          const cutParamsCT = getArticleCuttingParams(artObj, ctParamsApplicables ? ctTechParams : null);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsCT.longueurBarre,
+            epaisseurScie: cutParamsCT.epaisseurScie,
+            refusMin: cutParamsCT.refusMin,
+            refusMax: cutParamsCT.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut = lignesGroup.map(c => {
             const cmdTag = (c.refCommande || numCommandeCaisson || '').trim();
             return {
-              longueur: c.longueur + debord,
+              longueur: c.longueur + cutParamsCT.debordement,
               quantite: c.quantite,
               label: `${c.repere} (${artObj?.designation || artCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
               repere: c.repere,
@@ -2799,11 +2789,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const avecPlaqueCT = lignesGroup.some(c => c.avecPlaque !== undefined ? c.avecPlaque : caissonConfig.avecPlaque);
 
           const conditionsCoupeCT = {
-            longueurBarre: longBarre,
-            epaisseurScie: epScie,
-            debordement: debord,
-            refusMin: rMin,
-            refusMax: rMax
+            longueurBarre: cutParamsCT.longueurBarre,
+            epaisseurScie: cutParamsCT.epaisseurScie,
+            debordement: cutParamsCT.debordement,
+            refusMin: cutParamsCT.refusMin,
+            refusMax: cutParamsCT.refusMax
           };
 
           generatedSections.push({
@@ -2818,7 +2808,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             avecSousFace: avecSousFaceCT,
             montageSousFace: montageCT,
             avecPlaque: avecPlaqueCT,
-            debordement: debord,
+            debordement: cutParamsCT.debordement,
             conditionsCoupe: conditionsCoupeCT
           });
         }
@@ -2831,21 +2821,24 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const mappedSheetName = mapping[sfObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const sfParamsApplicables = caissonConfig.sfArticleCode === sfObj?.code_art;
-          const longBarreSF = (sfParamsApplicables && sfTechParams.longeur > 0) ? sfTechParams.longeur : (sfObj?.longeur || 6000);
-          const epScieSF = (sfParamsApplicables && sfTechParams.lame > 0) ? sfTechParams.lame : (sfObj?.lame || 4.5);
-          const debordSF = (sfParamsApplicables && sfTechParams.debordement !== undefined && sfTechParams.debordement !== null) ? sfTechParams.debordement : (sfObj?.debordement || 0);
-          const rMinSF = (sfParamsApplicables && sfTechParams.refus_min > 0) ? sfTechParams.refus_min : (sfObj?.refus_min && sfObj.refus_min > 0 ? sfObj.refus_min : 300);
-          const rMaxSF = (sfParamsApplicables && sfTechParams.refus_max > 0) ? sfTechParams.refus_max : (sfObj?.refus_max && sfObj.refus_max > 0 ? sfObj.refus_max : 500);
+          const cutParamsSF = getArticleCuttingParams(sfObj, sfParamsApplicables ? sfTechParams : null);
 
           const refsSFInvolved = Array.from(new Set(lignesGroup.map(c => (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim()).filter(Boolean)));
           const titreRefSF = refsSFInvolved.length > 0 ? refsSFInvolved.join(', ') : (numCommandeSousFace.trim() || titreRefCaissons || 'SOUS-FACES');
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreSF, epaisseurScie: epScieSF, refusMin: rMinSF, refusMax: rMaxSF, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsSF.longueurBarre,
+            epaisseurScie: cutParamsSF.epaisseurScie,
+            refusMin: cutParamsSF.refusMin,
+            refusMax: cutParamsSF.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut = lignesGroup.map((c, i) => {
             const repSF = (c.repere || '').trim() || `C-${i + 1}`;
             const cmdTag = (c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || '').trim();
             return {
-              longueur: c.longueur + debordSF,
+              longueur: c.longueur + cutParamsSF.debordement,
               quantite: c.quantite,
               label: `${repSF} (${sfObj?.designation || sfCode})${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`,
               repere: repSF,
@@ -2861,11 +2854,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.dateCommande = dateCommande;
 
           const conditionsCoupeSF = {
-            longueurBarre: longBarreSF,
-            epaisseurScie: epScieSF,
-            debordement: debordSF,
-            refusMin: rMinSF,
-            refusMax: rMaxSF
+            longueurBarre: cutParamsSF.longueurBarre,
+            epaisseurScie: cutParamsSF.epaisseurScie,
+            debordement: cutParamsSF.debordement,
+            refusMin: cutParamsSF.refusMin,
+            refusMax: cutParamsSF.refusMax
           };
 
           generatedSections.push({
@@ -2876,7 +2869,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             type: 'SF',
             famille: 'CAISSON',
             commandesInvolved: refsSFInvolved,
-            debordement: debordSF,
+            debordement: cutParamsSF.debordement,
             conditionsCoupe: conditionsCoupeSF
           });
         }
@@ -2897,13 +2890,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const mappedSheetName = mapping[artObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const tblParamsApplicables = tablierConfig.articleCode === artObj?.code_art;
-          const longBarre = (tblParamsApplicables && tblTechParams.longeur > 0) ? tblTechParams.longeur : (artObj?.longeur || 6000);
-          const epScie = (tblParamsApplicables && tblTechParams.lame > 0) ? tblTechParams.lame : (artObj?.lame || 4.0);
-          const debord = (tblParamsApplicables && tblTechParams.debordement !== undefined && tblTechParams.debordement !== null) ? tblTechParams.debordement : (artObj?.debordement || 0);
-          const rMin = (tblParamsApplicables && tblTechParams.refus_min > 0) ? tblTechParams.refus_min : (artObj?.refus_min ?? 250);
-          const rMax = (tblParamsApplicables && tblTechParams.refus_max > 0) ? tblTechParams.refus_max : (artObj?.refus_max ?? 1000);
+          const cutParamsTBL = getArticleCuttingParams(artObj, tblParamsApplicables ? tblTechParams : null);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsTBL.longueurBarre,
+            epaisseurScie: cutParamsTBL.epaisseurScie,
+            refusMin: cutParamsTBL.refusMin,
+            refusMax: cutParamsTBL.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut: any[] = [];
           lignesGroup.forEach(c => {
             const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
@@ -2914,7 +2910,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
             const dedTablier = isAvecVolet 
               ? (hLame === 55 ? -28 : -65) 
-              : debord;
+              : cutParamsTBL.debordement;
             const lenLame = c.largeur + dedTablier;
 
             piecesToCut.push({
@@ -2952,19 +2948,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const mappedSheetName = mapping[lfObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const lfParamsApplicables = tablierConfig.lfArticleCode === lfObj?.code_art;
-          const longBarreLF = (lfParamsApplicables && lfTechParams.longeur > 0) ? lfTechParams.longeur : (lfObj?.longeur || 6000);
-          const epScieLF = (lfParamsApplicables && lfTechParams.lame > 0) ? lfTechParams.lame : (lfObj?.lame || 4.0);
-          const debordLF = (lfParamsApplicables && lfTechParams.debordement !== undefined && lfTechParams.debordement !== null) ? lfTechParams.debordement : (lfObj?.debordement || 0);
-          const rMinLF = (lfParamsApplicables && lfTechParams.refus_min > 0) ? lfTechParams.refus_min : (lfObj?.refus_min ?? 250);
-          const rMaxLF = (lfParamsApplicables && lfTechParams.refus_max > 0) ? lfTechParams.refus_max : (lfObj?.refus_max ?? 1000);
+          const cutParamsLF = getArticleCuttingParams(lfObj, lfParamsApplicables ? lfTechParams : null);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreLF, epaisseurScie: epScieLF, refusMin: rMinLF, refusMax: rMaxLF, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsLF.longueurBarre,
+            epaisseurScie: cutParamsLF.epaisseurScie,
+            refusMin: cutParamsLF.refusMin,
+            refusMax: cutParamsLF.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut = lignesGroup.map(c => {
             const isAvecVolet = c.typeFabrication === 'VOLET_COMPLET' || c.avecCoulisses;
             const hLame = getHauteurLameTablier(c.articleCode, c.articleDesignation || lfObj?.designation, c.hauteur_lame_tablier);
             const dedLF = isAvecVolet 
               ? (hLame === 55 ? -28 : -65) 
-              : debordLF;
+              : cutParamsLF.debordement;
             const lenLF = c.largeur + dedLF;
             const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
 
@@ -3003,17 +3002,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const mappedSheetName = mapping[glObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
           const glParamsApplicables = tablierConfig.glArticleCode === glObj?.code_art;
-          const longBarreGL = (glParamsApplicables && glTechParams.longeur > 0) ? glTechParams.longeur : (glObj?.longeur || 6000);
-          const epScieGL = (glParamsApplicables && glTechParams.lame > 0) ? glTechParams.lame : (glObj?.lame || 4.0);
-          const debordGL = (glParamsApplicables && glTechParams.debordement !== undefined && glTechParams.debordement !== null) ? glTechParams.debordement : (glObj?.debordement || 0);
-          const rMinGL = (glParamsApplicables && glTechParams.refus_min > 0) ? glTechParams.refus_min : (glObj?.refus_min ?? 300);
-          const rMaxGL = (glParamsApplicables && glTechParams.refus_max > 0) ? glTechParams.refus_max : (glObj?.refus_max ?? 1200);
+          const cutParamsGL = getArticleCuttingParams(glObj, glParamsApplicables ? glTechParams : null);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarreGL, epaisseurScie: epScieGL, refusMin: rMinGL, refusMax: rMaxGL, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsGL.longueurBarre,
+            epaisseurScie: cutParamsGL.epaisseurScie,
+            refusMin: cutParamsGL.refusMin,
+            refusMax: cutParamsGL.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut: any[] = [];
           lignesGroup.forEach(c => {
             const cmdTag = (c.refCommande || numCommandeTablier || '').trim();
-            const lenGL = c.hauteur + debordGL;
+            const lenGL = c.hauteur + cutParamsGL.debordement;
             piecesToCut.push({
               longueur: lenGL,
               quantite: 2 * c.quantite,
@@ -3057,17 +3059,21 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheet = mapping[cadreObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-          const longBarre = mstqCadreTechParams.longeur || cadreObj.longeur || 6000;
-          const epScie = mstqCadreTechParams.lame || cadreObj.lame || 4.0;
-          const rMin = mstqCadreTechParams.refus_min || cadreObj.refus_min || 350;
-          const rMax = mstqCadreTechParams.refus_max || cadreObj.refus_max || 1200;
+          const cutParamsCadre = getArticleCuttingParams(cadreObj, mstqCadreTechParams);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsCadre.longueurBarre,
+            epaisseurScie: cutParamsCadre.epaisseurScie,
+            refusMin: cutParamsCadre.refusMin,
+            refusMax: cutParamsCadre.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const pieces: any[] = [];
           for (const m of lignesGroup) {
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
-            const dedH = m.avecBarreInferieure ? -37 : (mstqCadreTechParams.debordement ?? cadreObj.debordement ?? -62);
+            const dedH = m.avecBarreInferieure ? -37 : (mstqCadreTechParams.debordement !== undefined && mstqCadreTechParams.debordement !== null ? mstqCadreTechParams.debordement : (cutParamsCadre.debordement || -62));
             const dedL = -62;
             const lenH = m.hauteur + dedH;
             const lenL = m.largeur + dedL;
@@ -3104,18 +3110,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheet = mapping[coulisseObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-          const longBarre = mstqCoulisseTechParams.longeur || coulisseObj.longeur || 6000;
-          const epScie = mstqCoulisseTechParams.lame || coulisseObj.lame || 4.0;
-          const dedCoulisseDefault = mstqCoulisseTechParams.debordement ?? coulisseObj.debordement ?? -46;
-          const rMin = mstqCoulisseTechParams.refus_min || coulisseObj.refus_min || 300;
-          const rMax = mstqCoulisseTechParams.refus_max || coulisseObj.refus_max || 1200;
+          const cutParamsCoulisse = getArticleCuttingParams(coulisseObj, mstqCoulisseTechParams);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsCoulisse.longueurBarre,
+            epaisseurScie: cutParamsCoulisse.epaisseurScie,
+            refusMin: cutParamsCoulisse.refusMin,
+            refusMax: cutParamsCoulisse.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const pieces: any[] = [];
           for (const m of lignesGroup) {
             if (m.typeOuverture === 'FIXE' || m.typeFabrication === 'SEMI_FINI_MAILLE') continue;
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
+            const dedCoulisseDefault = mstqCoulisseTechParams.debordement !== undefined && mstqCoulisseTechParams.debordement !== null ? mstqCoulisseTechParams.debordement : (cutParamsCoulisse.debordement || -46);
             const dedCoulisse = m.avecBarreInferieure ? -33 : dedCoulisseDefault;
             let qtyCoulisse = 1;
             let dimCoulisse = m.hauteur + dedCoulisse;
@@ -3153,17 +3163,21 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheet = mapping[biObj.code_art] || null;
           const availableChutes = mappedSheet ? chutesBarres[mappedSheet] || [] : [];
-          const longBarre = mstqBarreInfTechParams.longeur || biObj.longeur || 6000;
-          const epScie = mstqBarreInfTechParams.lame || biObj.lame || 4.0;
-          const ded = mstqBarreInfTechParams.debordement ?? biObj.debordement ?? -13;
-          const rMin = mstqBarreInfTechParams.refus_min || biObj.refus_min || 300;
-          const rMax = mstqBarreInfTechParams.refus_max || biObj.refus_max || 1200;
+          const cutParamsBI = getArticleCuttingParams(biObj, mstqBarreInfTechParams);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsBI.longueurBarre,
+            epaisseurScie: cutParamsBI.epaisseurScie,
+            refusMin: cutParamsBI.refusMin,
+            refusMax: cutParamsBI.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const pieces: any[] = [];
           for (const m of lignesGroup) {
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
+            const ded = mstqBarreInfTechParams.debordement !== undefined && mstqBarreInfTechParams.debordement !== null ? mstqBarreInfTechParams.debordement : (cutParamsBI.debordement || -13);
             const lenBI = m.largeur + ded;
             pieces.push({ longueur: lenBI, quantite: 1 * Q, label: `BI-${m.repere} (Barre Inférieure ${lenBI}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `BI-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
           }
@@ -3200,12 +3214,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
           const mappedSheetName = mapping[artObj?.code_art || ''] || null;
           const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
-          const longBarre = prcTechParams.longeur || artObj?.longeur || 6000;
-          const epScie = prcTechParams.lame || artObj?.lame || 4.0;
-          const rMin = prcTechParams.refus_min || artObj?.refus_min || 300;
-          const rMax = prcTechParams.refus_max || artObj?.refus_max || 1200;
+          const cutParamsPRC = getArticleCuttingParams(artObj, prcTechParams);
 
-          const opt = new OptimiseurCoupe1D({ longueurBarre: longBarre, epaisseurScie: epScie, refusMin: rMin, refusMax: rMax, mode: optMode, poidsTemps });
+          const opt = new OptimiseurCoupe1D({
+            longueurBarre: cutParamsPRC.longueurBarre,
+            epaisseurScie: cutParamsPRC.epaisseurScie,
+            refusMin: cutParamsPRC.refusMin,
+            refusMax: cutParamsPRC.refusMax,
+            mode: optMode,
+            poidsTemps
+          });
           const piecesToCut: any[] = [];
           lignesGroup.forEach(c => {
             const debSup = c.debordementSuperieur !== undefined ? c.debordementSuperieur : 100;
@@ -5317,8 +5335,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <span className="font-black truncate">📦 Caisson & SF</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                 familleArticle === 'CAISSON' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {lignesCaissons.length}
+              }`} title={`${lignesCaissons.length} ligne(s) d'articles`}>
+                {lignesCaissons.reduce((sum, c) => sum + Math.max(1, Number(c.quantite) || 1), 0)} pcs
               </span>
             </div>
 
@@ -5355,8 +5373,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <span className="font-black truncate">🪟 Volet / Tablier</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                 familleArticle === 'TABLIER' ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {lignesTabliers.length}
+              }`} title={`${lignesTabliers.length} ligne(s) d'articles`}>
+                {lignesTabliers.reduce((sum, t) => sum + Math.max(1, Number(t.quantite) || 1), 0)} pcs
               </span>
             </div>
 
@@ -5393,8 +5411,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <span className="font-black truncate">🚪 Précadre</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                 familleArticle === 'PRECADRE' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {lignesPrecadres.length}
+              }`} title={`${lignesPrecadres.length} ligne(s) d'articles`}>
+                {lignesPrecadres.reduce((sum, p) => sum + Math.max(1, Number(p.quantite) || 1), 0)} pcs
               </span>
             </div>
 
@@ -5431,8 +5449,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               <span className="font-black truncate">🦟 Moustiquaire</span>
               <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                 familleArticle === 'MOUSTIQUAIRE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400'
-              }`}>
-                {lignesMoustiquaires.length}
+              }`} title={`${lignesMoustiquaires.length} ligne(s) d'articles`}>
+                {lignesMoustiquaires.reduce((sum, m) => sum + Math.max(1, Number(m.quantite) || 1), 0)} pcs
               </span>
             </div>
 

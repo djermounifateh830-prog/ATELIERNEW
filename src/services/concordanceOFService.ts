@@ -56,7 +56,8 @@ export interface BilanProfileOF {
   // 4. Calcul de concordance & couverture
   matiereFournieMm: number; // (barres * longueur) + sum(chutes utilisées)
   matiereConsommeeNetteMm: number; // matière fournie - sum(chutes générées stockées)
-  traitScieEstimeMm: number; // nb_pieces * 4 mm
+  epaisseurScieMm?: number; // Épaisseur de la lame de scie (par défaut 4.5mm ou article.lame)
+  traitScieEstimeMm: number; // nb_pieces * epaisseurScieMm
   soldeMatiereMm: number; // matière fournie - (besoin + traits de scie)
   couvertureEstValide: boolean; // matière fournie >= besoin + traits de scie
   messageAlerte?: string;
@@ -432,7 +433,8 @@ export class ConcordanceOFService {
       chutesGenereesReelles,
       matiereFournieMm: 0,
       matiereConsommeeNetteMm: 0,
-      traitScieEstimeMm: nbPiecesTotal * 4,
+      epaisseurScieMm: (article?.lame && article.lame > 0) ? article.lame : 4.5,
+      traitScieEstimeMm: nbPiecesTotal * ((article?.lame && article.lame > 0) ? article.lame : 4.5),
       soldeMatiereMm: 0,
       couvertureEstValide: false
     };
@@ -459,7 +461,8 @@ export class ConcordanceOFService {
       .filter(c => c.statut === 'A_STOCKER')
       .reduce((sum, c) => sum + c.longueur, 0);
 
-    const traitScieEstimeMm = bilan.nbPiecesTotal * 4;
+    const epaisseurScie = bilan.epaisseurScieMm && bilan.epaisseurScieMm > 0 ? bilan.epaisseurScieMm : 4.5;
+    const traitScieEstimeMm = bilan.nbPiecesTotal * epaisseurScie;
     const besoinNetTotalMm = bilan.longueurTotaleRequiseMm + traitScieEstimeMm;
 
     const soldeMatiereMm = matiereFournieMm - besoinNetTotalMm;

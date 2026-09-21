@@ -5,6 +5,7 @@ import { SelecteurMode } from '../common/SelecteurMode';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
 import { StorageService } from '../../services/storage';
 import {
@@ -222,17 +223,18 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
         }> = [];
 
         // 1. Découpe de l'article principal (ex: Caisson CT)
+        const paramsCT = getArticleCuttingParams(selectedArticle);
         const optimiseur = new OptimiseurCoupe1D({
-          longueurBarre: selectedArticle.longeur,
-          epaisseurScie: selectedArticle.lame,
-          refusMin: selectedArticle.refus_min,
-          refusMax: selectedArticle.refus_max,
+          longueurBarre: paramsCT.longueurBarre,
+          epaisseurScie: paramsCT.epaisseurScie,
+          refusMin: paramsCT.refusMin,
+          refusMax: paramsCT.refusMax,
           mode,
           poidsTemps
         });
 
         const piecesAvecDebord = pieces.map(p => ({
-          longueur: p.longueur + selectedArticle.debordement,
+          longueur: p.longueur + paramsCT.debordement,
           quantite: p.quantite,
           label: p.label,
           repere: p.repere || p.label,
@@ -263,11 +265,12 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
           if (sfArticle) {
             const mappedSheetNameSF = mapping[sfArticle.code_art] || null;
             const availableChutesSF = mappedSheetNameSF ? chutesBarres[mappedSheetNameSF] || [] : [];
+            const paramsSF = getArticleCuttingParams(sfArticle);
             const optSF = new OptimiseurCoupe1D({
-              longueurBarre: sfArticle.longeur || 6000,
-              epaisseurScie: sfArticle.lame || 4.5,
-              refusMin: sfArticle.refus_min ?? 300,
-              refusMax: sfArticle.refus_max ?? 1200,
+              longueurBarre: paramsSF.longueurBarre,
+              epaisseurScie: paramsSF.epaisseurScie,
+              refusMin: paramsSF.refusMin,
+              refusMax: paramsSF.refusMax,
               mode,
               poidsTemps
             });
@@ -276,7 +279,7 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
               // La sous-face porte le même repère que le caisson associé pour une parfaite traçabilité à la découpe
               const repSF = (p.repere || p.label || '').trim() || `C-${i + 1}`;
               return {
-                longueur: p.longueur + (sfArticle.debordement || 0),
+                longueur: p.longueur + paramsSF.debordement,
                 quantite: p.quantite,
                 label: `${repSF} (${sfArticle.designation})`,
                 repere: repSF,

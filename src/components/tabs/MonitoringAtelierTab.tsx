@@ -51,7 +51,9 @@ import {
   Check,
   FolderOpen,
   FileText,
-  Eye
+  Eye,
+  Pause,
+  Play
 } from 'lucide-react';
 
 interface MonitoringAtelierTabProps {
@@ -125,6 +127,80 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
     if (dossier) {
       setSelectedDossierToView(dossier);
       setIsDossierDetailOpen(true);
+    }
+  };
+
+  const handleTogglePauseCmd = async (cmd: LigneCommandeMonitoring) => {
+    const dossier = getLinkedDossierForCmd(cmd);
+    const nowIso = new Date().toISOString();
+    const isCurrentlyPaused = Boolean(cmd.estEnPause);
+    const newPauseState = !isCurrentlyPaused;
+
+    try {
+      if (dossier) {
+        const allDossiers = await StorageService.getDossiers();
+        const d = allDossiers.find(item => item.id === dossier.id);
+        if (d) {
+          d.estEnPause = newPauseState;
+          if (newPauseState) {
+            d.statut = 'EN_PAUSE';
+            d.datePause = nowIso;
+            d.motifPause = 'Commande mise en pause depuis le Monitoring Atelier';
+          } else {
+            // Reprise en tête de file : priorité immédiate et horodatage pour dépasser les autres commandes
+            d.statut = 'EN_COURS';
+            d.datePause = undefined;
+            d.motifPause = undefined;
+            d.estPrioritaire = true;
+            d.typePriorite = 'INSTANTANE';
+            d.motifPriorite = 'Reprise d\'activité - Priorité absolue en tête de file';
+            (d as any).repriseTimestamp = Date.now();
+          }
+          await StorageService.saveDossiers(allDossiers);
+        }
+      }
+
+      const allOfs = await StorageService.getSuivisOF();
+      const cmdRef = (cmd.refCommande || '').toLowerCase().trim();
+      const cmdId = cmd.dossierId;
+
+      const matchingOFs = allOfs.filter(o => {
+        if (cmdId && o.dossierId === cmdId) return true;
+        const oCmd = (o.numCommande || '').toLowerCase().trim();
+        return oCmd && (oCmd === cmdRef || oCmd.includes(cmdRef) || cmdRef.includes(oCmd));
+      });
+
+      for (const of of matchingOFs) {
+        if (newPauseState) {
+          await StorageService.mettreAJourStatutOF(
+            of.id,
+            'EN_PAUSE',
+            undefined,
+            true,
+            'Mis en pause depuis le monitoring'
+          );
+        } else {
+          // Reprise : réactivation de l'OF en priorité absolue en tête de file
+          const statutActif = of.lignesRetour && of.lignesRetour.length > 0 ? 'RETOUR_EN_ATTENTE' : 'EMIS';
+          const updatedOF: SuiviOF = {
+            ...of,
+            statut: statutActif,
+            estEnPause: false,
+            datePause: undefined,
+            motifPause: undefined,
+            estPrioritaire: true,
+            typePriorite: 'INSTANTANE',
+            motifPriorite: 'Reprise d\'activité - Priorité absolue en tête de file',
+            dateReprise: nowIso
+          };
+          (updatedOF as any).repriseTimestamp = Date.now();
+          await StorageService.upsertSuiviOF(updatedOF);
+        }
+      }
+
+      onRefreshData();
+    } catch (err) {
+      console.error('Erreur lors du basculement pause dans le monitoring:', err);
     }
   };
 
@@ -1235,9 +1311,9 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
                           <div className="text-[11px] text-slate-500">{cmd.donneurOrdre}</div>
                         </td>
                         <td className="py-2.5 px-3.5 font-sans">
-                          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                          <div className="font-bold text-slate-200 flex items-center gap-1.5">
                             <span>{cmd.famille === 'CAISSON' ? '📦' : cmd.famille === 'TABLIER' ? '🪟' : cmd.famille === 'PRECADRE' ? '🚪' : '🦟'}</span>
-                            <span>{cmd.statutBadgeLabel}</span>
+                            <span>{cmd.famille === 'CAISSON' ? 'Caisson' : cmd.famille === 'TABLIER' ? 'Tablier' : cmd.famille === 'PRECADRE' ? 'Précadre' : 'Moustiquaire'}</span>
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono">{cmd.typePrecision}</div>
                         </td>
@@ -1273,7 +1349,9 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
                         </td>
                         <td className="py-2.5 px-3.5 font-sans whitespace-nowrap">
                           <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
-                            cmd.statutAtelier === 'OF_CLOTURE'
+                            cmd.estEnPause || cmd.statutAtelier === 'EN_PAUSE'
+                              ? 'bg-amber-950/90 text-amber-300 border-amber-500/60 shadow-xs'
+                              : cmd.statutAtelier === 'OF_CLOTURE'
                               ? 'bg-slate-800 text-slate-300 border-slate-700'
                               : cmd.statutAtelier === 'PRET_LIVRAISON'
                               ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
@@ -1281,7 +1359,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
                               ? 'bg-amber-950 text-amber-300 border-amber-800'
                               : 'bg-sky-950 text-sky-300 border-sky-800'
                           }`}>
-                            {cmd.statutAtelier}
+                            {cmd.estEnPause || cmd.statutAtelier === 'EN_PAUSE' ? '⏸️ EN PAUSE' : cmd.statutAtelier}
                           </span>
                         </td>
                         <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
@@ -1310,21 +1388,32 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
                               </button>
                             )}
 
-                            {/* Accès poste atelier */}
+                            {/* Bouton Cmd Pause / Reprendre (Remplace Poste) */}
                             <button
                               type="button"
-                              onClick={() => {
-                                if (cmd.famille === 'CAISSON') onNavigateToTab('caisson');
-                                else if (cmd.famille === 'TABLIER') onNavigateToTab('tablier');
-                                else if (cmd.famille === 'PRECADRE') onNavigateToTab('precadre');
-                                else if (cmd.famille === 'MOUSTIQUAIRE') onNavigateToTab('moustiquaire');
-                                else onNavigateToTab('ordres');
-                              }}
-                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-sans font-semibold rounded-lg transition cursor-pointer inline-flex items-center gap-1 border border-slate-700"
-                              title="Ouvrir le poste de fabrication dédié"
+                              onClick={() => handleTogglePauseCmd(cmd)}
+                              className={`px-2.5 py-1.5 text-xs font-sans font-bold rounded-lg transition cursor-pointer inline-flex items-center gap-1.5 shadow-xs border ${
+                                cmd.estEnPause
+                                  ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/60 shadow-md shadow-emerald-950/40 animate-pulse'
+                                  : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/50 hover:border-amber-400'
+                              }`}
+                              title={
+                                cmd.estEnPause
+                                  ? 'Reprendre cette commande : la propulse en tête de file absolue et recale automatiquement les autres commandes'
+                                  : 'Mettre cette commande en pause (libère immédiatement le temps machine pour les autres commandes de la file)'
+                              }
                             >
-                              <span>Poste</span>
-                              <ExternalLink className="w-3 h-3 text-slate-400" />
+                              {cmd.estEnPause ? (
+                                <>
+                                  <Play className="w-3.5 h-3.5 fill-current text-emerald-400" />
+                                  <span>Reprendre (Tête de file)</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Pause className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>Cmd Pause</span>
+                                </>
+                              )}
                             </button>
                           </div>
                         </td>

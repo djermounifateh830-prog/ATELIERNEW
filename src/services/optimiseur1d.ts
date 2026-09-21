@@ -86,7 +86,7 @@ export class OptimiseurCoupe1D {
     this.longueurBarre = Number.isFinite(Number(options.longueurBarre)) && Number(options.longueurBarre) > 0 ? Number(options.longueurBarre) : 6000;
     this.epaisseurScie = Number.isFinite(Number(options.epaisseurScie)) && Number(options.epaisseurScie) >= 0 ? Number(options.epaisseurScie) : 4.0;
     this.refusMin = Number.isFinite(Number(options.refusMin)) && Number(options.refusMin) > 0 ? Number(options.refusMin) : 300;
-    this.refusMax = Number.isFinite(Number(options.refusMax)) && Number(options.refusMax) > 0 ? Number(options.refusMax) : 500;
+    this.refusMax = Number.isFinite(Number(options.refusMax)) && Number(options.refusMax) > 0 ? Number(options.refusMax) : 1200;
     // Si l'utilisateur définit un seuil de déchet supérieur au seuil de stock, on aligne refusMin
     if (this.refusMin > this.refusMax) {
       this.refusMin = this.refusMax;

@@ -6,6 +6,7 @@ import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { calculerTablier, fusionnerCommandesTablier } from '../../services/moteurTablier';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
 import {
   Plus,
@@ -292,11 +293,12 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       try {
         const poolLames = fusionnerCommandesTablier(tabliers.map(t => calculerTablier(t)));
 
+        const params = getArticleCuttingParams(selectedArticle);
         const optimiseur = new OptimiseurCoupe1D({
-          longueurBarre: selectedArticle.longeur,
-          epaisseurScie: selectedArticle.lame,
-          refusMin: selectedArticle.refus_min,
-          refusMax: selectedArticle.refus_max,
+          longueurBarre: params.longueurBarre,
+          epaisseurScie: params.epaisseurScie,
+          refusMin: params.refusMin,
+          refusMax: params.refusMax,
           mode,
           poidsTemps
         });

@@ -414,11 +414,12 @@ export function optimiserLotMoustiquaires(
         // Gestion de la mise à jour du pool de chutes
         if (meilleureEval.actionReste === 'NOUVELLE_CHUTE_STOCK') {
           // La chute débitée laisse un reste >= longueurMinChuteConserveeMm (ex: >= 1m)
-          // Ce reste reste disponible dans le pool pour une autre fenêtre de la commande !
+          // Ce reste conserve la largeur en plis de la chute d'origine (on ne coupe que la dimension fixe)
+          // et reste disponible dans le pool pour une autre fenêtre de la commande !
           poolChutes[bestIdx] = {
             id: `${matchedChute.id || 'm'}-rel-${u + 1}`,
             dimension_fixe: meilleureEval.deltaLongueur,
-            plis: calc.nb_plis_requis
+            plis: matchedChute.plis
           };
         } else {
           // Déchet jeté (<= 100mm) : chute entièrement consommée

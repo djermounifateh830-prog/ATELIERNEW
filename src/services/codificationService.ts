@@ -43,7 +43,7 @@ export function detecterAgence(
   if (ref.startsWith('S-C') || ref.startsWith('SC')) {
     return { code: 'SOMADAL-CONST', nom: 'SOMADAL Constantine', type: 'SOMADAL', badgeColor: 'text-sky-300', badgeBg: 'bg-sky-500/20 border-sky-500/30', description: 'Client Pro (Constantine)' };
   }
-  if (ref.startsWith('A-') || ref.startsWith('C-A') || ref.startsWith('CA')) {
+  if (ref.startsWith('A-') || ref.startsWith('C-A') || ref.startsWith('CA') || /^A\d/i.test(ref)) {
     return { code: 'CRISTAL-ALGER', nom: 'CRISTAL Alger', type: 'CRISTAL', badgeColor: 'text-purple-300', badgeBg: 'bg-purple-500/20 border-purple-500/30', description: 'Showroom (Alger)' };
   }
   if (ref.startsWith('O-') || ref.startsWith('C-O') || ref.startsWith('CO')) {

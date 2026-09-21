@@ -83,6 +83,7 @@ export interface LigneCommandeMonitoring {
   estPrioritaire?: boolean;
   estEnPause?: boolean;
   motifPause?: string;
+  repriseTimestamp?: number;
   famille: FamilleProduit;
   statutAtelier: 'EN_ATTENTE_COUPE' | 'OF_EMIS' | 'COUPE_EN_COURS' | 'RETOUR_SAISI' | 'PRET_LIVRAISON' | 'OF_CLOTURE' | 'FABRIQUE' | 'EN_PAUSE';
   statutBadgeLabel: string;
@@ -339,6 +340,36 @@ export class MonitoringService {
       return r.trim().toLowerCase().replace(/^(cmd|dossier|of)[-_ ]*/, '');
     };
 
+    const doesOfMatchCommande = (
+      of: SuiviOF,
+      dossier: DossierCommandeGlobal,
+      cmdRef: string,
+      famille: FamilleProduit
+    ): boolean => {
+      const ofFam = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) as FamilleProduit;
+      if (ofFam !== famille) return false;
+
+      const ofRef = normalizeRef(of.numCommande);
+      const cmdRefNorm = normalizeRef(cmdRef);
+      const ofCode = normalizeRef(of.codeOF);
+      const ofId = normalizeRef(of.id);
+
+      if (cmdRefNorm) {
+        if (ofRef === cmdRefNorm || ofCode === cmdRefNorm || ofId === cmdRefNorm) return true;
+        if (ofRef.length >= 3 && cmdRefNorm.length >= 3 && (ofRef.startsWith(cmdRefNorm) || cmdRefNorm.startsWith(ofRef))) {
+          return true;
+        }
+      }
+
+      if (of.dossierId && dossier.id && of.dossierId === dossier.id) {
+        if (!ofRef || ofRef === cmdRefNorm || ofRef === normalizeRef(dossier.refCommande)) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
     const doesOfMatchDossier = (of: SuiviOF, dossier: DossierCommandeGlobal, famille: FamilleProduit): boolean => {
       const ofFam = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) as FamilleProduit;
       if (ofFam !== famille) return false;
@@ -361,7 +392,7 @@ export class MonitoringService {
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // 1. EXTRACTION ET VENTILATION DES CAISSONS
+    // 1. EXTRACTION ET VENTILATION DES CAISSONS (PAR COMMANDE RÉELLE)
     // ────────────────────────────────────────────────────────────────────────
     const lignesCommandesCaissons: LigneCommandeMonitoring[] = [];
     const caissonsCommandesSet = new Set<string>();
@@ -369,99 +400,136 @@ export class MonitoringService {
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesCaissons || dossier.articlesCaissons.length === 0) return;
 
-      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'CAISSON'));
-      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
-        return;
-      }
-
-      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal: string = '';
-      const sousTypesSet = new Set<string>();
-      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+      // Regrouper les articles de caisson par référence de commande (refCommande)
+      const mapCmds = new Map<string, typeof dossier.articlesCaissons>();
 
       dossier.articlesCaissons.forEach(c => {
-        const qte = Number(c.quantite) || 1;
-        totalPiecesCeDossier += qte;
+        let ref = (c.refCommande || '').trim();
+        if (!ref && c.isSousFaceSeule && c.sfRefCommande) {
+          ref = c.sfRefCommande.trim();
+        }
+        if (!ref && dossier.numCommandeCaisson) {
+          ref = dossier.numCommandeCaisson.trim();
+        }
+        if (!ref && c.isSousFaceSeule && dossier.numCommandeSousFace) {
+          ref = dossier.numCommandeSousFace.trim();
+        }
+        if (!ref) {
+          ref = (dossier.refCommande || dossier.id || 'CMD').trim();
+        }
 
-        const art = c.articleCode ? articleMap.get(c.articleCode.toUpperCase()) : undefined;
-        const classification = this.classifierCaisson(c.articleDesignation, c.sfArticleDesignation, art?.hauteur);
-        const stKey = classification.cle === '25' ? 'CAISSON_25' : classification.cle === '30' ? 'CAISSON_30' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE';
-        
-        const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
-        existingSt.nbPieces += qte;
-        typesCountMap.set(stKey, existingSt);
-
-        sousTypesSet.add(stKey);
-        if (!sousTypePrincipal) sousTypePrincipal = classification.label;
-
-        const nomProd = c.articleDesignation || c.sfArticleDesignation || 'Caisson';
-        detailsDescriptions.push(`${qte}x ${nomProd} (${c.longueur || 0}mm)`);
+        const currentList = mapCmds.get(ref) || [];
+        currentList.push(c);
+        mapCmds.set(ref, currentList);
       });
 
-      if (totalPiecesCeDossier <= 0 && matchingOF) {
-        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
-      }
-
-      if (totalPiecesCeDossier <= 0) return;
-      caissonsCommandesSet.add(ref);
-
-      const sousTypesList = Array.from(sousTypesSet);
-      const primaryKey = sousTypePrincipal.includes('30')
-        ? 'CAISSON_30'
-        : sousTypePrincipal.includes('25')
-        ? 'CAISSON_25'
-        : sousTypePrincipal.includes('40')
-        ? 'CAISSON_40'
-        : (sousTypesList[0] || 'CAISSON_AUTRE');
-
-      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
-      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
-
-      lignesCommandesCaissons.push({
-        id: `DOS-CAISS-${dossier.id}`,
-        dossierId: dossier.id,
-        refCommande: ref,
-        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
-        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'CAISSON',
-        estPrioritaire,
-        estEnPause,
-        motifPause: matchingOF?.motifPause || dossier.motifPause,
-        statutAtelier: estEnPause
-          ? 'EN_PAUSE'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: estEnPause
-          ? 'En Pause'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Caisson',
-        sousTypeCle: primaryKey,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
-        detailsSousTypes: Array.from(typesCountMap.values()),
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} caissons`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai: {
-          statutDelai: 'DANS_LES_TEMPS',
-          joursDeRetard: 0,
-          estDepasse: false,
-          estRetardCritique: false,
-          texteAlerte: 'Dans les temps',
-          badgeLabel: '✓ Dans les délais',
-          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
-          ligneClasses: '',
-          flagEmoji: '✓'
+      mapCmds.forEach((articlesCmd, cmdRef) => {
+        const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'CAISSON'));
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+          return;
         }
+
+        let totalPiecesCetteCommande = 0;
+        const detailsDescriptions: string[] = [];
+        const sousTypesSet = new Set<string>();
+        const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+        articlesCmd.forEach(c => {
+          // Si caisson avec sous-face : la sous-face est incluse dans le caisson (non doublée)
+          // Si sous-face seule : comptabilisée comme unité caisson
+          const qte = Math.max(1, Number(c.quantite) || 1);
+          totalPiecesCetteCommande += qte;
+
+          const art = c.articleCode ? articleMap.get(c.articleCode.toUpperCase()) : undefined;
+          const classification = this.classifierCaisson(c.articleDesignation, c.sfArticleDesignation, art?.hauteur);
+          const stKey = classification.cle === '25' ? 'CAISSON_25' : classification.cle === '30' ? 'CAISSON_30' : classification.cle === '40' ? 'CAISSON_40' : 'CAISSON_AUTRE';
+
+          const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
+          existingSt.nbPieces += qte;
+          typesCountMap.set(stKey, existingSt);
+
+          sousTypesSet.add(stKey);
+
+          const nomProd = c.isSousFaceSeule
+            ? (c.sfArticleDesignation || `Sous-face ${classification.cle}`)
+            : (c.articleDesignation || `Caisson ${classification.cle}`);
+          detailsDescriptions.push(`${qte}x ${nomProd} (${c.longueur || 0}mm)`);
+        });
+
+        if (totalPiecesCetteCommande <= 0 && matchingOF) {
+          totalPiecesCetteCommande = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
+        }
+        if (totalPiecesCetteCommande <= 0) return;
+
+        caissonsCommandesSet.add(cmdRef);
+
+        const sousTypesList = Array.from(sousTypesSet);
+        const detailsSousTypes = Array.from(typesCountMap.values());
+
+        let sousTypePrecision = '';
+        if (detailsSousTypes.length === 1) {
+          sousTypePrecision = detailsSousTypes[0].label;
+        } else {
+          sousTypePrecision = detailsSousTypes.map(d => `${d.label.replace('Caisson ', 'C')}: ${d.nbPieces} pcs`).join(', ');
+        }
+
+        const primaryKey = sousTypesList.includes('CAISSON_30')
+          ? 'CAISSON_30'
+          : sousTypesList.includes('CAISSON_25')
+          ? 'CAISSON_25'
+          : sousTypesList.includes('CAISSON_40')
+          ? 'CAISSON_40'
+          : (sousTypesList[0] || 'CAISSON_AUTRE');
+
+        const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
+        const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+        const repriseTimestamp = (dossier as any).repriseTimestamp || (matchingOF as any)?.repriseTimestamp;
+
+        lignesCommandesCaissons.push({
+          id: `CMD-CAISS-${dossier.id}-${cmdRef}`,
+          dossierId: dossier.id,
+          refCommande: cmdRef,
+          client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+          donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+          dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+          dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+          famille: 'CAISSON',
+          estPrioritaire,
+          estEnPause,
+          motifPause: matchingOF?.motifPause || dossier.motifPause,
+          repriseTimestamp,
+          statutAtelier: estEnPause
+            ? 'EN_PAUSE'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+            : 'EN_ATTENTE_COUPE',
+          statutBadgeLabel: estEnPause
+            ? 'En Pause'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
+            : 'En Attente Découpe',
+          typePrecision: sousTypePrecision || 'Caisson',
+          sousTypeCle: primaryKey,
+          sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+          detailsSousTypes,
+          detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCetteCommande} caissons`,
+          quantiteTotalPieces: totalPiecesCetteCommande,
+          dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+          dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+          ofCode: matchingOF?.codeOF,
+          ofStatut: matchingOF?.statut,
+          alerteDelai: {
+            statutDelai: 'DANS_LES_TEMPS',
+            joursDeRetard: 0,
+            estDepasse: false,
+            estRetardCritique: false,
+            texteAlerte: 'Dans les temps',
+            badgeLabel: '✓ Dans les délais',
+            badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+            ligneClasses: '',
+            flagEmoji: '✓'
+          }
+        });
       });
     });
 
@@ -510,6 +578,7 @@ export class MonitoringService {
         estPrioritaire: Boolean(of.estPrioritaire),
         estEnPause,
         motifPause: of.motifPause,
+        repriseTimestamp: (of as any).repriseTimestamp,
         statutAtelier: estEnPause ? 'EN_PAUSE' : of.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS',
         statutBadgeLabel: estEnPause ? 'En Pause' : of.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)',
         typePrecision: classification.label,
@@ -546,7 +615,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
-      dossierId: l.dossierId
+      dossierId: l.dossierId,
+      repriseTimestamp: l.repriseTimestamp
     }));
     const simResCaissons = DelaisProductionService.simulerPlanningFamille('CAISSON', simCaissonItems, params);
 
@@ -644,7 +714,7 @@ export class MonitoringService {
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // 2. EXTRACTION ET VENTILATION DES TABLIERS (43, 55...)
+    // 2. EXTRACTION ET VENTILATION DES TABLIERS (PAR COMMANDE RÉELLE)
     // ────────────────────────────────────────────────────────────────────────
     const lignesCommandesTabliers: LigneCommandeMonitoring[] = [];
     const tabliersCommandesSet = new Set<string>();
@@ -652,96 +722,122 @@ export class MonitoringService {
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesTabliers || dossier.articlesTabliers.length === 0) return;
 
-      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'TABLIER'));
-      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
-        return;
-      }
-
-      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal: string = '';
-      const sousTypesSet = new Set<string>();
-      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+      const mapCmds = new Map<string, typeof dossier.articlesTabliers>();
 
       dossier.articlesTabliers.forEach(t => {
-        const qte = Number(t.quantite) || 1;
-        totalPiecesCeDossier += qte;
+        let ref = (t.refCommande || '').trim();
+        if (!ref && dossier.numCommandeTablier) {
+          ref = dossier.numCommandeTablier.trim();
+        }
+        if (!ref) {
+          ref = (dossier.refCommande || dossier.id || 'CMD').trim();
+        }
 
-        const classification = this.classifierTablier(t.hauteur_lame_tablier, t.articleDesignation);
-        const stKey = classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE';
-        
-        const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
-        existingSt.nbPieces += qte;
-        typesCountMap.set(stKey, existingSt);
-
-        sousTypesSet.add(stKey);
-        if (!sousTypePrincipal) sousTypePrincipal = classification.label;
-
-        const nomProd = t.articleDesignation || `Tablier Lame ${t.hauteur_lame_tablier || 43}mm`;
-        detailsDescriptions.push(`${qte}x ${nomProd} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
+        const currentList = mapCmds.get(ref) || [];
+        currentList.push(t);
+        mapCmds.set(ref, currentList);
       });
 
-      if (totalPiecesCeDossier <= 0 && matchingOF) {
-        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
-      }
-
-      if (totalPiecesCeDossier <= 0) return;
-      tabliersCommandesSet.add(ref);
-
-      const sousTypesList = Array.from(sousTypesSet);
-      const primaryKey = sousTypePrincipal.includes('55')
-        ? 'TABLIER_55'
-        : sousTypePrincipal.includes('43')
-        ? 'TABLIER_43'
-        : (sousTypesList[0] || 'TABLIER_AUTRE');
-
-      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
-      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
-
-      lignesCommandesTabliers.push({
-        id: `DOS-TABL-${dossier.id}`,
-        dossierId: dossier.id,
-        refCommande: ref,
-        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
-        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'TABLIER',
-        estPrioritaire,
-        estEnPause,
-        motifPause: matchingOF?.motifPause || dossier.motifPause,
-        statutAtelier: estEnPause
-          ? 'EN_PAUSE'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: estEnPause
-          ? 'En Pause'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Assemblage)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Tablier',
-        sousTypeCle: primaryKey,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
-        detailsSousTypes: Array.from(typesCountMap.values()),
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} tabliers`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai: {
-          statutDelai: 'DANS_LES_TEMPS',
-          joursDeRetard: 0,
-          estDepasse: false,
-          estRetardCritique: false,
-          texteAlerte: 'Dans les temps',
-          badgeLabel: '✓ Dans les délais',
-          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
-          ligneClasses: '',
-          flagEmoji: '✓'
+      mapCmds.forEach((articlesCmd, cmdRef) => {
+        const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'TABLIER'));
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+          return;
         }
+
+        let totalPiecesCetteCommande = 0;
+        const detailsDescriptions: string[] = [];
+        const sousTypesSet = new Set<string>();
+        const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+        articlesCmd.forEach(t => {
+          const qte = Math.max(1, Number(t.quantite) || 1);
+          totalPiecesCetteCommande += qte;
+
+          const classification = this.classifierTablier(t.hauteur_lame_tablier, t.articleDesignation);
+          const stKey = classification.cle === '43' ? 'TABLIER_43' : classification.cle === '55' ? 'TABLIER_55' : 'TABLIER_AUTRE';
+
+          const existingSt = typesCountMap.get(stKey) || { cle: stKey, label: classification.label, nbPieces: 0 };
+          existingSt.nbPieces += qte;
+          typesCountMap.set(stKey, existingSt);
+
+          sousTypesSet.add(stKey);
+
+          const nomProd = t.articleDesignation || `Tablier Lame ${t.hauteur_lame_tablier || 43}mm`;
+          detailsDescriptions.push(`${qte}x ${nomProd} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
+        });
+
+        if (totalPiecesCetteCommande <= 0 && matchingOF) {
+          totalPiecesCetteCommande = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
+        }
+        if (totalPiecesCetteCommande <= 0) return;
+
+        tabliersCommandesSet.add(cmdRef);
+
+        const sousTypesList = Array.from(sousTypesSet);
+        const detailsSousTypes = Array.from(typesCountMap.values());
+
+        let sousTypePrecision = '';
+        if (detailsSousTypes.length === 1) {
+          sousTypePrecision = detailsSousTypes[0].label;
+        } else {
+          sousTypePrecision = detailsSousTypes.map(d => `${d.label.replace('Lame ', 'L')}: ${d.nbPieces} pcs`).join(', ');
+        }
+
+        const primaryKey = sousTypesList.includes('TABLIER_55')
+          ? 'TABLIER_55'
+          : sousTypesList.includes('TABLIER_43')
+          ? 'TABLIER_43'
+          : (sousTypesList[0] || 'TABLIER_AUTRE');
+
+        const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
+        const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+        const repriseTimestamp = (dossier as any).repriseTimestamp || (matchingOF as any)?.repriseTimestamp;
+
+        lignesCommandesTabliers.push({
+          id: `CMD-TABL-${dossier.id}-${cmdRef}`,
+          dossierId: dossier.id,
+          refCommande: cmdRef,
+          client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+          donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+          dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+          dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+          famille: 'TABLIER',
+          estPrioritaire,
+          estEnPause,
+          motifPause: matchingOF?.motifPause || dossier.motifPause,
+          repriseTimestamp,
+          statutAtelier: estEnPause
+            ? 'EN_PAUSE'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+            : 'EN_ATTENTE_COUPE',
+          statutBadgeLabel: estEnPause
+            ? 'En Pause'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Assemblage)')
+            : 'En Attente Découpe',
+          typePrecision: sousTypePrecision || 'Tablier',
+          sousTypeCle: primaryKey,
+          sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+          detailsSousTypes,
+          detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCetteCommande} tabliers`,
+          quantiteTotalPieces: totalPiecesCetteCommande,
+          dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+          dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+          ofCode: matchingOF?.codeOF,
+          ofStatut: matchingOF?.statut,
+          alerteDelai: {
+            statutDelai: 'DANS_LES_TEMPS',
+            joursDeRetard: 0,
+            estDepasse: false,
+            estRetardCritique: false,
+            texteAlerte: 'Dans les temps',
+            badgeLabel: '✓ Dans les délais',
+            badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+            ligneClasses: '',
+            flagEmoji: '✓'
+          }
+        });
       });
     });
 
@@ -826,7 +922,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
-      dossierId: l.dossierId
+      dossierId: l.dossierId,
+      repriseTimestamp: l.repriseTimestamp
     }));
     const simResTabliers = DelaisProductionService.simulerPlanningFamille('TABLIER', simTablierItems, params);
 
@@ -910,7 +1007,7 @@ export class MonitoringService {
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // 3. PRÉCADRES (VENTILATION DÉTAILLÉE PAR TYPES)
+    // 3. PRÉCADRES (VENTILATION DÉTAILLÉE PAR TYPES ET COMMANDE RÉELLE)
     // ────────────────────────────────────────────────────────────────────────
     const precadresCommandesSet = new Set<string>();
     const lignesCommandesPrecadres: LigneCommandeMonitoring[] = [];
@@ -918,98 +1015,122 @@ export class MonitoringService {
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesPrecadres || dossier.articlesPrecadres.length === 0) return;
 
-      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'PRECADRE'));
-      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
-        return;
-      }
-
-      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal = '';
-      let sousTypeCode = 'PRECADRE_36';
-      const sousTypesSet = new Set<string>();
-      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+      const mapCmds = new Map<string, typeof dossier.articlesPrecadres>();
 
       dossier.articlesPrecadres.forEach(p => {
-        const q = Number(p.quantite) || 1;
-        totalPiecesCeDossier += q;
-
-        const classification = this.classifierPrecadre(
-          p.articleDesignation,
-          p.articleCode,
-          p.typePrecadre,
-          p.hauteur
-        );
-
-        const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
-        existingSt.nbPieces += q;
-        typesCountMap.set(classification.codeSousType, existingSt);
-
-        sousTypesSet.add(classification.codeSousType);
-        if (!sousTypePrincipal) {
-          sousTypePrincipal = classification.label;
-          sousTypeCode = classification.codeSousType;
+        let ref = (p.refCommande || '').trim();
+        if (!ref && dossier.numCommandePrecadre) {
+          ref = dossier.numCommandePrecadre.trim();
+        }
+        if (!ref) {
+          ref = (dossier.refCommande || dossier.id || 'CMD').trim();
         }
 
-        const nomProd = p.articleDesignation || `Précadre ${classification.cle}mm`;
-        detailsDescriptions.push(`${q}x ${nomProd} (${p.largeur || 0}x${p.hauteur || 0}mm)`);
+        const currentList = mapCmds.get(ref) || [];
+        currentList.push(p);
+        mapCmds.set(ref, currentList);
       });
 
-      if (totalPiecesCeDossier <= 0 && matchingOF) {
-        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
-      }
-
-      if (totalPiecesCeDossier <= 0) return;
-      precadresCommandesSet.add(ref);
-
-      const sousTypesList = Array.from(sousTypesSet);
-      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
-      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
-
-      lignesCommandesPrecadres.push({
-        id: `DOS-PREC-${dossier.id}`,
-        dossierId: dossier.id,
-        refCommande: ref,
-        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
-        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'PRECADRE',
-        estPrioritaire,
-        estEnPause,
-        motifPause: matchingOF?.motifPause || dossier.motifPause,
-        statutAtelier: estEnPause
-          ? 'EN_PAUSE'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: estEnPause
-          ? 'En Pause'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Précadre',
-        sousTypeCle: sousTypeCode,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
-        detailsSousTypes: Array.from(typesCountMap.values()),
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} précadres`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai: {
-          statutDelai: 'DANS_LES_TEMPS',
-          joursDeRetard: 0,
-          estDepasse: false,
-          estRetardCritique: false,
-          texteAlerte: 'Dans les temps',
-          badgeLabel: '✓ Dans les délais',
-          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
-          ligneClasses: '',
-          flagEmoji: '✓'
+      mapCmds.forEach((articlesCmd, cmdRef) => {
+        const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'PRECADRE'));
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+          return;
         }
+
+        let totalPiecesCetteCommande = 0;
+        const detailsDescriptions: string[] = [];
+        const sousTypesSet = new Set<string>();
+        const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+        articlesCmd.forEach(p => {
+          const q = Math.max(1, Number(p.quantite) || 1);
+          totalPiecesCetteCommande += q;
+
+          const classification = this.classifierPrecadre(
+            p.articleDesignation,
+            p.articleCode,
+            p.typePrecadre,
+            p.hauteur
+          );
+
+          const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
+          existingSt.nbPieces += q;
+          typesCountMap.set(classification.codeSousType, existingSt);
+
+          sousTypesSet.add(classification.codeSousType);
+
+          const nomProd = p.articleDesignation || `Précadre ${classification.cle}mm`;
+          detailsDescriptions.push(`${q}x ${nomProd} (${p.largeur || 0}x${p.hauteur || 0}mm)`);
+        });
+
+        if (totalPiecesCetteCommande <= 0 && matchingOF) {
+          totalPiecesCetteCommande = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
+        }
+        if (totalPiecesCetteCommande <= 0) return;
+
+        precadresCommandesSet.add(cmdRef);
+
+        const sousTypesList = Array.from(sousTypesSet);
+        const detailsSousTypes = Array.from(typesCountMap.values());
+
+        let sousTypePrecision = '';
+        if (detailsSousTypes.length === 1) {
+          sousTypePrecision = detailsSousTypes[0].label;
+        } else {
+          sousTypePrecision = detailsSousTypes.map(d => `${d.label}: ${d.nbPieces} pcs`).join(', ');
+        }
+
+        const primaryKey = sousTypesList[0] || 'PRECADRE_36';
+
+        const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
+        const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+        const repriseTimestamp = (dossier as any).repriseTimestamp || (matchingOF as any)?.repriseTimestamp;
+
+        lignesCommandesPrecadres.push({
+          id: `CMD-PREC-${dossier.id}-${cmdRef}`,
+          dossierId: dossier.id,
+          refCommande: cmdRef,
+          client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+          donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+          dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+          dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+          famille: 'PRECADRE',
+          estPrioritaire,
+          estEnPause,
+          motifPause: matchingOF?.motifPause || dossier.motifPause,
+          repriseTimestamp,
+          statutAtelier: estEnPause
+            ? 'EN_PAUSE'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+            : 'EN_ATTENTE_COUPE',
+          statutBadgeLabel: estEnPause
+            ? 'En Pause'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
+            : 'En Attente Découpe',
+          typePrecision: sousTypePrecision || 'Précadre',
+          sousTypeCle: primaryKey,
+          sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+          detailsSousTypes,
+          detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCetteCommande} précadres`,
+          quantiteTotalPieces: totalPiecesCetteCommande,
+          dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+          dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+          ofCode: matchingOF?.codeOF,
+          ofStatut: matchingOF?.statut,
+          alerteDelai: {
+            statutDelai: 'DANS_LES_TEMPS',
+            joursDeRetard: 0,
+            estDepasse: false,
+            estRetardCritique: false,
+            texteAlerte: 'Dans les temps',
+            badgeLabel: '✓ Dans les délais',
+            badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+            ligneClasses: '',
+            flagEmoji: '✓'
+          }
+        });
       });
     });
 
@@ -1093,7 +1214,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
-      dossierId: l.dossierId
+      dossierId: l.dossierId,
+      repriseTimestamp: l.repriseTimestamp
     }));
     const simResPrecadres = DelaisProductionService.simulerPlanningFamille('PRECADRE', simPrecadreItems, params);
 
@@ -1177,7 +1299,7 @@ export class MonitoringService {
     };
 
     // ────────────────────────────────────────────────────────────────────────
-    // 4. EXTRACTION ET VENTILATION DES MOUSTIQUAIRES (ENROULABLES, PLISSÉES...)
+    // 4. EXTRACTION ET VENTILATION DES MOUSTIQUAIRES (PAR COMMANDE RÉELLE)
     // ────────────────────────────────────────────────────────────────────────
     const mstqCommandesSet = new Set<string>();
     const lignesCommandesMstq: LigneCommandeMonitoring[] = [];
@@ -1185,97 +1307,121 @@ export class MonitoringService {
     dossiersActifs.forEach(dossier => {
       if (!dossier.articlesMoustiquaires || dossier.articlesMoustiquaires.length === 0) return;
 
-      const matchingOF = suivisOF.find(o => doesOfMatchDossier(o, dossier, 'MOUSTIQUAIRE'));
-      if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
-        return;
-      }
-
-      const ref = dossier.refCommande || (matchingOF ? matchingOF.numCommande : '') || dossier.id;
-      let totalPiecesCeDossier = 0;
-      const detailsDescriptions: string[] = [];
-      let sousTypePrincipal = '';
-      let sousTypeCode = 'MSTQ_ENROULABLE';
-      const sousTypesSet = new Set<string>();
-      const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+      const mapCmds = new Map<string, typeof dossier.articlesMoustiquaires>();
 
       dossier.articlesMoustiquaires.forEach(m => {
-        const q = Number(m.quantite) || 1;
-        totalPiecesCeDossier += q;
-
-        const classification = this.classifierMoustiquaire(
-          m.typeOuverture,
-          m.articleDesignation,
-          m.modele
-        );
-
-        const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
-        existingSt.nbPieces += q;
-        typesCountMap.set(classification.codeSousType, existingSt);
-
-        sousTypesSet.add(classification.codeSousType);
-        if (!sousTypePrincipal) {
-          sousTypePrincipal = classification.label;
-          sousTypeCode = classification.codeSousType;
+        let ref = (m.refCommande || '').trim();
+        if (!ref && dossier.numCommandeMoustiquaire) {
+          ref = dossier.numCommandeMoustiquaire.trim();
+        }
+        if (!ref) {
+          ref = (dossier.refCommande || dossier.id || 'CMD').trim();
         }
 
-        const nomProd = m.articleDesignation || classification.label;
-        detailsDescriptions.push(`${q}x ${nomProd} (${m.largeur || 0}x${m.hauteur || 0}mm)`);
+        const currentList = mapCmds.get(ref) || [];
+        currentList.push(m);
+        mapCmds.set(ref, currentList);
       });
 
-      if (totalPiecesCeDossier <= 0 && matchingOF) {
-        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
-      }
-
-      if (totalPiecesCeDossier <= 0) return;
-      mstqCommandesSet.add(ref);
-
-      const sousTypesList = Array.from(sousTypesSet);
-      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
-      const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
-
-      lignesCommandesMstq.push({
-        id: `DOS-MSTQ-${dossier.id}`,
-        dossierId: dossier.id,
-        refCommande: ref,
-        client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
-        donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
-        dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
-        dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
-        famille: 'MOUSTIQUAIRE',
-        estPrioritaire,
-        estEnPause,
-        motifPause: matchingOF?.motifPause || dossier.motifPause,
-        statutAtelier: estEnPause
-          ? 'EN_PAUSE'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
-          : 'EN_ATTENTE_COUPE',
-        statutBadgeLabel: estEnPause
-          ? 'En Pause'
-          : matchingOF
-          ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
-          : 'En Attente Découpe',
-        typePrecision: sousTypePrincipal || 'Moustiquaire',
-        sousTypeCle: sousTypeCode,
-        sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [sousTypeCode],
-        detailsSousTypes: Array.from(typesCountMap.values()),
-        detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCeDossier} moustiquaires`,
-        quantiteTotalPieces: totalPiecesCeDossier,
-        dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
-        dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
-        ofCode: matchingOF?.codeOF,
-        ofStatut: matchingOF?.statut,
-        alerteDelai: {
-          statutDelai: 'DANS_LES_TEMPS',
-          joursDeRetard: 0,
-          estDepasse: false,
-          estRetardCritique: false,
-          texteAlerte: 'Dans les temps',
-          badgeLabel: '✓ Dans les délais',
-          badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
-          ligneClasses: '',
-          flagEmoji: '✓'
+      mapCmds.forEach((articlesCmd, cmdRef) => {
+        const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'MOUSTIQUAIRE'));
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+          return;
         }
+
+        let totalPiecesCetteCommande = 0;
+        const detailsDescriptions: string[] = [];
+        const sousTypesSet = new Set<string>();
+        const typesCountMap = new Map<string, { cle: string; label: string; nbPieces: number }>();
+
+        articlesCmd.forEach(m => {
+          const q = Math.max(1, Number(m.quantite) || 1);
+          totalPiecesCetteCommande += q;
+
+          const classification = this.classifierMoustiquaire(
+            m.typeOuverture,
+            m.articleDesignation,
+            m.modele
+          );
+
+          const existingSt = typesCountMap.get(classification.codeSousType) || { cle: classification.codeSousType, label: classification.label, nbPieces: 0 };
+          existingSt.nbPieces += q;
+          typesCountMap.set(classification.codeSousType, existingSt);
+
+          sousTypesSet.add(classification.codeSousType);
+
+          const nomProd = m.articleDesignation || classification.label;
+          detailsDescriptions.push(`${q}x ${nomProd} (${m.largeur || 0}x${m.hauteur || 0}mm)`);
+        });
+
+        if (totalPiecesCetteCommande <= 0 && matchingOF) {
+          totalPiecesCetteCommande = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
+        }
+        if (totalPiecesCetteCommande <= 0) return;
+
+        mstqCommandesSet.add(cmdRef);
+
+        const sousTypesList = Array.from(sousTypesSet);
+        const detailsSousTypes = Array.from(typesCountMap.values());
+
+        let sousTypePrecision = '';
+        if (detailsSousTypes.length === 1) {
+          sousTypePrecision = detailsSousTypes[0].label;
+        } else {
+          sousTypePrecision = detailsSousTypes.map(d => `${d.label}: ${d.nbPieces} pcs`).join(', ');
+        }
+
+        const primaryKey = sousTypesList[0] || 'MSTQ_ENROULABLE';
+
+        const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
+        const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
+        const repriseTimestamp = (dossier as any).repriseTimestamp || (matchingOF as any)?.repriseTimestamp;
+
+        lignesCommandesMstq.push({
+          id: `CMD-MSTQ-${dossier.id}-${cmdRef}`,
+          dossierId: dossier.id,
+          refCommande: cmdRef,
+          client: dossier.nomClientFinal || matchingOF?.nomClient || 'Client Particulier',
+          donneurOrdre: dossier.donneurOrdre || matchingOF?.donneurOrdre || 'Atelier',
+          dateCommande: dossier.dateCommande || matchingOF?.dateEmission || new Date().toLocaleDateString('fr-FR'),
+          dateEmission: matchingOF?.dateEmission || dossier.dateCommande || new Date().toLocaleDateString('fr-FR'),
+          famille: 'MOUSTIQUAIRE',
+          estPrioritaire,
+          estEnPause,
+          motifPause: matchingOF?.motifPause || dossier.motifPause,
+          repriseTimestamp,
+          statutAtelier: estEnPause
+            ? 'EN_PAUSE'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'RETOUR_SAISI' : 'OF_EMIS')
+            : 'EN_ATTENTE_COUPE',
+          statutBadgeLabel: estEnPause
+            ? 'En Pause'
+            : matchingOF
+            ? (matchingOF.statut === 'RETOUR_EN_ATTENTE' ? 'Retour Saisi' : 'OF Émis (En Coupe)')
+            : 'En Attente Découpe',
+          typePrecision: sousTypePrecision || 'Moustiquaire',
+          sousTypeCle: primaryKey,
+          sousTypesCles: sousTypesList.length > 0 ? sousTypesList : [primaryKey],
+          detailsSousTypes,
+          detailArticles: detailsDescriptions.join(' • ') || `${totalPiecesCetteCommande} moustiquaires`,
+          quantiteTotalPieces: totalPiecesCetteCommande,
+          dateLivraisonPrevisionnelle: dossier.dateLivraisonPrevisionnelle || '',
+          dateLivraisonPrevisionnelleISO: dossier.dateLivraisonPrevisionnelleISO,
+          ofCode: matchingOF?.codeOF,
+          ofStatut: matchingOF?.statut,
+          alerteDelai: {
+            statutDelai: 'DANS_LES_TEMPS',
+            joursDeRetard: 0,
+            estDepasse: false,
+            estRetardCritique: false,
+            texteAlerte: 'Dans les temps',
+            badgeLabel: '✓ Dans les délais',
+            badgeClasses: 'bg-emerald-950/60 text-emerald-300 border border-emerald-700/40',
+            ligneClasses: '',
+            flagEmoji: '✓'
+          }
+        });
       });
     });
 
@@ -1359,7 +1505,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
-      dossierId: l.dossierId
+      dossierId: l.dossierId,
+      repriseTimestamp: l.repriseTimestamp
     }));
     const simResMstq = DelaisProductionService.simulerPlanningFamille('MOUSTIQUAIRE', simMstqItems, params);
 
@@ -1480,6 +1627,33 @@ export class MonitoringService {
       ...lignesCommandesPrecadres,
       ...lignesCommandesMstq
     ];
+
+    // Ordonnancement intelligent pour la table du Monitoring :
+    // 1. Commande reprise en tête de file (priorité absolue)
+    // 2. Commandes prioritaires actives
+    // 3. Commandes actives avant les commandes en pause
+    // 4. Par date de livraison prévisionnelle / chronologique
+    allCommandesList.sort((a, b) => {
+      const repA = (a as any).repriseTimestamp || 0;
+      const repB = (b as any).repriseTimestamp || 0;
+      if (repA && !repB) return -1;
+      if (!repA && repB) return 1;
+      if (repA && repB && repA !== repB) return repB - repA;
+
+      const prioA = Boolean(a.estPrioritaire && !a.estEnPause);
+      const prioB = Boolean(b.estPrioritaire && !b.estEnPause);
+      if (prioA && !prioB) return -1;
+      if (!prioA && prioB) return 1;
+
+      if (!a.estEnPause && b.estEnPause) return -1;
+      if (a.estEnPause && !b.estEnPause) return 1;
+
+      const dA = a.dateLivraisonPrevisionnelleISO || '';
+      const dB = b.dateLivraisonPrevisionnelleISO || '';
+      if (dA && dB && dA !== dB) return dA.localeCompare(dB);
+
+      return 0;
+    });
 
     const totalEnRetard = allCommandesList.filter(c => c.alerteDelai.estDepasse).length;
     const commandesAVerifier = allCommandesList.filter(c => c.alerteDelai.estRetardCritique);

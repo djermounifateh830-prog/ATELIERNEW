@@ -22,6 +22,7 @@ import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { ParametresMailleModal } from '../common/ParametresMailleModal';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
 import {
   Sliders,
@@ -321,11 +322,12 @@ export const MoustiquaireTab: React.FC<MoustiquaireTabProps> = ({
 
     setTimeout(() => {
       try {
+        const params = getArticleCuttingParams(selectedProfileArticle);
         const optimiseur = new OptimiseurCoupe1D({
-          longueurBarre: selectedProfileArticle.longeur,
-          epaisseurScie: selectedProfileArticle.lame,
-          refusMin: selectedProfileArticle.refus_min,
-          refusMax: selectedProfileArticle.refus_max,
+          longueurBarre: params.longueurBarre,
+          epaisseurScie: params.epaisseurScie,
+          refusMin: params.refusMin,
+          refusMax: params.refusMax,
           mode,
           poidsTemps
         });

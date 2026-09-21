@@ -60,7 +60,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
       const initReste = l.resteReelMesureMm ?? (l.restePrevuMm > 0 ? l.restePrevuMm : 0);
       const article = articles.find(a => a.code_art === l.articleCode);
       const refusMin = article?.refus_min ?? 300;
-      const refusMax = article?.refus_max ?? 500;
+      const refusMax = article?.refus_max ?? 1200;
       const initAction = l.actionReste ?? (initReste >= refusMax ? 'A_STOCKER' : 'DECHET');
       const initSource = l.sourceReelle ?? (l.saisieOperateur?.toUpperCase().startsWith('BAR') ? 'BARRE_NEUVE' : 'CONFORME');
 
@@ -69,6 +69,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         sourceReelle: initSource,
         longueurSourceReelle: l.longueurSourceReelle || l.longueurPrevue,
         resteReelMesureMm: initReste,
+        residuBarreNeuve: initSource === 'BARRE_NEUVE' ? (l.residuBarreNeuve ?? initReste) : undefined,
         actionReste: initAction
       };
     });
@@ -182,10 +183,12 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const newVal = Math.max(0, current + delta);
     const article = articles.find(a => a.code_art === lignes[idx].articleCode);
     const refusMin = article?.refus_min ?? 300;
-    const refusMax = article?.refus_max ?? 500;
+    const refusMax = article?.refus_max ?? 1200;
+    const isBarre = (lignes[idx].sourceReelle || lignes[idx].typeSupport) === 'BARRE_NEUVE';
 
     updateLigne(idx, {
       resteReelMesureMm: newVal,
+      residuBarreNeuve: isBarre ? newVal : undefined,
       actionReste: newVal >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: newVal !== lignes[idx].restePrevuMm ? `${newVal}mm` : ''
     });
@@ -196,12 +199,14 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const l = lignes[idx];
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
-    const refusMax = article?.refus_max ?? 500;
+    const refusMax = article?.refus_max ?? 1200;
 
     updateLigne(idx, {
       sourceReelle: 'CONFORME',
       longueurSourceReelle: l.longueurPrevue,
       resteReelMesureMm: l.restePrevuMm,
+      residuBarreNeuve: undefined,
+      autreChuteId: undefined,
       actionReste: l.restePrevuMm >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: ''
     });
@@ -211,6 +216,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
   const setRebutLigne = (idx: number) => {
     updateLigne(idx, {
       resteReelMesureMm: 0,
+      residuBarreNeuve: 0,
       actionReste: 'DECHET',
       saisieOperateur: 'REBUT TOTAL (PIÈCE ABÎMÉE / REJETÉE)',
       remarque: (lignes[idx].remarque || '') + ' [REBUT ATELIER]'
@@ -224,32 +230,34 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const estimatedReste = Math.max(0, longueurBarre - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
-    const refusMax = article?.refus_max ?? 500;
+    const refusMax = article?.refus_max ?? 1200;
 
     updateLigne(idx, {
       sourceReelle: 'BARRE_NEUVE',
       longueurSourceReelle: longueurBarre,
       resteReelMesureMm: estimatedReste,
+      residuBarreNeuve: estimatedReste,
       actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
       saisieOperateur: `BARRE NEUVE ${longueurBarre}mm`
     });
   };
 
   // Déclarer une substitution par une chute CONNUE du stock
-  const setSubstitutionChuteConnue = (idx: number, longueurChute: number) => {
+  const setSubstitutionChuteConnue = (idx: number, longueurChute: number, chuteId?: string) => {
     const l = lignes[idx];
     const longueurPieces = getEstimationPiecesLg(l);
     const estimatedReste = Math.max(0, longueurChute - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
-    const refusMax = article?.refus_max ?? 500;
+    const refusMax = article?.refus_max ?? 1200;
 
     updateLigne(idx, {
       sourceReelle: 'AUTRE_CHUTE',
       longueurSourceReelle: longueurChute,
       resteReelMesureMm: estimatedReste,
       actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
-      saisieOperateur: `CHUTE STOCK ${longueurChute}mm`
+      saisieOperateur: `CHUTE STOCK ${longueurChute}mm`,
+      autreChuteId: chuteId
     });
   };
 
@@ -260,14 +268,15 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const estimatedReste = Math.max(0, longueurChute - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
     const refusMin = article?.refus_min ?? 300;
-    const refusMax = article?.refus_max ?? 500;
+    const refusMax = article?.refus_max ?? 1200;
 
     updateLigne(idx, {
       sourceReelle: 'CHUTE_NON_INVENTORIEE',
       longueurSourceReelle: longueurChute,
       resteReelMesureMm: estimatedReste,
       actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
-      saisieOperateur: `CHUTE NON INVENTORIÉE ${longueurChute}mm`
+      saisieOperateur: `CHUTE NON INVENTORIÉE ${longueurChute}mm`,
+      autreChuteId: undefined
     });
   };
 
@@ -437,12 +446,14 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         verifiedMap[idx] = true;
         const article = articles.find(a => a.code_art === l.articleCode);
         const refusMin = article?.refus_min ?? 300;
-        const refusMax = article?.refus_max ?? 500;
+        const refusMax = article?.refus_max ?? 1200;
         return {
           ...l,
           sourceReelle: 'CONFORME',
           longueurSourceReelle: l.longueurPrevue,
           resteReelMesureMm: l.restePrevuMm,
+          residuBarreNeuve: undefined,
+          autreChuteId: undefined,
           actionReste: l.restePrevuMm >= refusMax ? 'A_STOCKER' : 'DECHET',
           saisieOperateur: ''
         };
@@ -637,7 +648,8 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           remarque: `Régularisation chute atelier non inventoriée (${realSupportLg}mm) utilisée pour débit ${repereTxt}`
         });
       } else {
-        // Sortie de la chute de stock réellement débitée
+        // Sortie de la chute de stock réellement débitée (ou chute de substitution si AUTRE_CHUTE)
+        const chuteIdCible = source === 'AUTRE_CHUTE' ? ligne.autreChuteId : ligne.chuteId;
         mouvements.push({
           id: makeId(),
           date: dateTimeStr,
@@ -649,7 +661,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           longueurMm: realSupportLg,
           quantite: 1,
           remarque: `Chute stock débitée (${realSupportLg}mm) — Repère(s): ${repereTxt} ${piecesTxt}`,
-          chuteId: (ligne as any).chuteId
+          chuteId: chuteIdCible
         });
       }
 
@@ -935,7 +947,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
               const isModified = delta !== 0 || source !== 'CONFORME';
               const article = articles.find(a => a.code_art === ligne.articleCode);
               const refusMin = article?.refus_min ?? 300;
-              const refusMax = article?.refus_max ?? 500;
+              const refusMax = article?.refus_max ?? 1200;
               const chutesDispos = getChutesDisponiblesPourArticle(ligne.articleCode);
               const geo = getGeometrieStatus(ligne, originalIdx);
               const isAddedManually = ligne.id?.startsWith('suppl-');
@@ -1190,11 +1202,14 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                         {/* Option C1 : Autre Chute Connue en Stock */}
                         <div className="space-y-1">
                           <select
-                            value={source === 'AUTRE_CHUTE' ? realSupportLg : ''}
+                            value={source === 'AUTRE_CHUTE' ? `${ligne.autreChuteId || ''}|${realSupportLg}` : ''}
                             onChange={e => {
-                              const val = Number(e.target.value);
+                              const rawVal = e.target.value;
+                              if (!rawVal) return;
+                              const [chId, lgStr] = rawVal.split('|');
+                              const val = Number(lgStr);
                               if (val > 0) {
-                                setSubstitutionChuteConnue(originalIdx, val);
+                                setSubstitutionChuteConnue(originalIdx, val, chId || undefined);
                                 if (editingNonInventorieIdx === originalIdx) setEditingNonInventorieIdx(null);
                               }
                             }}
@@ -1210,7 +1225,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                                 : '📦 Aucune chute en stock'}
                             </option>
                             {chutesDispos.map((c, cIdx) => (
-                              <option key={c.id || cIdx} value={c.longueur}>
+                              <option key={c.id || cIdx} value={`${c.id || ''}|${c.longueur}`}>
                                 Chute Stock {c.longueur} mm (Dispo: {c.quantite})
                               </option>
                             ))}
@@ -1514,9 +1529,11 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                             onChange={e => {
                               const val = Math.max(0, parseInt(e.target.value, 10) || 0);
                               const refusMin = article?.refus_min ?? 300;
-                              const refusMax = article?.refus_max ?? 500;
+                              const refusMax = article?.refus_max ?? 1200;
+                              const isBarre = (ligne.sourceReelle || ligne.typeSupport) === 'BARRE_NEUVE';
                               updateLigne(originalIdx, {
                                 resteReelMesureMm: val,
+                                residuBarreNeuve: isBarre ? val : undefined,
                                 actionReste: val >= refusMax && val > 0 ? 'A_STOCKER' : 'DECHET',
                                 saisieOperateur: val !== ligne.restePrevuMm ? `${val}mm` : ''
                               });

@@ -103,11 +103,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   };
 
   const getDossierTotalArticles = (d: DossierCommandeGlobal) => {
-    const qC = (d.articlesCaissons || []).reduce((sum, c) => sum + (Number(c.quantite) || 1), 0);
-    const qT = (d.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
-    const qM = (d.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
-    const qP = (d.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
-    return qC + qT + qM + qP;
+    return DelaisProductionService.compterPiecesDossierTotal(d);
   };
 
   const getDossierDateLivraison = (d: DossierCommandeGlobal) => {
@@ -727,8 +723,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                   const nbMstq = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
                   const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
                   const sumArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
-                  const fallbackPcs = Number((dossier as any).nombrePieces) || Number((dossier as any).totalPieces) || 0;
-                  const totalArticles = sumArticles > 0 ? sumArticles : fallbackPcs;
+                  const totalArticles = DelaisProductionService.compterPiecesDossierTotal(dossier);
                   const dateLiv = getDossierDateLivraison(dossier);
 
                   // Collecter les familles présentes (Demande utilisateur : dans historique affichage par tableau je veux avoir l'info art pcs famille)
@@ -1059,7 +1054,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
             const nbTablier = (dossier.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
             const nbMstq = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
             const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
-            const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
+            const totalArticles = DelaisProductionService.compterPiecesDossierTotal(dossier);
 
             return (
               <div
@@ -1498,6 +1493,22 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                                 </td>
                                 <td className="py-2.5 px-3 text-right">
                                   <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTogglePauseDossier(dossier)}
+                                      className={`p-1.5 rounded-md text-xs transition cursor-pointer border ${
+                                        dossier.estEnPause || dossier.statut === 'EN_PAUSE'
+                                          ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-600/60 shadow-xs'
+                                          : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-300 border-slate-700'
+                                      }`}
+                                      title={dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? 'Reprendre la fabrication' : 'Mettre en pause la commande et ses OFs'}
+                                    >
+                                      {dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? (
+                                        <Play className="w-3.5 h-3.5 fill-current" />
+                                      ) : (
+                                        <Pause className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => handleOpenDossierDetail(dossier)}

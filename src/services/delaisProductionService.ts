@@ -443,8 +443,12 @@ export class DelaisProductionService {
    * Compte le nombre total de pièces dans un dossier toutes familles confondues
    */
   static compterPiecesDossierTotal(dossier: DossierCommandeGlobal): number {
+    if (!dossier) return 0;
     const counts = this.compterPiecesDossierParFamille(dossier);
-    return (counts.CAISSON || 0) + (counts.PRECADRE || 0) + (counts.MOUSTIQUAIRE || 0) + (counts.TABLIER || 0);
+    const sum = (counts.CAISSON || 0) + (counts.PRECADRE || 0) + (counts.MOUSTIQUAIRE || 0) + (counts.TABLIER || 0);
+    if (sum > 0) return sum;
+    const fallback = Number((dossier as any).nombrePieces) || Number((dossier as any).totalPieces) || 0;
+    return fallback;
   }
 
   /**
@@ -1135,9 +1139,16 @@ export class DelaisProductionService {
     });
 
     // Ordonnancement de la file active :
-    // 1. Commandes prioritaires en tête
-    // 2. FIFO (date d'émission la plus ancienne en premier)
+    // 1. Commandes reprises récemment en tête de file (priorité absolue au démarrage)
+    // 2. Commandes prioritaires ordinaires
+    // 3. FIFO (date d'émission la plus ancienne en premier)
     actives.sort((a, b) => {
+      const repA = (a as any).repriseTimestamp || 0;
+      const repB = (b as any).repriseTimestamp || 0;
+      if (repA && !repB) return -1;
+      if (!repA && repB) return 1;
+      if (repA && repB && repA !== repB) return repB - repA;
+
       if (a.estPrioritaire && !b.estPrioritaire) return -1;
       if (!a.estPrioritaire && b.estPrioritaire) return 1;
       const dateA = a.dateEmission ? this.parseDateString(a.dateEmission).getTime() : 0;
@@ -1284,6 +1295,7 @@ export interface PlanningItemSimulation {
   dateEmission?: string;
   statutOF?: string;
   dossierId?: string;
+  repriseTimestamp?: number;
 }
 
 export interface ResultatSimulationPlanningFamille {

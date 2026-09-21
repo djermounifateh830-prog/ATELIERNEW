@@ -405,7 +405,32 @@ export class StorageService {
           mouvements: []
         })
       });
-      logger.sqlite('Réinit. Usine', "Base SQLite réinitialisée avec les paramètres d'usine complets.");
+
+      // Nettoyer également les clés et caches résiduels du localStorage
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const keysToClear = [
+            '3m_dossier_to_load',
+            '3m_cockpit_selected_of',
+            '3m_cockpit_mode',
+            '3m_clients_finaux_incremental',
+            '3m_params_optimisation_maille',
+            'suivis_of',
+            'dossiers',
+            'articles',
+            'chutes_barres',
+            'chutes_maille',
+            'mouvements_stock',
+            'mapping_chutes',
+            StorageService.CODIFICATIONS_CACHE_KEY
+          ];
+          keysToClear.forEach(k => window.localStorage.removeItem(k));
+        }
+      } catch (eStorage) {
+        console.warn('Nettoyage localStorage lors du reset usine ignoré ou impossible:', eStorage);
+      }
+
+      logger.sqlite('Réinit. Usine', "Base SQLite et caches locaux réinitialisés avec les paramètres d'usine complets.");
     } catch (e: any) {
       console.error('Erreur resetAllToFactory:', e);
       logger.error('Réinit. Usine', "Erreur lors de la réinitialisation usine.", { error: e.message });

@@ -5,6 +5,7 @@ import { SelecteurMode } from '../common/SelecteurMode';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
 import { getDimensionsPrecadrePiece } from '../../utils/precadreCalculs';
 import {
@@ -284,11 +285,12 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
           }
         });
 
+        const params = getArticleCuttingParams(selectedArticle);
         const optimiseur = new OptimiseurCoupe1D({
-          longueurBarre: selectedArticle.longeur,
-          epaisseurScie: selectedArticle.lame,
-          refusMin: selectedArticle.refus_min,
-          refusMax: selectedArticle.refus_max,
+          longueurBarre: params.longueurBarre,
+          epaisseurScie: params.epaisseurScie,
+          refusMin: params.refusMin,
+          refusMax: params.refusMax,
           mode,
           poidsTemps
         });

@@ -424,6 +424,8 @@ export interface LigneRetourOF {
   restePrevuMm: number;
   /** Ce que l'opérateur a écrit dans la colonne "Nouvelle Chute" (vide = conforme) */
   saisieOperateur: string;
+  /** Identifiant de la chute de substitution choisie par l'opérateur si AUTRE_CHUTE */
+  autreChuteId?: string;
   /**
    * Si l'opérateur a écrit "BAR" → il a utilisé une barre neuve à la place d'une chute.
    * Dimension du résidu de la barre neuve utilisée (mm).
