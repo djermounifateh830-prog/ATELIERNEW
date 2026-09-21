@@ -1577,17 +1577,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   // Statistiques et liste des commandes distinctes par famille au sein du dossier
   const statsCommandesParFamille = useMemo(() => {
-    const calcStats = (lines: { refCommande?: string; sfRefCommande?: string; avecSousFace?: boolean }[] = [], currentNum: string = '') => {
+    const calcStats = (lines: { refCommande?: string; sfRefCommande?: string; avecSousFace?: boolean; quantite?: number }[] = [], currentNum: string = '') => {
       const map = new Map<string, number>();
       const safeLines = Array.isArray(lines) ? lines : [];
       safeLines.forEach(l => {
         if (!l) return;
         const ref = (l.refCommande || 'CMD').trim();
-        map.set(ref, (map.get(ref) || 0) + 1);
-        if (l.avecSousFace && l.sfRefCommande && l.sfRefCommande.trim() !== ref) {
-          const sfRef = l.sfRefCommande.trim();
-          map.set(sfRef, (map.get(sfRef) || 0) + 1);
-        }
+        const qte = Math.max(1, Number((l as any).quantite) || 1);
+        map.set(ref, (map.get(ref) || 0) + qte);
       });
       const cNum = (currentNum || '').trim();
       if (cNum && !map.has(cNum)) {
@@ -1662,37 +1659,40 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     lignesCaissons.forEach(c => {
       const caissonRef = (c.refCommande || numCommandeCaisson || currentSavedDossier?.numCommandeCaisson || currentSavedDossier?.refCommande || 'CMD').trim();
       const entry = getOrCreate(caissonRef);
-      entry.caissons += c.quantite || 1;
-      entry.total += c.quantite || 1;
+      const qte = Math.max(1, Number(c.quantite) || 1);
+      entry.caissons += qte;
+      entry.total += qte;
 
       if (c.avecSousFace) {
         const sfRef = (c.sfRefCommande || numCommandeSousFace || currentSavedDossier?.numCommandeSousFace || caissonRef).trim();
         if (sfRef && sfRef !== caissonRef) {
           const sfEntry = getOrCreate(sfRef);
-          sfEntry.sousFaces += c.quantite || 1;
-          sfEntry.total += c.quantite || 1;
+          sfEntry.sousFaces += qte;
         } else {
-          entry.sousFaces += c.quantite || 1;
+          entry.sousFaces += qte;
         }
       }
     });
 
     lignesTabliers.forEach(t => {
       const entry = getOrCreate(t.refCommande || numCommandeTablier || currentSavedDossier?.numCommandeTablier || currentSavedDossier?.refCommande);
-      entry.tabliers += t.quantite || 1;
-      entry.total += t.quantite || 1;
+      const qte = Math.max(1, Number(t.quantite) || 1);
+      entry.tabliers += qte;
+      entry.total += qte;
     });
 
     lignesMoustiquaires.forEach(m => {
       const entry = getOrCreate(m.refCommande || numCommandeMoustiquaire || currentSavedDossier?.numCommandeMoustiquaire || currentSavedDossier?.refCommande);
-      entry.mstq += m.quantite || 1;
-      entry.total += m.quantite || 1;
+      const qte = Math.max(1, Number(m.quantite) || 1);
+      entry.mstq += qte;
+      entry.total += qte;
     });
 
     lignesPrecadres.forEach(p => {
       const entry = getOrCreate(p.refCommande || numCommandePrecadre || currentSavedDossier?.numCommandePrecadre || currentSavedDossier?.refCommande);
-      entry.precadres += p.quantite || 1;
-      entry.total += p.quantite || 1;
+      const qte = Math.max(1, Number(p.quantite) || 1);
+      entry.precadres += qte;
+      entry.total += qte;
     });
 
     // 2. Si un dossier sauvegardé a des commandes non encore dans la map (ex: autres familles non chargées)
@@ -1853,23 +1853,139 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     showFlashNotification(`Délai recalculé automatiquement selon la charge atelier.`, 'info');
   };
 
-  const togglePauseCommande = () => {
-    if (!estEnPause) {
-      const dateAuj = getTodayDateString();
-      setEstEnPause(true);
-      setDatePause(dateAuj);
-      if (!motifPause) setMotifPause('Rupture de stock matière / attente approvisionnement');
-      showFlashNotification('⏸️ Dossier mis en pause. L\'interruption est désormais prise en compte dans le délai.', 'warn');
-    } else {
-      if (datePause) {
-        const dP = DelaisProductionService.parseDateString(datePause);
-        const now = new Date();
-        const diffJours = Math.max(0, Math.floor((now.getTime() - dP.getTime()) / (1000 * 60 * 60 * 24)));
-        setDureePauseJours(prev => prev + diffJours);
+  const togglePauseCommande = async () => {
+    const newPause = !estEnPause;
+    const dateAuj = getTodayDateString();
+
+    let newDuree = dureePauseJours;
+    if (!newPause && datePause) {
+      const dP = DelaisProductionService.parseDateString(datePause);
+      const now = new Date();
+      const diffJours = Math.max(0, Math.floor((now.getTime() - dP.getTime()) / (1000 * 60 * 60 * 24)));
+      newDuree += diffJours;
+      setDureePauseJours(newDuree);
+    }
+
+    setEstEnPause(newPause);
+    setDatePause(newPause ? dateAuj : '');
+    const currentMotif = motifPause || 'Rupture de stock matière / attente approvisionnement';
+    if (newPause && !motifPause) {
+      setMotifPause(currentMotif);
+    }
+
+    if (editingDossierId) {
+      try {
+        const allDossiers = await StorageService.getDossiers();
+        const currentDossier = allDossiers.find(d => d.id === editingDossierId);
+        if (currentDossier) {
+          currentDossier.estEnPause = newPause;
+          currentDossier.statut = newPause ? 'EN_PAUSE' : 'EN_COURS';
+          currentDossier.datePause = newPause ? dateAuj : undefined;
+          currentDossier.motifPause = newPause ? currentMotif : undefined;
+          currentDossier.dureePauseJours = newDuree;
+          await StorageService.saveDossiers(allDossiers);
+          if (onDossiersUpdated) onDossiersUpdated();
+        }
+
+        // Synchroniser tous les OFs associés via StorageService
+        const ofs = await StorageService.getSuivisOF();
+        const dRefs = [
+          editingDossierId,
+          numCommandeCaisson,
+          numCommandeSousFace,
+          numCommandeTablier,
+          numCommandeMoustiquaire,
+          numCommandePrecadre,
+          getActiveNumCommande()
+        ].filter(Boolean).map(r => r!.trim().toLowerCase());
+
+        const matchingOFs = ofs.filter(o =>
+          (o.dossierId && o.dossierId === editingDossierId) ||
+          dRefs.some(r => {
+            const oCmd = (o.numCommande || '').trim().toLowerCase();
+            return oCmd && (oCmd === r || oCmd.includes(r) || r.includes(oCmd));
+          })
+        );
+
+        for (const of of matchingOFs) {
+          await StorageService.mettreAJourStatutOF(
+            of.id,
+            newPause ? 'EN_PAUSE' : (of.lignesRetour && of.lignesRetour.length > 0 ? 'RETOUR_EN_ATTENTE' : 'EMIS'),
+            undefined,
+            newPause,
+            newPause ? currentMotif : undefined
+          );
+        }
+        if (refreshSuivisOF) refreshSuivisOF();
+      } catch (err) {
+        console.error('Erreur sauvegarde pause dossier:', err);
       }
-      setEstEnPause(false);
-      setDatePause('');
-      showFlashNotification('▶️ Reprise de la commande. Les jours d\'interruption sont intégrés au délai.', 'success');
+    }
+
+    showFlashNotification(
+      newPause
+        ? '⏸️ Dossier mis en pause. L\'interruption est répercutée sur tous ses ordres de fabrication.'
+        : '▶️ Reprise du dossier. Les OFs et délais de fabrication sont réactivés.',
+      newPause ? 'warn' : 'success'
+    );
+  };
+
+  const handleTogglePauseCommandeIndividuelle = async (cmdRef: string) => {
+    try {
+      const ofs = await StorageService.getSuivisOF();
+      const cleanRef = cmdRef.trim().toLowerCase();
+      const matchingOFs = ofs.filter(o => {
+        const oCmd = (o.numCommande || '').trim().toLowerCase();
+        return oCmd && (oCmd === cleanRef || oCmd.includes(cleanRef) || cleanRef.includes(oCmd));
+      });
+
+      const anyPaused = matchingOFs.some(o => o.statut === 'EN_PAUSE' || o.estEnPause);
+      const newPauseState = !anyPaused;
+      const motif = newPauseState ? 'Commande mise en pause manuellement' : undefined;
+
+      for (const of of matchingOFs) {
+        await StorageService.mettreAJourStatutOF(
+          of.id,
+          newPauseState ? 'EN_PAUSE' : (of.lignesRetour && of.lignesRetour.length > 0 ? 'RETOUR_EN_ATTENTE' : 'EMIS'),
+          undefined,
+          newPauseState,
+          motif
+        );
+      }
+
+      if (editingDossierId) {
+        const allDossiers = await StorageService.getDossiers();
+        const d = allDossiers.find(dos => dos.id === editingDossierId);
+        if (d) {
+          if (newPauseState) {
+            d.estEnPause = true;
+            d.statut = 'EN_PAUSE';
+            d.datePause = getTodayDateString();
+            d.motifPause = 'Commande mise en pause';
+          } else {
+            const refreshedOFs = await StorageService.getSuivisOF();
+            const otherPaused = refreshedOFs.some(o => o.dossierId === d.id && (o.statut === 'EN_PAUSE' || o.estEnPause));
+            if (!otherPaused) {
+              d.estEnPause = false;
+              d.statut = 'EN_COURS';
+              d.datePause = undefined;
+            }
+          }
+          await StorageService.saveDossiers(allDossiers);
+          if (onDossiersUpdated) onDossiersUpdated();
+        }
+      }
+
+      if (refreshSuivisOF) refreshSuivisOF();
+      showFlashNotification(
+        newPauseState
+          ? `⏸️ Commande N° ${cmdRef} et ses OFs mis en pause.`
+          : `▶️ Commande N° ${cmdRef} réactivée en production.`,
+        newPauseState ? 'warn' : 'success'
+      );
+    } catch (e) {
+      console.error('Erreur toggle pause commande individuelle:', e);
+      showFlashNotification('Erreur lors du changement de statut de pause.', 'warn');
     }
   };
 
@@ -9306,15 +9422,51 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <div className="flex flex-wrap items-center gap-2">
                       {/* BOUTON CONFIRMATION INDIVIDUELLE OU RÉ-IMPRESSION OF */}
                       {cmd.estConfirmee ? (
-                        <button
-                          type="button"
-                          onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
-                          className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
-                          title={`Ouvrir ou ré-imprimer l'Ordre de Fabrication pour la commande N° ${cmd.ref}`}
-                        >
-                          <FileText className="w-3.5 h-3.5 text-emerald-200" />
-                          <span>🖨️ Ouvrir / Ré-imprimer OF</span>
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
+                            className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                            title={`Ouvrir ou ré-imprimer l'Ordre de Fabrication pour la commande N° ${cmd.ref}`}
+                          >
+                            <FileText className="w-3.5 h-3.5 text-emerald-200" />
+                            <span>🖨️ Ouvrir / Ré-imprimer OF</span>
+                          </button>
+
+                          {(() => {
+                            const cleanRef = cmd.ref.trim().toLowerCase();
+                            const matchingOFs = (suivisOF || []).filter(o => {
+                              const oCmd = (o.numCommande || '').trim().toLowerCase();
+                              return oCmd && (oCmd === cleanRef || oCmd.includes(cleanRef) || cleanRef.includes(oCmd));
+                            });
+                            const isCmdEnPause = matchingOFs.some(o => o.statut === 'EN_PAUSE' || o.estEnPause) || Boolean(estEnPause);
+
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePauseCommandeIndividuelle(cmd.ref)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer ${
+                                  isCmdEnPause
+                                    ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                                    : 'bg-slate-800 hover:bg-rose-950/80 text-rose-300 border border-slate-700 hover:border-rose-700/60'
+                                }`}
+                                title={isCmdEnPause ? `Reprendre la production pour la commande N° ${cmd.ref}` : `Mettre en pause la commande N° ${cmd.ref}`}
+                              >
+                                {isCmdEnPause ? (
+                                  <>
+                                    <Play className="w-3.5 h-3.5 text-white" />
+                                    <span>▶️ Reprendre</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Pause className="w-3.5 h-3.5 text-rose-300" />
+                                    <span>⏸️ Mettre en pause</span>
+                                  </>
+                                )}
+                              </button>
+                            );
+                          })()}
+                        </>
                       ) : (
                         <button
                           type="button"

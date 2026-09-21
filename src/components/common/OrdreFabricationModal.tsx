@@ -4,7 +4,7 @@ import {
   ResultatOptimisation, Article, PieceCoupee, BesoinMoustiquaire, 
   ChuteMaille, SuiviOF, LigneRetourOF, FamilleProduit, StatutOF,
   MappingChutes, ChuteReserveeOF, BarreReserveeOF, ChuteMailleReserveeOF,
-  ParametresOptimisationMaille
+  ParametresOptimisationMaille, DossierCommandeGlobal
 } from '../../types';
 import { detecterAgence } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
@@ -503,6 +503,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   const [isEditingDelai, setIsEditingDelai] = useState<boolean>(false);
   const [allOfsState, setAllOfsState] = useState<SuiviOF[]>([]);
   const [matchedOf, setMatchedOf] = useState<SuiviOF | null>(null);
+  const [linkedDossier, setLinkedDossier] = useState<DossierCommandeGlobal | null>(null);
   const [optimiserImpressionAntiPagesBlanches, setOptimiserImpressionAntiPagesBlanches] = useState<boolean>(true);
 
   useEffect(() => {
@@ -538,6 +539,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             (p && (p === cmdRefLower || cmdRefLower.includes(p)))
           );
         });
+
+      setLinkedDossier(matchedDossier || null);
 
       // Calcul cohérent du nombre de pièces réelles (unités finies, non de traits de scie)
       let totalPiecesDuOF = 0;
@@ -917,7 +920,32 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   const totalAccessoiresToutesSections = syntheseAccessoires.reduce((s, acc) => s + acc.quantiteRequise, 0);
   const totalPiecesToutesSections = useMemo(() => {
     if (Array.isArray(lignesMoustiquaires) && lignesMoustiquaires.length > 0) {
-      return lignesMoustiquaires.reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
+      return lignesMoustiquaires.reduce((sum, m) => sum + Math.max(1, Number(m.quantite) || 1), 0);
+    }
+    if (linkedDossier) {
+      const famKeyObj = ((famille as string) === 'SOUS_FACE' ? 'CAISSON' : (famille || 'TABLIER')) as FamilleProduit;
+      let famArticles: any[] = [];
+      if (famKeyObj === 'CAISSON') famArticles = linkedDossier.articlesCaissons || [];
+      else if (famKeyObj === 'TABLIER') famArticles = linkedDossier.articlesTabliers || [];
+      else if (famKeyObj === 'MOUSTIQUAIRE') famArticles = linkedDossier.articlesMoustiquaires || [];
+      else if (famKeyObj === 'PRECADRE') famArticles = linkedDossier.articlesPrecadres || [];
+
+      const refLower = (refCommande || '').trim().toLowerCase();
+      if (refLower && famArticles.length > 0) {
+        const specific = famArticles.filter(a => {
+          const aCmd = (a.refCommande || a.sfRefCommande || '').toLowerCase().trim();
+          return aCmd && (aCmd === refLower || refLower.includes(aCmd) || aCmd.includes(refLower));
+        });
+        if (specific.length > 0) {
+          const count = specific.reduce((sum, a) => sum + Math.max(1, Number(a.quantite) || 1), 0);
+          if (count > 0) return count;
+        }
+      }
+
+      const famCounts = DelaisProductionService.compterPiecesDossierParFamille(linkedDossier);
+      if (famCounts[famKeyObj] && famCounts[famKeyObj] > 0) {
+        return famCounts[famKeyObj];
+      }
     }
     if (matchedOf?.nombrePieces && matchedOf.nombrePieces > 0) {
       return matchedOf.nombrePieces;
@@ -939,8 +967,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     if (distinctReperes.size > 0) {
       return distinctReperes.size;
     }
-    return Math.max(1, totalBarresNeuvesToutesSections);
-  }, [listeSections, lignesMoustiquaires, matchedOf, totalBarresNeuvesToutesSections]);
+    return 1;
+  }, [listeSections, lignesMoustiquaires, linkedDossier, famille, refCommande, matchedOf]);
 
   if (!isOpen) return null;
   if (listeSections.length === 0) return null;

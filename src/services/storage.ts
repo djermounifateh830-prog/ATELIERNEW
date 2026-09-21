@@ -8,7 +8,8 @@ import {
   SuiviOF,
   MouvementStock,
   ClientCodification,
-  FicheTransfert
+  FicheTransfert,
+  StatutOF
 } from '../types';
 import {
   INITIAL_ARTICLES,
@@ -811,6 +812,35 @@ export class StorageService {
     } catch (e: any) {
       console.error('Erreur upsert suivi OF:', e);
       logger.error('Suivi OF', `Erreur mise à jour OF ${suivi.numCommande}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async mettreAJourStatutOF(
+    id: string,
+    nouveauStatut: StatutOF,
+    dateRetour?: string,
+    estEnPause?: boolean,
+    motifPause?: string
+  ): Promise<void> {
+    try {
+      const ofs = await this.getSuivisOF();
+      const of = ofs.find(o => o.id === id);
+      if (!of) return;
+      const pauseEffective = estEnPause !== undefined ? estEnPause : (nouveauStatut === 'EN_PAUSE');
+      const nowIso = new Date().toISOString();
+      const updatedOF: SuiviOF = {
+        ...of,
+        statut: nouveauStatut,
+        dateRetour: dateRetour !== undefined ? dateRetour : of.dateRetour,
+        estEnPause: pauseEffective,
+        datePause: pauseEffective ? (of.datePause || nowIso) : undefined,
+        motifPause: motifPause !== undefined ? motifPause : of.motifPause
+      };
+      await this.upsertSuiviOF(updatedOF);
+    } catch (e: any) {
+      console.error('Erreur mettreAJourStatutOF:', e);
+      logger.error('Suivi OF', `Erreur changement statut OF ${id}.`, { error: e.message });
       throw e;
     }
   }

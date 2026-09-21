@@ -27,7 +27,9 @@ import {
   ArrowUp,
   ArrowDown,
   X,
-  Zap
+  Zap,
+  Pause,
+  Play
 } from 'lucide-react';
 import { DossierCommandeGlobal, SuiviOF } from '../../types';
 import { StorageService } from '../../services/storage';
@@ -127,8 +129,15 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
       }
 
       const term = searchTerm.toLowerCase().trim();
+      const isDossierPaused = Boolean(d.estEnPause || d.statut === 'EN_PAUSE');
+      const matchStatus = statusFilter === 'TOUS'
+        ? true
+        : statusFilter === 'EN_PAUSE'
+        ? isDossierPaused
+        : d.statut === statusFilter;
+
       if (!term) {
-        return statusFilter === 'TOUS' || d.statut === statusFilter;
+        return matchStatus;
       }
 
       // Recherche dans les métadonnées globales du dossier
@@ -165,7 +174,6 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
 
       const matchRepere = matchRepereCaisson || matchRepereTablier || matchRepereMstq || matchReperePrecadre;
       const matchSearch = matchMeta || matchSubRefs || matchRepere;
-      const matchStatus = statusFilter === 'TOUS' || d.statut === statusFilter;
 
       return matchSearch && matchStatus;
     });
@@ -279,6 +287,47 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
   const handleOpenOFModal = (dossier: DossierCommandeGlobal) => {
     setSelectedOFDossier(dossier);
     setIsOFModalOpen(true);
+  };
+
+  const handleTogglePauseDossier = async (dossier: DossierCommandeGlobal) => {
+    const isCurrentlyPaused = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE');
+    const newPause = !isCurrentlyPaused;
+    const newStatut = newPause ? 'EN_PAUSE' : 'EN_COURS';
+
+    const updatedDossier: DossierCommandeGlobal = {
+      ...dossier,
+      estEnPause: newPause,
+      statut: newStatut as any,
+      motifPause: newPause ? (dossier.motifPause || 'Mis en pause manuellement') : undefined
+    };
+
+    const updatedDossiers = dossiers.map(d => d.id === dossier.id ? updatedDossier : d);
+    await StorageService.saveDossiers(updatedDossiers);
+
+    // Mettre à jour les OFs associés
+    try {
+      const ofs = await StorageService.getSuivisOF();
+      const refLower = (dossier.refCommande || '').toLowerCase().trim();
+      const matchingOFs = ofs.filter(o =>
+        (o.dossierId && o.dossierId === dossier.id) ||
+        (refLower && o.numCommande && o.numCommande.toLowerCase().trim() === refLower)
+      );
+      for (const of of matchingOFs) {
+        await StorageService.mettreAJourStatutOF(
+          of.id,
+          newPause ? 'EN_PAUSE' : (of.lignesRetour && of.lignesRetour.length > 0 ? 'RETOUR_EN_ATTENTE' : 'EMIS'),
+          undefined,
+          newPause,
+          newPause ? 'Dossier commande mis en pause' : undefined
+        );
+      }
+      const refreshedOFs = await StorageService.getSuivisOF();
+      setSuivisOF(refreshedOFs);
+    } catch (e) {
+      console.error('Erreur mise à jour OFs lors de la pause:', e);
+    }
+
+    if (onRefreshData) onRefreshData();
   };
 
   const stats = useMemo(() => {
@@ -432,6 +481,7 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
               className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-purple-300 font-bold focus:outline-none"
             >
               <option value="TOUS" className="bg-slate-900 text-slate-200">Tous les statuts</option>
+              <option value="EN_PAUSE" className="bg-slate-900 text-amber-300">⏸️ En pause</option>
               <option value="EN_ATTENTE" className="bg-slate-900 text-slate-200">En attente</option>
               <option value="EN_COURS" className="bg-slate-900 text-slate-200">En cours de fabrication</option>
               <option value="CLOTURE" className="bg-slate-900 text-slate-200">Clôturé / Prêt livraison</option>
@@ -676,7 +726,9 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                   const nbTablier = (dossier.articlesTabliers || []).reduce((sum, t) => sum + (Number(t.quantite) || 1), 0);
                   const nbMstq = (dossier.articlesMoustiquaires || []).reduce((sum, m) => sum + (Number(m.quantite) || 1), 0);
                   const nbPrecadre = (dossier.articlesPrecadres || []).reduce((sum, p) => sum + (Number(p.quantite) || 1), 0);
-                  const totalArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
+                  const sumArticles = nbCaisson + nbTablier + nbMstq + nbPrecadre;
+                  const fallbackPcs = Number((dossier as any).nombrePieces) || Number((dossier as any).totalPieces) || 0;
+                  const totalArticles = sumArticles > 0 ? sumArticles : fallbackPcs;
                   const dateLiv = getDossierDateLivraison(dossier);
 
                   // Collecter les familles présentes (Demande utilisateur : dans historique affichage par tableau je veux avoir l'info art pcs famille)
@@ -889,7 +941,9 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                         <td className="py-2.5 px-3 text-center whitespace-nowrap">
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
-                              dossier.statut === 'LIVRE'
+                              dossier.estEnPause || dossier.statut === 'EN_PAUSE'
+                                ? 'bg-amber-950/90 text-amber-300 border-amber-500/60 shadow-xs'
+                                : dossier.statut === 'LIVRE'
                                 ? 'bg-blue-950 text-blue-300 border-blue-500/40'
                                 : dossier.statut === 'CLOTURE'
                                 ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
@@ -900,7 +954,9 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                                 : 'bg-purple-950 text-purple-300 border-purple-500/30'
                             }`}
                           >
-                            {dossier.statut === 'LIVRE'
+                            {dossier.estEnPause || dossier.statut === 'EN_PAUSE'
+                              ? '⏸️ EN PAUSE'
+                              : dossier.statut === 'LIVRE'
                               ? '🚚 LIVRÉ'
                               : dossier.statut === 'CLOTURE'
                               ? '✅ CLÔTURÉ'
@@ -926,6 +982,24 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                             >
                               <Eye className="w-3 h-3 text-purple-400" />
                               <span>Visualiser</span>
+                            </button>
+
+                            {/* Pause / Reprendre */}
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePauseDossier(dossier)}
+                              className={`p-1.5 rounded-md text-xs transition cursor-pointer border ${
+                                dossier.estEnPause || dossier.statut === 'EN_PAUSE'
+                                  ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-600/60 shadow-xs'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-300 border-slate-700'
+                              }`}
+                              title={dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? 'Reprendre la fabrication' : 'Mettre en pause la commande et ses OFs'}
+                            >
+                              {dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? (
+                                <Play className="w-3.5 h-3.5 fill-current" />
+                              ) : (
+                                <Pause className="w-3.5 h-3.5" />
+                              )}
                             </button>
 
                             {/* Charger dans Écosystème */}
@@ -1204,6 +1278,29 @@ export const HistoriqueTab: React.FC<HistoriqueTabProps> = ({
                     >
                       <Edit3 className="w-3.5 h-3.5 text-purple-400" />
                       <span>Charger</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePauseDossier(dossier)}
+                      className={`px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition shadow cursor-pointer border ${
+                        dossier.estEnPause || dossier.statut === 'EN_PAUSE'
+                          ? 'bg-amber-950/80 hover:bg-amber-900 text-amber-300 border-amber-600/60'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-300 border-slate-700'
+                      }`}
+                      title={dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? 'Reprendre la fabrication' : 'Mettre en pause'}
+                    >
+                      {dossier.estEnPause || dossier.statut === 'EN_PAUSE' ? (
+                        <>
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>Reprendre</span>
+                        </>
+                      ) : (
+                        <>
+                          <Pause className="w-3 h-3" />
+                          <span>Pause</span>
+                        </>
+                      )}
                     </button>
                   </div>
 

@@ -1193,6 +1193,64 @@ class AtelierDatabase {
       d.id, d.donneurOrdre, d.nomClientFinal, d.dateCommande,
       d.refCommande, d.statut, JSON.stringify(d)
     );
+
+    // Synchronisation automatique bidirectionnelle de la pause avec les OFs associés
+    try {
+      const dRefs = [d.id, d.refCommande, d.numCommandeCaisson, d.numCommandeSousFace, d.numCommandeTablier, d.numCommandeMoustiquaire, d.numCommandePrecadre]
+        .filter(Boolean).map(r => r!.trim().toLowerCase());
+
+      if (d.estEnPause || d.statut === 'EN_PAUSE') {
+        const ofRows = this.db.prepare('SELECT id, json_data FROM suivis_of').all() as any[];
+        const updateOfStmt = this.db.prepare(`
+          UPDATE suivis_of SET statut = 'EN_PAUSE', json_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `);
+        for (const row of ofRows) {
+          if (!row.json_data) continue;
+          try {
+            const of: SuiviOF = JSON.parse(row.json_data);
+            if (of.statut === 'CLOTURE' || of.statut === 'LIVRE' || of.statut === 'ANNULE') continue;
+            const ofCmd = (of.numCommande || '').trim().toLowerCase();
+            const matches = (of.dossierId && of.dossierId === d.id) ||
+              dRefs.some(r => r && (r === ofCmd || (r.length >= 3 && ofCmd.length >= 3 && (r.startsWith(ofCmd) || ofCmd.startsWith(r)))));
+            if (matches && (of.statut !== 'EN_PAUSE' || !of.estEnPause)) {
+              of.statut = 'EN_PAUSE';
+              of.estEnPause = true;
+              of.datePause = d.datePause || of.datePause || new Date().toISOString();
+              of.motifPause = d.motifPause || of.motifPause || 'Dossier commande mis en pause';
+              updateOfStmt.run(JSON.stringify(of), of.id);
+            }
+          } catch (eOF) {
+            console.warn('Erreur sync pause OF depuis dossier:', eOF);
+          }
+        }
+      } else if (!d.estEnPause) {
+        const ofRows = this.db.prepare('SELECT id, json_data FROM suivis_of WHERE statut = "EN_PAUSE"').all() as any[];
+        const updateOfStmt = this.db.prepare(`
+          UPDATE suivis_of SET statut = ?, json_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `);
+        for (const row of ofRows) {
+          if (!row.json_data) continue;
+          try {
+            const of: SuiviOF = JSON.parse(row.json_data);
+            const ofCmd = (of.numCommande || '').trim().toLowerCase();
+            const matches = (of.dossierId && of.dossierId === d.id) ||
+              dRefs.some(r => r && (r === ofCmd || (r.length >= 3 && ofCmd.length >= 3 && (r.startsWith(ofCmd) || ofCmd.startsWith(r)))));
+            if (matches) {
+              const newStatut = (of.lignesRetour && of.lignesRetour.length > 0) ? 'RETOUR_EN_ATTENTE' : 'EMIS';
+              of.statut = newStatut;
+              of.estEnPause = false;
+              of.datePause = undefined;
+              updateOfStmt.run(newStatut, JSON.stringify(of), of.id);
+            }
+          } catch (eOF) {
+            console.warn('Erreur sync reprise OF depuis dossier:', eOF);
+          }
+        }
+      }
+    } catch (errSync) {
+      console.warn('Erreur synchronisation pause dossier vers OFs:', errSync);
+    }
+
     this.checkpointWal();
   }
 
@@ -1503,19 +1561,50 @@ class AtelierDatabase {
     this.db.prepare('DELETE FROM reservations_barres WHERE of_id = ?').run(s.id);
     this.db.prepare('DELETE FROM reservations_maille WHERE of_id = ?').run(s.id);
 
-    if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE' || s.statut === 'EN_COURS') {
+    if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE' || s.statut === 'EN_COURS' || s.statut === 'EN_PAUSE') {
       this.saveReservationsForOF(s);
     }
     this.syncArticlesQuantiteReservee();
 
-    // Synchronisation automatique avec les Dossiers de Commande (Statut passe à 'EN_COURS' dès l'émission de l'OF)
-    if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE') {
-      const cmdRefs = (s.numCommande || '')
-        .split(/[\s,+/]+/)
-        .map(c => c.trim().toLowerCase())
-        .filter(Boolean);
+    // Synchronisation automatique de statut avec les Dossiers de Commande
+    const cmdRefs = (s.numCommande || '')
+      .split(/[\s,+/]+/)
+      .map(c => c.trim().toLowerCase())
+      .filter(Boolean);
 
-      const allDossiers = this.getDossiers();
+    const allDossiers = this.getDossiers();
+
+    if (s.statut === 'EN_PAUSE' || s.estEnPause) {
+      // 1. Mise en pause du dossier lié si l'OF est mis en pause
+      for (const dossier of allDossiers) {
+        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+        const subRefs = [
+          dossier.numCommandeCaisson,
+          dossier.numCommandeSousFace,
+          dossier.numCommandeTablier,
+          dossier.numCommandeMoustiquaire,
+          dossier.numCommandePrecadre
+        ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
+        const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
+        const matchesId = s.dossierId && s.dossierId === dossier.id;
+
+        if (matchesId || matchesCmd || matchesSub) {
+          if (!dossier.estEnPause || dossier.statut !== 'EN_PAUSE') {
+            dossier.estEnPause = true;
+            dossier.statut = 'EN_PAUSE';
+            dossier.datePause = s.datePause || new Date().toISOString();
+            dossier.motifPause = s.motifPause || 'Ordre de fabrication mis en pause';
+            const stmt = this.db.prepare(`
+              UPDATE dossiers SET statut = 'EN_PAUSE', json_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            `);
+            stmt.run(JSON.stringify(dossier), dossier.id);
+          }
+        }
+      }
+    } else if (s.statut === 'EMIS' || s.statut === 'RETOUR_EN_ATTENTE') {
+      // 2. Émission ou Reprise : dossier passe à 'EN_COURS' si tous ses OFs sont actifs
+      const allOfs = this.getSuivisOF();
       for (const dossier of allDossiers) {
         const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
         const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
@@ -1529,11 +1618,18 @@ class AtelierDatabase {
         const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
         const matchesClient = s.nomClient && dossier.nomClientFinal &&
           dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
+        const matchesId = s.dossierId && s.dossierId === dossier.id;
 
-        if (matchesCmd || matchesSub || (matchesClient && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut))) {
-          if (dossier.statut !== 'EN_COURS' && dossier.statut !== 'CLOTURE' && dossier.statut !== 'FABRIQUE' && dossier.statut !== 'LIVRE') {
+        if (matchesId || matchesCmd || matchesSub || (matchesClient && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut))) {
+          const otherPaused = allOfs.some(o => o.id !== s.id && (o.dossierId === dossier.id || cmdRefs.some(ref => (o.numCommande || '').toLowerCase().includes(ref))) && (o.statut === 'EN_PAUSE' || o.estEnPause));
+          if (!otherPaused && (dossier.statut !== 'EN_COURS' && dossier.statut !== 'CLOTURE' && dossier.statut !== 'FABRIQUE' && dossier.statut !== 'LIVRE')) {
             dossier.statut = 'EN_COURS';
-            this.upsertDossier(dossier);
+            dossier.estEnPause = false;
+            dossier.datePause = undefined;
+            const stmt = this.db.prepare(`
+              UPDATE dossiers SET statut = 'EN_COURS', json_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            `);
+            stmt.run(JSON.stringify(dossier), dossier.id);
           }
         }
       }

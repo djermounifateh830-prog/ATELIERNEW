@@ -400,8 +400,8 @@ export class MonitoringService {
         detailsDescriptions.push(`${qte}x ${nomProd} (${c.longueur || 0}mm)`);
       });
 
-      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
-        totalPiecesCeDossier = matchingOF.nombrePieces;
+      if (totalPiecesCeDossier <= 0 && matchingOF) {
+        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
       }
 
       if (totalPiecesCeDossier <= 0) return;
@@ -416,7 +416,7 @@ export class MonitoringService {
         ? 'CAISSON_40'
         : (sousTypesList[0] || 'CAISSON_AUTRE');
 
-      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
       const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
 
       lignesCommandesCaissons.push({
@@ -682,8 +682,8 @@ export class MonitoringService {
         detailsDescriptions.push(`${qte}x ${nomProd} (${t.largeur || 0}x${t.hauteur || 0}mm)`);
       });
 
-      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
-        totalPiecesCeDossier = matchingOF.nombrePieces;
+      if (totalPiecesCeDossier <= 0 && matchingOF) {
+        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
       }
 
       if (totalPiecesCeDossier <= 0) return;
@@ -696,7 +696,7 @@ export class MonitoringService {
         ? 'TABLIER_43'
         : (sousTypesList[0] || 'TABLIER_AUTRE');
 
-      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
       const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
 
       lignesCommandesTabliers.push({
@@ -956,15 +956,15 @@ export class MonitoringService {
         detailsDescriptions.push(`${q}x ${nomProd} (${p.largeur || 0}x${p.hauteur || 0}mm)`);
       });
 
-      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
-        totalPiecesCeDossier = matchingOF.nombrePieces;
+      if (totalPiecesCeDossier <= 0 && matchingOF) {
+        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
       }
 
       if (totalPiecesCeDossier <= 0) return;
       precadresCommandesSet.add(ref);
 
       const sousTypesList = Array.from(sousTypesSet);
-      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
       const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
 
       lignesCommandesPrecadres.push({
@@ -1222,15 +1222,15 @@ export class MonitoringService {
         detailsDescriptions.push(`${q}x ${nomProd} (${m.largeur || 0}x${m.hauteur || 0}mm)`);
       });
 
-      if (matchingOF?.nombrePieces && matchingOF.nombrePieces > 0) {
-        totalPiecesCeDossier = matchingOF.nombrePieces;
+      if (totalPiecesCeDossier <= 0 && matchingOF) {
+        totalPiecesCeDossier = DelaisProductionService.compterPiecesOF(matchingOF, dossiers);
       }
 
       if (totalPiecesCeDossier <= 0) return;
       mstqCommandesSet.add(ref);
 
       const sousTypesList = Array.from(sousTypesSet);
-      const estEnPause = Boolean(dossier.estEnPause || matchingOF?.estEnPause);
+      const estEnPause = Boolean(dossier.estEnPause || dossier.statut === 'EN_PAUSE' || matchingOF?.estEnPause || matchingOF?.statut === 'EN_PAUSE');
       const estPrioritaire = Boolean(dossier.estPrioritaire || matchingOF?.estPrioritaire);
 
       lignesCommandesMstq.push({

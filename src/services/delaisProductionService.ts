@@ -505,8 +505,25 @@ export class DelaisProductionService {
         return refs.some(r => r === ofCmd || (r.length >= 3 && ofCmd.length >= 3 && (r.startsWith(ofCmd) || ofCmd.startsWith(r))));
       });
       if (parent) {
-        const famCounts = this.compterPiecesDossierParFamille(parent);
         const famKey = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille) as FamilleProduit;
+        let matchingArticles: any[] = [];
+        if (famKey === 'CAISSON') matchingArticles = parent.articlesCaissons || [];
+        else if (famKey === 'TABLIER') matchingArticles = parent.articlesTabliers || [];
+        else if (famKey === 'MOUSTIQUAIRE') matchingArticles = parent.articlesMoustiquaires || [];
+        else if (famKey === 'PRECADRE') matchingArticles = parent.articlesPrecadres || [];
+
+        if (ofCmd && matchingArticles.length > 0) {
+          const filteredByCmd = matchingArticles.filter(a => {
+            const aCmd = (a.refCommande || a.sfRefCommande || '').toLowerCase().trim();
+            return aCmd && (aCmd === ofCmd || ofCmd.includes(aCmd) || aCmd.includes(ofCmd));
+          });
+          if (filteredByCmd.length > 0) {
+            const countSpecific = filteredByCmd.reduce((sum, item) => sum + Math.max(1, Number(item.quantite) || 1), 0);
+            if (countSpecific > 0) return countSpecific;
+          }
+        }
+
+        const famCounts = this.compterPiecesDossierParFamille(parent);
         if (famCounts[famKey] && famCounts[famKey] > 0) {
           return famCounts[famKey];
         }
@@ -521,28 +538,18 @@ export class DelaisProductionService {
       return Number((of as any).totalPieces);
     }
 
-    // 3. D'après les lignes de retour (source principale après optimisation)
+    // 3. D'après les lignes de retour (comptage des unités uniques de fabrication, non de traits de scie de barres)
     if (of.lignesRetour && of.lignesRetour.length > 0) {
-      let count = 0;
+      const distinctUnits = new Set<string>();
       of.lignesRetour.forEach(lr => {
         const rep = (lr.repere || '').toUpperCase().trim();
         const isAccessoire = rep.startsWith('ACCESSOIRE') || rep.startsWith('JOUE') || rep.startsWith('BOUCHON');
-        if (!isAccessoire) {
-          if ((lr as any).quantite && Number((lr as any).quantite) > 0) {
-            count += Number((lr as any).quantite);
-          } else if (lr.repere) {
-            const reps = lr.repere.split(',').filter(Boolean);
-            count += reps.length || 1;
-          } else if (lr.piecesInfoStr) {
-            const parts = lr.piecesInfoStr.split('+').filter(Boolean);
-            count += parts.length || 1;
-          } else {
-            count += 1;
-          }
+        if (!isAccessoire && rep) {
+          const cleanRep = rep.replace(/\s*[-_ ]\s*(LAME|LF|COULISSE|SEUIL|MONTANT|TRAVERSE|CT|SF|CAISSE|TRAPPE).*$/i, '').trim();
+          if (cleanRep) distinctUnits.add(cleanRep);
         }
       });
-      if (count > 0) return count;
-      return of.lignesRetour.length;
+      if (distinctUnits.size > 0) return distinctUnits.size;
     }
 
     // 4. Extraction depuis le titre ou la section si mentionné (ex: "15 caissons")
@@ -551,12 +558,7 @@ export class DelaisProductionService {
       return parseInt(matchTitre[1], 10);
     }
 
-    // 5. Fallback d'après le nombre de barres neuves
-    if (of.totalBarresNeuvesPrevu && of.totalBarresNeuvesPrevu > 0) {
-      return Math.max(1, of.totalBarresNeuvesPrevu);
-    }
-
-    // Fallback minimal
+    // Fallback minimal : 1 pièce finie
     return 1;
   }
 
