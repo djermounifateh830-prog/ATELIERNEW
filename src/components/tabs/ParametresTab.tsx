@@ -457,7 +457,11 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
     setBackupStatusMessage(null);
     try {
       const res = await autoBackupService.executeSilentBackup();
-      setBackupStatusMessage(`✅ Sauvegarde silencieuse effectuée : "${res.filename}" créée dans [${res.fullPath}] sans confirmation ni écrasement.`);
+      if (res.filename === 'erreur_sauvegarde' || !res.filename) {
+        setBackupStatusMessage(`⚠️ Sauvegarde automatique temporairement indisponible.`);
+      } else {
+        setBackupStatusMessage(`✅ Sauvegarde silencieuse effectuée : "${res.filename}" créée dans [${res.fullPath}] sans confirmation ni écrasement.`);
+      }
       setTimeout(() => setBackupStatusMessage(null), 6000);
     } catch (e: any) {
       setBackupStatusMessage(`Erreur sauvegarde silencieuse : ${e.message}`);

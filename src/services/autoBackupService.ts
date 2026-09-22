@@ -97,14 +97,19 @@ class AutoBackupService {
 
   public async executeSilentBackup(): Promise<{ filename: string; fullPath: string }> {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const res = await fetch('/api/db/backup-silent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           defaultPath: this.settings.defaultPath,
           prefix: '3m_atelier_backup'
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         throw new Error(`Erreur serveur HTTP ${res.status} lors de la sauvegarde silencieuse`);
