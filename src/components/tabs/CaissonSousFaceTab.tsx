@@ -199,6 +199,14 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
     articleDesignation: string;
     article: Article;
     resultat: ResultatOptimisation;
+    debordement?: number;
+    conditionsCoupe?: {
+      longueurBarre?: number;
+      epaisseurLame?: number;
+      debordement?: number;
+      refusMin?: number;
+      refusMax?: number;
+    };
   }>>([]);
 
   const handleCalculerOptimisation = () => {

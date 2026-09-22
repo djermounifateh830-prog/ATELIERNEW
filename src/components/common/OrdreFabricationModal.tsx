@@ -1078,15 +1078,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           ${profileDesignation}
         </strong>
         ${conditionsHtml ? conditionsHtml.split(' | ').map(c => `<span style="font-size:12px;color:#000;font-weight:900;background:#fff;border:2px solid #000;padding:3px 8px;border-radius:4px;">${c}</span>`).join(' ') : ''}
-        <div style="width:100%;border-top:1.5px dashed #000;padding-top:4px;margin-top:4px;font-size:12px;font-family:Consolas,monospace;font-weight:900;color:#000;display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;">
-          <span style="background:#000;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;letter-spacing:0.5px;">CONDITION DE COUPE</span>
-          <span>Barre brute : <strong>${Math.round(sec.barreLongueur || 6000)} mm</strong></span>
+        <div class="conditions-coupe-line" style="width:100%;border-top:1px dashed #000;padding-top:2px;margin-top:2px;font-size:9.5px;font-family:Consolas,monospace;font-weight:700;color:#000;display:flex;justify-content:center;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;line-height:1.2;">
+          <span style="background:#000;color:#fff;padding:0.5px 4px;border-radius:2px;font-size:8.5px;font-weight:900;letter-spacing:0.3px;">CONDITIONS DE COUPE</span>
+          <span>Barre : <strong>${Math.round(sec.barreLongueur || 6000)} mm</strong></span>
           <span>•</span>
-          <span>Lame scie : <strong>${sec.lameScie || 4.5} mm</strong></span>
+          <span>Lame : <strong>${sec.lameScie || 4.5} mm</strong></span>
           <span>•</span>
-          <span style="${sec.margeDebord !== 0 ? (sec.margeDebord < 0 ? 'background:#fee2e2;border:1px solid #ef4444;color:#991b1b;padding:1px 6px;border-radius:3px;' : 'background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:3px;') : ''}">${sec.margeDebord < 0 ? 'Déduction' : 'Débordement'} : <strong>${sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong></span>
+          <span style="${sec.margeDebord !== 0 ? (sec.margeDebord < 0 ? 'background:#fee2e2;border:1px solid #ef4444;color:#991b1b;padding:0px 3px;border-radius:2px;' : 'background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:0px 3px;border-radius:2px;') : ''}">${sec.margeDebord < 0 ? 'Déduction' : 'Débord.'} : <strong>${sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong></span>
           <span>•</span>
-          <span>Reste min / max : <strong>${sec.refusMin || 500} / ${sec.refusMax || 1100} mm</strong></span>
+          <span>Reste min/max : <strong>${sec.refusMin || 500} / ${sec.refusMax || 1100} mm</strong></span>
         </div>
       </div>
       ${sec.groupesBarresNeuves.length > 0 ? `
@@ -1320,6 +1320,21 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     .border-cut-dashed { border-bottom: 2.5px dashed #000 !important; border-right: 2px solid #000 !important; }
     .border-bar-solid { border-bottom: 4px solid #000 !important; border-right: 2px solid #000 !important; }
     .border-cell-standard { border: 1.5px solid #000 !important; }
+    .conditions-coupe-line {
+      font-size: 9.5px !important;
+      line-height: 1.2 !important;
+      padding-top: 2px !important;
+      margin-top: 2px !important;
+      gap: 6px !important;
+      white-space: nowrap !important;
+      flex-wrap: nowrap !important;
+      overflow: hidden !important;
+      justify-content: center !important;
+    }
+    .conditions-coupe-badge {
+      font-size: 8.5px !important;
+      padding: 0.5px 4px !important;
+    }
   </style>
 </head>
 <body>
@@ -1822,25 +1837,25 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               </div>
             )}
 
-            {/* Ligne Conditions de coupe du profilé */}
-            <div className="w-full border-t-2 border-dashed border-black pt-2 mt-1 flex items-center justify-center gap-3 sm:gap-4 flex-wrap text-xs sm:text-sm font-mono font-black text-black">
-              <span className="bg-black text-white px-2.5 py-0.5 rounded text-[11px] uppercase tracking-wider">
-                Condition de coupe
+            {/* Ligne Conditions de coupe du profilé (compacte sur une seule ligne) */}
+            <div className="conditions-coupe-line w-full border-t border-dashed border-black pt-1 mt-1 flex items-center justify-center gap-2 sm:gap-2.5 whitespace-nowrap overflow-hidden text-[10px] sm:text-[11px] font-mono font-bold text-black print:text-[9px] print:gap-1.5 print:pt-0.5 print:mt-0.5 print:whitespace-nowrap print:overflow-hidden print:leading-tight">
+              <span className="conditions-coupe-badge bg-black text-white px-1.5 py-0.2 rounded text-[8.5px] uppercase tracking-wider font-black print:text-[8px] print:px-1">
+                Conditions de coupe
               </span>
               <span>
-                Barre brute : <strong>{Math.round(sec.barreLongueur || 6000)} mm</strong>
+                Barre : <strong>{Math.round(sec.barreLongueur || 6000)} mm</strong>
               </span>
               <span>•</span>
               <span>
-                Lame scie : <strong>{sec.lameScie || 4.5} mm</strong>
+                Lame : <strong>{sec.lameScie || 4.5} mm</strong>
               </span>
               <span>•</span>
-              <span className={sec.margeDebord < 0 ? 'bg-rose-100 text-rose-900 border border-rose-400 px-2 py-0.5 rounded font-bold' : (sec.margeDebord > 0 ? 'bg-amber-100 text-amber-900 border border-amber-400 px-2 py-0.5 rounded font-bold' : '')}>
-                {sec.margeDebord < 0 ? 'Déduction' : 'Débordement'} : <strong>{sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong>
+              <span className={sec.margeDebord < 0 ? 'bg-rose-100 text-rose-900 border border-rose-400 px-1 rounded font-bold' : (sec.margeDebord > 0 ? 'bg-amber-100 text-amber-900 border border-amber-400 px-1 rounded font-bold' : '')}>
+                {sec.margeDebord < 0 ? 'Déduction' : 'Débord.'} : <strong>{sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong>
               </span>
               <span>•</span>
               <span>
-                Reste min / max : <strong>{sec.refusMin || 500} / {sec.refusMax || 1100} mm</strong>
+                Reste min/max : <strong>{sec.refusMin || 500} / {sec.refusMax || 1100} mm</strong>
               </span>
             </div>
           </div>
@@ -2376,6 +2391,22 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             box-shadow: none !important;
             background: transparent !important;
             color: #000000 !important;
+          }
+          /* Conditions de coupe : ultra compacte sur une seule ligne */
+          .conditions-coupe-line {
+            font-size: 9px !important;
+            line-height: 1.15 !important;
+            padding-top: 1.5px !important;
+            margin-top: 1.5px !important;
+            gap: 5px !important;
+            white-space: nowrap !important;
+            flex-wrap: nowrap !important;
+            overflow: hidden !important;
+            justify-content: center !important;
+          }
+          .conditions-coupe-badge {
+            font-size: 8px !important;
+            padding: 0.5px 3px !important;
           }
           /* Neutraliser les fonds sombres/colorés pour économiser l'encre */
           [class*="bg-slate-950"], [class*="bg-slate-900"], [class*="bg-slate-800"], [class*="bg-black"], [class*="bg-amber"], [class*="bg-emerald"], [class*="bg-sky"] {
