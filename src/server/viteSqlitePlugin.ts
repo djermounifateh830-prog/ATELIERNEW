@@ -70,6 +70,9 @@ function parseBody(req: any): Promise<any> {
 function sendJson(res: any, data: any, status = 200) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With');
   res.end(JSON.stringify(data));
 }
 
@@ -84,6 +87,18 @@ export function sqlitePlugin(): Plugin {
       // Intercepter uniquement les routes /api/*
       if (!url.startsWith('/api')) {
         return next();
+      }
+
+      // Configuration universelle des headers CORS pour tous les appels /api/* (y compris iframe AI Studio)
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With');
+      res.setHeader('Access-Control-Max-Age', '86400');
+
+      if (method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
       }
 
       try {

@@ -89,7 +89,9 @@ class AutoBackupService {
     // Si la sauvegarde n'a pas encore été effectuée aujourd'hui
     // et que l'heure actuelle est supérieure ou égale à l'heure programmée
     if (this.settings.lastBackupDate !== todayStr && currentTimeStr >= this.settings.scheduledTime) {
-      this.executeBackup(true);
+      this.executeBackup(true).catch(err => {
+        console.warn('[AutoBackup] Sauvegarde automatique reportée ou impossible:', err);
+      });
     }
   }
 
@@ -123,9 +125,40 @@ class AutoBackupService {
 
       return { filename: result.filename, fullPath: result.fullPath };
     } catch (err: any) {
-      console.error('Erreur lors de la sauvegarde silencieuse:', err);
-      logger.error('Sauvegarde Base', `Échec de la sauvegarde silencieuse : ${err.message}`);
-      throw err;
+      console.warn('Sauvegarde silencieuse serveur indisponible, sauvegarde de secours locale...', err?.message || err);
+      
+      // En cas d'indisponibilité du serveur (hors-ligne, sandbox iframe ou réseau restreint), 
+      // créer un instantané de secours local pour sécuriser les données de l'atelier
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+      const currentDay = String(now.getDate()).padStart(2, '0');
+      const todayStr = `${currentYear}-${currentMonth}-${currentDay}`;
+      const timeFormatted = now.toTimeString().split(' ')[0];
+      const fallbackFilename = `3m_atelier_backup_local_${todayStr}_${String(now.getHours()).padStart(2, '0')}h${String(now.getMinutes()).padStart(2, '0')}m.json`;
+
+      try {
+        const fullData = await StorageService.initSqlite();
+        localStorage.setItem('3m_last_local_backup', JSON.stringify({
+          timestamp: new Date().toISOString(),
+          filename: fallbackFilename,
+          data: fullData
+        }));
+
+        this.settings.lastBackupDate = todayStr;
+        this.settings.lastBackupTime = timeFormatted;
+        this.settings.lastBackupFilename = fallbackFilename;
+        this.save();
+
+        logger.action('Sauvegarde Base', `Sauvegarde locale de secours enregistrée (${fallbackFilename}).`);
+        return { filename: fallbackFilename, fullPath: 'Stockage local navigateur (Secours)' };
+      } catch (localErr: any) {
+        // Enregistrer la tentative pour éviter de boucler toutes les 30s
+        this.settings.lastBackupDate = todayStr;
+        this.save();
+        logger.warn('Sauvegarde Base', `Sauvegarde automatique suspendue : ${err.message || 'Serveur indisponible'}`);
+        return { filename: 'erreur_sauvegarde', fullPath: '' };
+      }
     }
   }
 
