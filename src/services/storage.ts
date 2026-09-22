@@ -776,7 +776,7 @@ export class StorageService {
   // SUIVIS OF
   // ==========================================
 
-  static async reparerFamillesOF(): Promise<{ repares: number; data?: SuiviOF[] }> {
+  static async reparerFamillesOF(): Promise<{ repares: number; data?: SuiviOF[]; dossiers?: DossierCommandeGlobal[] }> {
     try {
       const response = await this.request('/api/of/reparer-familles', {
         method: 'POST',
@@ -786,10 +786,27 @@ export class StorageService {
       if (res?.repares > 0) {
         logger.sqlite('Réparation OF', `${res.repares} ordre(s) de fabrication réparé(s) vers leur vraie famille (Tablier, Moustiquaire...).`);
       }
-      return { repares: res?.repares || 0, data: res?.data };
+      return { repares: res?.repares || 0, data: res?.data, dossiers: res?.dossiers };
     } catch (e: any) {
       console.error('Erreur réparation familles OF:', e);
       return { repares: 0 };
+    }
+  }
+
+  static async synchroniserStatutsDossiers(): Promise<{ misAJour: number; dossiers?: DossierCommandeGlobal[] }> {
+    try {
+      const response = await this.request('/api/dossiers/synchroniser-statuts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const res = await response.json();
+      if (res?.misAJour > 0) {
+        logger.sqlite('Synchro Statuts', `${res.misAJour} dossier(s) mis à jour en accord avec les OFs.`);
+      }
+      return { misAJour: res?.misAJour || 0, dossiers: res?.dossiers };
+    } catch (e: any) {
+      console.error('Erreur synchronisation statuts dossiers:', e);
+      return { misAJour: 0 };
     }
   }
 

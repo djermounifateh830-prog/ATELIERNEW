@@ -148,7 +148,7 @@ export class OptimiseurCoupe1D {
 
     let count = 0;
     // Profondeur d'exploration calibrée pour une recherche ultra-rapide sans bloquer le thread principal
-    const maxNodes = Math.min(8000, 1000 + pool.length * 80);
+    const maxNodes = pool.length > 200 ? 1500 : Math.min(4000, 800 + pool.length * 30);
 
     const backtrack = (idx: number, currentList: PieceItem[], currentUtilise: number) => {
       count++;
@@ -192,6 +192,10 @@ export class OptimiseurCoupe1D {
       }
 
       for (let i = idx; i < sorted.length; i++) {
+        // Élagage des cotes identiques au même niveau de récursion (évite l'explosion combinatoire)
+        if (i > idx && Math.abs(sorted[i].longueur - sorted[i - 1].longueur) < 0.01) {
+          continue;
+        }
         const p = sorted[i];
         const addCost = p.longueur + (currentList.length > 0 ? this.epaisseurScie : 0);
         if (currentUtilise + addCost <= capaciteNette + 0.001) {
@@ -322,8 +326,8 @@ export class OptimiseurCoupe1D {
 
     const capaciteNette = capaciteBarre - this.eboutage;
     const distinctLengths = Array.from(counts.keys()).sort((a, b) => b - a);
-    const poolRestant = [...initialPool];
     const planBarres: SolutionPlan['barres'] = [];
+    const usedPieceIds = new Set<string>();
 
     // Générer des motifs homogènes (1 seule cote répétée au max)
     for (const lg of distinctLengths) {
@@ -379,15 +383,14 @@ export class OptimiseurCoupe1D {
           eboutage: this.eboutage
         });
 
-        // Retirer du pool global
-        const idsToRemove = new Set(piecesDuMotif.map(p => p.id));
-        const idxsToRemove: number[] = [];
-        poolRestant.forEach((p, idx) => {
-          if (idsToRemove.has(p.id)) idxsToRemove.push(idx);
-        });
-        idxsToRemove.reverse().forEach(i => poolRestant.splice(i, 1));
+        // Marquer comme utilisées pour exclusion rapide
+        for (const p of piecesDuMotif) {
+          usedPieceIds.add(p.id);
+        }
       }
     }
+
+    const poolRestant = initialPool.filter(p => !usedPieceIds.has(p.id));
 
     // Traitement des pièces restantes avec un Best-Fit Decreasing enrichi
     if (poolRestant.length > 0) {
@@ -582,19 +585,45 @@ export class OptimiseurCoupe1D {
             eboutage: this.eboutage
           });
         } else {
-          const usedIds = new Set(sac.pieces.map(p => p.id));
-          poolKnap = poolKnap.filter(p => !usedIds.has(p.id));
-          const u = this.calculerEncombrement(sac.pieces, true);
-          const r = this.longueurBarre - u;
-          planBarres.push({
-            longueurTotale: this.longueurBarre,
-            pieces: sac.pieces,
-            utilise: u,
-            reste: r,
-            statut: this.statutPourReste(r),
-            isChuteStock: false,
-            eboutage: this.eboutage
+          // Replication ultra-rapide du motif de coupe trouvé :
+          // Si nous avons plusieurs exemplaires des mêmes cotes dans poolKnap (cas fréquent des tabliers),
+          // on reproduit ce motif optimal immédiatement sans relancer de sac à dos redondant.
+          const countNeeded = new Map<number, number>();
+          sac.pieces.forEach(p => countNeeded.set(p.longueur, (countNeeded.get(p.longueur) || 0) + 1));
+
+          const availableInPool = new Map<number, PieceItem[]>();
+          poolKnap.forEach(p => {
+            if (!availableInPool.has(p.longueur)) availableInPool.set(p.longueur, []);
+            availableInPool.get(p.longueur)!.push(p);
           });
+
+          let maxRepetitions = Infinity;
+          countNeeded.forEach((qty, lg) => {
+            const avail = availableInPool.get(lg)?.length || 0;
+            maxRepetitions = Math.min(maxRepetitions, Math.floor(avail / qty));
+          });
+          if (!Number.isFinite(maxRepetitions) || maxRepetitions < 1) maxRepetitions = 1;
+
+          for (let rep = 0; rep < maxRepetitions; rep++) {
+            const barPieces: PieceItem[] = [];
+            countNeeded.forEach((qty, lg) => {
+              const items = availableInPool.get(lg)!.splice(0, qty);
+              barPieces.push(...items);
+            });
+            const u = this.calculerEncombrement(barPieces, true);
+            const r = this.longueurBarre - u;
+            planBarres.push({
+              longueurTotale: this.longueurBarre,
+              pieces: barPieces,
+              utilise: u,
+              reste: r,
+              statut: this.statutPourReste(r),
+              isChuteStock: false,
+              eboutage: this.eboutage
+            });
+          }
+
+          poolKnap = Array.from(availableInPool.values()).flat();
         }
       }
       return this.evaluerPlan(planBarres);
@@ -831,6 +860,163 @@ export class OptimiseurCoupe1D {
   }
 
   /**
+   * Version asynchrone de la recherche locale avec relâches périodiques (non-bloquante)
+   */
+  private async optimiserParRechercheLocaleAvanceeAsync(
+    solutionInitiale: SolutionPlan,
+    iterations: number
+  ): Promise<SolutionPlan> {
+    let currentSolution = solutionInitiale;
+    let bestSolution = solutionInitiale;
+
+    const barresNeuvesInit = currentSolution.barres.filter(b => !b.isChuteStock);
+    if (barresNeuvesInit.length <= 1) return solutionInitiale;
+
+    let temperature = 120.0;
+    const coolingRate = 0.996;
+
+    for (let it = 0; it < iterations; it++) {
+      if (it > 0 && it % 25 === 0) {
+        await new Promise(r => setTimeout(r, 0));
+      }
+      temperature *= coolingRate;
+
+      const currentBarresNeuves = currentSolution.barres.filter(b => !b.isChuteStock);
+      const chutesStock = currentSolution.barres.filter(b => b.isChuteStock);
+      const candidateBins: PieceItem[][] = currentBarresNeuves.map(b => [...b.pieces]);
+
+      if (candidateBins.length <= 1) break;
+
+      const operatorChoice = Math.random();
+
+      if (operatorChoice < 0.30) {
+        let minIdx = 0;
+        let minUtil = Infinity;
+        for (let b = 0; b < candidateBins.length; b++) {
+          const u = this.calculerEncombrement(candidateBins[b], true);
+          if (u < minUtil) {
+            minUtil = u;
+            minIdx = b;
+          }
+        }
+
+        const piecesToRedistribute = [...candidateBins[minIdx]];
+        const otherBins = candidateBins.filter((_, idx) => idx !== minIdx);
+        let allPlaced = true;
+
+        for (const p of piecesToRedistribute) {
+          let placed = false;
+          otherBins.sort((b1, b2) => {
+            const hasSame1 = b1.some(x => Math.abs(x.longueur - p.longueur) < 0.1);
+            const hasSame2 = b2.some(x => Math.abs(x.longueur - p.longueur) < 0.1);
+            if (hasSame1 !== hasSame2) return hasSame1 ? -1 : 1;
+            return this.calculerEncombrement(b2, true) - this.calculerEncombrement(b1, true);
+          });
+
+          for (let b = 0; b < otherBins.length; b++) {
+            const u = this.calculerEncombrement(otherBins[b], true);
+            if (u + p.longueur + this.epaisseurScie <= this.longueurBarre + 0.001) {
+              otherBins[b].push(p);
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            allPlaced = false;
+            break;
+          }
+        }
+
+        if (allPlaced) {
+          candidateBins.splice(0, candidateBins.length, ...otherBins);
+        }
+      } else if (operatorChoice < 0.65) {
+        const problemIndices: number[] = [];
+        candidateBins.forEach((bin, idx) => {
+          const u = this.calculerEncombrement(bin, true);
+          const r = this.longueurBarre - u;
+          const distinct = new Set(bin.map(p => Math.round(p.longueur))).size;
+          if ((r > this.refusMin && r < this.refusMax) || (this.mode === 'temps' && distinct > 2)) {
+            problemIndices.push(idx);
+          }
+        });
+
+        const i = problemIndices.length > 0 && Math.random() < 0.75
+          ? problemIndices[Math.floor(Math.random() * problemIndices.length)]
+          : Math.floor(Math.random() * candidateBins.length);
+
+        let j = Math.floor(Math.random() * candidateBins.length);
+        while (j === i) j = Math.floor(Math.random() * candidateBins.length);
+
+        if (candidateBins[i].length > 0 && candidateBins[j].length > 0) {
+          const pi = Math.floor(Math.random() * candidateBins[i].length);
+          const pj = Math.floor(Math.random() * candidateBins[j].length);
+
+          const pieceI = candidateBins[i][pi];
+          const pieceJ = candidateBins[j][pj];
+
+          const tempI = candidateBins[i].filter((_, idx) => idx !== pi).concat(pieceJ);
+          const tempJ = candidateBins[j].filter((_, idx) => idx !== pj).concat(pieceI);
+
+          if (
+            this.calculerEncombrement(tempI, true) <= this.longueurBarre + 0.001 &&
+            this.calculerEncombrement(tempJ, true) <= this.longueurBarre + 0.001
+          ) {
+            candidateBins[i] = tempI;
+            candidateBins[j] = tempJ;
+          }
+        }
+      } else {
+        const i = Math.floor(Math.random() * candidateBins.length);
+        let j = Math.floor(Math.random() * candidateBins.length);
+        while (j === i) j = Math.floor(Math.random() * candidateBins.length);
+
+        if (candidateBins[i].length > 1) {
+          const pIdx = Math.floor(Math.random() * candidateBins[i].length);
+          const piece = candidateBins[i][pIdx];
+
+          const currentUtiliseJ = this.calculerEncombrement(candidateBins[j], true);
+          const addCost = piece.longueur + this.epaisseurScie;
+
+          if (currentUtiliseJ + addCost <= this.longueurBarre + 0.001) {
+            candidateBins[i].splice(pIdx, 1);
+            candidateBins[j].push(piece);
+          }
+        }
+      }
+
+      const candidateBarres: SolutionPlan['barres'] = [
+        ...chutesStock,
+        ...candidateBins.map(bin => {
+          const utilise = this.calculerEncombrement(bin, true);
+          const reste = this.longueurBarre - utilise;
+          return {
+            longueurTotale: this.longueurBarre,
+            pieces: bin,
+            utilise,
+            reste,
+            statut: this.statutPourReste(reste),
+            isChuteStock: false,
+            eboutage: this.eboutage
+          };
+        })
+      ];
+
+      const evaluatedCandidate = this.evaluerPlan(candidateBarres);
+      const deltaScore = evaluatedCandidate.score - currentSolution.score;
+
+      if (deltaScore < 0 || Math.exp(-deltaScore / Math.max(1, temperature)) > Math.random()) {
+        currentSolution = evaluatedCandidate;
+        if (currentSolution.score < bestSolution.score) {
+          bestSolution = currentSolution;
+        }
+      }
+    }
+
+    return bestSolution;
+  }
+
+  /**
    * Trie et regroupe les barres de manière ultra-ergonomique pour l'atelier :
    * - Identifie les barres jumelles / paquets (motifRepete)
    * - Trie les pièces de la plus grande à la plus petite sur chaque barre
@@ -1034,8 +1220,9 @@ export class OptimiseurCoupe1D {
       candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'BFD', 'SANS_CHUTES'));
     }
 
-    // Stratégie C : Explorations aléatoires diversifiées
-    for (let r = 0; r < 12; r++) {
+    // Stratégie C : Explorations aléatoires diversifiées calibrées
+    const randomPasses = poolValide.length > 250 ? 2 : poolValide.length > 80 ? 4 : 8;
+    for (let r = 0; r < randomPasses; r++) {
       candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'RANDOM', 'PROPRE_STRICT'));
     }
 
@@ -1046,11 +1233,167 @@ export class OptimiseurCoupe1D {
     let bestPlan = candidates.reduce((best, curr) => (curr.score < best.score ? curr : best), candidates[0]);
 
     // 2. Métaheuristique ALNS Avancée (Recherche Locale avec Simulated Annealing)
-    const optimizedPlan = this.optimiserParRechercheLocaleAvancee(bestPlan, this.iterations);
+    const effectiveIterations = poolValide.length > 300
+      ? Math.min(80, this.iterations)
+      : poolValide.length > 120
+        ? Math.min(180, this.iterations)
+        : this.iterations;
+
+    const optimizedPlan = this.optimiserParRechercheLocaleAvancee(bestPlan, effectiveIterations);
     if (optimizedPlan.score < bestPlan.score) {
       bestPlan = optimizedPlan;
     }
 
+    return this.finaliserResultat(bestPlan, poolValide, piecesTropGrandes, borneTheorique);
+  }
+
+  /**
+   * Version asynchrone ultra-performante et non bloquante :
+   * Cède périodiquement le thread au navigateur (setTimeout 0) pour empêcher l'affichage
+   * de la boîte de dialogue "Page ne répondant pas" sur les très grosses commandes.
+   */
+  public async optimiserAsync(
+    piecesDemandes: { longueur: number; quantite: number; label?: string; repere?: string; refCommande?: string; nomClient?: string; donneurOrdre?: string }[],
+    chutesStock: (ChuteItem | { id?: string; longueur: number; quantite: number })[] = [],
+    onProgress?: (progress: number, task: string) => void
+  ): Promise<ResultatOptimisation> {
+    const initialPool: PieceItem[] = [];
+    let pieceUid = 1;
+
+    for (const item of piecesDemandes) {
+      const qte = Math.max(1, Math.floor(item.quantite || 1));
+      const lg = Number(item.longueur) || 0;
+      if (lg <= 0) continue;
+
+      for (let i = 0; i < qte; i++) {
+        initialPool.push({
+          id: `p-${pieceUid++}`,
+          longueur: lg,
+          label: item.label || 'Pièce',
+          repere: item.repere,
+          refCommande: item.refCommande,
+          nomClient: item.nomClient,
+          donneurOrdre: item.donneurOrdre
+        });
+      }
+    }
+
+    const piecesTropGrandes = initialPool.filter(p => p.longueur > (this.longueurBarre - this.eboutage));
+    const poolValide = initialPool.filter(p => p.longueur <= (this.longueurBarre - this.eboutage));
+
+    if (piecesTropGrandes.length > 0) {
+      logger.anomaly('Optimiseur1D', `${piecesTropGrandes.length} pièce(s) demandée(s) dépassent la capacité maximale de la barre (${this.longueurBarre - this.eboutage}mm).`, {
+        longueurMaxBarre: this.longueurBarre - this.eboutage,
+        piecesTropGrandes: piecesTropGrandes.map(p => ({ longueur: p.longueur, label: p.label, repere: p.repere }))
+      });
+    }
+
+    const poolChutes: ChuteStockItem[] = [];
+    for (const chute of chutesStock) {
+      const qte = Math.max(0, Math.floor(chute.quantite || 0));
+      const lg = Number(chute.longueur) || 0;
+      if (lg > 0) {
+        for (let i = 0; i < qte; i++) {
+          poolChutes.push({
+            id: chute.id || `chute-${lg}-${i}`,
+            longueur: lg
+          });
+        }
+      }
+    }
+    poolChutes.sort((a, b) => b.longueur - a.longueur);
+
+    const capaciteUtileBarre = this.longueurBarre - this.eboutage;
+    const borneTheorique = this.calculerBorneInferieure(poolValide, capaciteUtileBarre);
+
+    if (poolValide.length === 0) {
+      return {
+        barres_neuves: [],
+        chutes_utilisees: [],
+        pieces_non_placees: piecesTropGrandes.map(p => ({
+          id: p.id,
+          longueur: p.longueur,
+          label: p.label,
+          repere: p.repere,
+          refCommande: p.refCommande,
+          nomClient: p.nomClient,
+          donneurOrdre: p.donneurOrdre
+        })),
+        total_chute_mm: 0,
+        total_dechet_mm: 0,
+        total_barres_neuves: 0,
+        total_chutes_recyclees: 0,
+        taux_rendement: 100,
+        dateCalcul: new Date().toISOString(),
+        mode: this.mode,
+        poidsTemps: this.poidsTemps,
+        borneTheoriqueBarres: 0,
+        isOptimumAbsolu: true,
+        reglagesButeeTotal: 0,
+        reglagesButeeEconomises: 0,
+        nombrePaquetsCoupe: 0,
+        tempsEstimeMinutes: 0,
+        gainTempsPourcent: 0
+      };
+    }
+
+    const candidates: SolutionPlan[] = [];
+
+    // Stratégie A : Recyclage Propre Strict
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'KNAPSACK', 'PROPRE_STRICT'));
+    await new Promise(r => setTimeout(r, 0));
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'PATTERN_MINING', 'PROPRE_STRICT'));
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'SAME_LENGTH_FIRST', 'PROPRE_STRICT'));
+    await new Promise(r => setTimeout(r, 0));
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'BFD', 'PROPRE_STRICT'));
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'FFD', 'PROPRE_STRICT'));
+
+    // Stratégie B : 100% Barres Neuves
+    if (poolChutes.length > 0) {
+      await new Promise(r => setTimeout(r, 0));
+      candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'KNAPSACK', 'SANS_CHUTES'));
+      candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'PATTERN_MINING', 'SANS_CHUTES'));
+      candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'BFD', 'SANS_CHUTES'));
+    }
+
+    // Stratégie C : Explorations aléatoires
+    const randomPasses = poolValide.length > 250 ? 2 : poolValide.length > 80 ? 4 : 8;
+    for (let r = 0; r < randomPasses; r++) {
+      candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'RANDOM', 'PROPRE_STRICT'));
+      if (r % 2 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    // Stratégie D : Dernier recours tolérant
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'BFD', 'TOLERANT'));
+    candidates.push(this.construireSolutionHeuristique(poolValide, poolChutes, 'KNAPSACK', 'TOLERANT'));
+
+    let bestPlan = candidates.reduce((best, curr) => (curr.score < best.score ? curr : best), candidates[0]);
+
+    // 2. Métaheuristique ALNS Avancée
+    const effectiveIterations = poolValide.length > 300
+      ? Math.min(80, this.iterations)
+      : poolValide.length > 120
+        ? Math.min(180, this.iterations)
+        : this.iterations;
+
+    await new Promise(r => setTimeout(r, 0));
+    const optimizedPlan = await this.optimiserParRechercheLocaleAvanceeAsync(bestPlan, effectiveIterations);
+    if (optimizedPlan.score < bestPlan.score) {
+      bestPlan = optimizedPlan;
+    }
+
+    return this.finaliserResultat(bestPlan, poolValide, piecesTropGrandes, borneTheorique);
+  }
+
+  /**
+   * Finalise et formate le plan de coupe optimal
+   */
+  private finaliserResultat(
+    bestPlan: SolutionPlan,
+    poolValide: PieceItem[],
+    piecesTropGrandes: PieceItem[],
+    borneTheorique: number
+  ): ResultatOptimisation {
     let barresNeuves: ResultatBarre[] = [];
     const chutesUtilisees: ResultatChute[] = [];
 

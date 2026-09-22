@@ -2785,8 +2785,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         currentTask: label,
         sectionName: `Étape ${stepIndex} / ${totalSteps}`
       });
-      // Permet au navigateur de rafraîchir l'affichage de la barre de progression et empêche l'alerte "Attendre ou Annuler"
-      await new Promise(r => setTimeout(r, 25));
+      // Permet au navigateur de rafraîchir l'affichage de la barre de progression immédiatement
+      await new Promise(r => setTimeout(r, 10));
     };
 
     setOptProgress({
@@ -2795,7 +2795,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       currentTask: 'Initialisation des algorithmes de coupe et chargement des chutes...',
       sectionName: `Étape 0 / ${totalSteps}`
     });
-    await new Promise(r => setTimeout(r, 40));
+    await new Promise(r => setTimeout(r, 15));
 
     try {
       // ─────────────────────────────────────────────────────────────────────────
@@ -2833,7 +2833,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               refCommande: cmdTag || 'CMD-01'
             };
           });
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = artObj?.code_art || artCode;
           res.articleDesignation = artObj?.designation || 'Caisson Tunnel';
           res.refCommande = titreRefCaissons;
@@ -2903,7 +2903,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               refCommande: cmdTag || 'CMD-01'
             };
           });
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = sfObj?.code_art || sfCode;
           res.articleDesignation = sfObj?.designation || 'Sous-Face Alu';
           res.refCommande = titreRefSF;
@@ -2979,7 +2979,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               refCommande: cmdTag || 'CMD-01'
             });
           });
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = artObj?.code_art || artCode;
           res.articleDesignation = artObj?.designation || 'Lame Tablier';
           res.refCommande = titreRefTabliers;
@@ -3043,7 +3043,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               refCommande: cmdTag || 'CMD-01'
             };
           });
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = lfObj?.code_art || lfCode;
           res.articleDesignation = lfObj?.designation || 'Lame Finale';
           res.refCommande = titreRefTabliers;
@@ -3102,7 +3102,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               refCommande: cmdTag || 'CMD-01'
             });
           });
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = glObj?.code_art || glCode;
           res.articleDesignation = glObj?.designation || 'TAB COULISSE';
           res.refCommande = titreRefTabliers;
@@ -3171,7 +3171,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               pieces.push({ longueur: lenL, quantite: 1 * Q, label: `CD-${m.repere} (Traverse Basse ${lenL}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Lb-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
             }
           }
-          const res = opt.optimiser(pieces, availableChutes);
+          const res = await opt.optimiserAsync(pieces, availableChutes);
           res.articleCode = cadreObj.code_art;
           res.articleDesignation = cadreObj.designation;
           res.refCommande = titreRefMSTQ;
@@ -3233,7 +3233,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }
           }
           if (pieces.length === 0) continue;
-          const res = opt.optimiser(pieces, availableChutes);
+          const res = await opt.optimiserAsync(pieces, availableChutes);
           res.articleCode = coulisseObj.code_art;
           res.articleDesignation = coulisseObj.designation;
           res.refCommande = titreRefMSTQ;
@@ -3288,7 +3288,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             const lenBI = m.largeur + ded;
             pieces.push({ longueur: lenBI, quantite: 1 * Q, label: `BI-${m.repere} (Barre Inférieure ${lenBI}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `BI-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
           }
-          const res = opt.optimiser(pieces, availableChutes);
+          const res = await opt.optimiserAsync(pieces, availableChutes);
           res.articleCode = biObj.code_art;
           res.articleDesignation = biObj.designation;
           res.refCommande = titreRefMSTQ;
@@ -3371,7 +3371,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             }
           });
 
-          const res = opt.optimiser(piecesToCut, availableChutes);
+          const res = await opt.optimiserAsync(piecesToCut, availableChutes);
           res.articleCode = artObj?.code_art || artCode;
           res.articleDesignation = artObj?.designation || 'Précadre';
           res.refCommande = titreRefPRC;

@@ -29,7 +29,7 @@ class AtelierDatabase {
   private db: DatabaseSync;
 
   constructor() {
-    // Initialisation sécurisée de la connexion SQLite avec auto-guérison
+    // Initialisation sécurisée de la connexion SQLite avec auto-guérison intelligente
     try {
       this.db = new DatabaseSync(DB_PATH);
       this.db.exec('PRAGMA journal_mode = WAL;');
@@ -61,10 +61,58 @@ class AtelierDatabase {
     }
     this.initTables();
     this.cleanCorruptedDesignations();
+    this.autoRecoverIfEmpty();
     this.seedIfEmpty();
     this.rebuildReservationsIfEmpty();
     this.reparerFamillesOF();
+    this.synchroniserStatutsDossiersOF();
     this.checkpointWal();
+  }
+
+  /**
+   * Restaure automatiquement les données depuis une sauvegarde valide si la base actuelle est vide
+   */
+  private autoRecoverIfEmpty() {
+    try {
+      const row = this.db.prepare('SELECT count(*) as c FROM dossiers').get() as any;
+      if (row && row.c > 0) return; // Base déjà peuplée
+
+      const dir = process.cwd();
+      const files = fs.readdirSync(dir)
+        .filter(f => f.startsWith('3m_atelier.db.corrupted.') || f.startsWith('3m_atelier.db.backup.'))
+        .sort().reverse();
+
+      for (const f of files) {
+        const fullPath = path.resolve(dir, f);
+        try {
+          const testDb = new DatabaseSync(fullPath);
+          const check = testDb.prepare('PRAGMA quick_check;').all() as any[];
+          if (check.some((r: any) => r.quick_check && r.quick_check !== 'ok')) continue;
+          const countDossiers = (testDb.prepare('SELECT count(*) as c FROM dossiers').get() as any)?.c || 0;
+          if (countDossiers > 0) {
+            console.log(`[AtelierDB] Restauration automatique de ${countDossiers} dossiers depuis ${f}...`);
+            const allD = testDb.prepare('SELECT * FROM dossiers').all() as any[];
+            for (const d of allD) {
+              this.db.prepare('INSERT OR REPLACE INTO dossiers (id, ref_commande, nom_client_final, statut, json_data) VALUES (?, ?, ?, ?, ?)').run(d.id, d.ref_commande, d.nom_client_final, d.statut, d.json_data);
+            }
+            const allOF = testDb.prepare('SELECT * FROM suivis_of').all() as any[];
+            for (const o of allOF) {
+              this.db.prepare('INSERT OR REPLACE INTO suivis_of (id, numero_emission, code_of, num_commande, nom_client, famille, statut, json_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(o.id, o.numero_emission, o.code_of, o.num_commande, o.nom_client, o.famille, o.statut, o.json_data);
+            }
+            const allM = testDb.prepare('SELECT * FROM mouvements_stock').all() as any[];
+            for (const m of allM) {
+              this.db.prepare('INSERT OR REPLACE INTO mouvements_stock (id, timestamp, date, article_code, article_designation, type_mouvement, quantite, commentaire) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(m.id, m.timestamp, m.date, m.article_code, m.article_designation, m.type_mouvement, m.quantite, m.commentaire);
+            }
+            console.log(`[AtelierDB] Restauration réussie (${allD.length} dossiers, ${allOF.length} OFs).`);
+            break;
+          }
+        } catch (eRecovery) {
+          console.warn(`[AtelierDB] Échec analyse sauvegarde ${f}:`, eRecovery);
+        }
+      }
+    } catch (e) {
+      console.warn('[AtelierDB] Erreur autoRecoverIfEmpty:', e);
+    }
   }
 
   checkpointWal() {
@@ -1230,7 +1278,7 @@ class AtelierDatabase {
           }
         }
       } else if (!d.estEnPause) {
-        const ofRows = this.db.prepare('SELECT id, json_data FROM suivis_of WHERE statut = "EN_PAUSE"').all() as any[];
+        const ofRows = this.db.prepare("SELECT id, json_data FROM suivis_of WHERE statut = 'EN_PAUSE'").all() as any[];
         const updateOfStmt = this.db.prepare(`
           UPDATE suivis_of SET statut = ?, json_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
         `);
@@ -1301,11 +1349,13 @@ class AtelierDatabase {
         const numCmdClean = (ofObj.numCommande || r.num_commande || '').trim().toLowerCase();
         const clientClean = (ofObj.nomClient || r.nom_client || '').trim().toLowerCase();
 
-        // 0. Vérification immédiate sur le numéro de commande et le titre de section
+        // 0. Vérification prioritaire et immédiate sur le titre de section et le numéro de commande
         const cmdUpper = (ofObj.numCommande || r.num_commande || '').toUpperCase();
         const titreUpper = (ofObj.titreSection || r.titre_section || '').toUpperCase();
 
-        if (cmdUpper.includes('PRC') || cmdUpper.includes('PRECADRE') || cmdUpper.includes('PRÉCADRE') || cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE') || titreUpper.includes('PRC')) {
+        if (titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE') || cmdUpper.includes('CAISSON')) {
+          vraieFamille = 'CAISSON';
+        } else if (cmdUpper.includes('PRC') || cmdUpper.includes('PRECADRE') || cmdUpper.includes('PRÉCADRE') || cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE') || titreUpper.includes('PRC')) {
           vraieFamille = 'PRECADRE';
         } else if (cmdUpper.includes('MSTQ') || cmdUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ') || titreUpper.includes('MAILLE')) {
           vraieFamille = 'MOUSTIQUAIRE';
@@ -1348,20 +1398,22 @@ class AtelierDatabase {
             const dNumPrc = (dossierAssocie.numCommandePrecadre || '').trim().toLowerCase();
             const dNumCais = (dossierAssocie.numCommandeCaisson || '').trim().toLowerCase();
 
-            if (numCmdClean && dNumPrc && (numCmdClean === dNumPrc || numCmdClean.includes(dNumPrc) || dNumPrc.includes(numCmdClean))) {
-              vraieFamille = 'PRECADRE';
-            } else if (numCmdClean && dNumMstq && (numCmdClean === dNumMstq || numCmdClean.includes(dNumMstq) || dNumMstq.includes(numCmdClean))) {
-              vraieFamille = 'MOUSTIQUAIRE';
-            } else if (numCmdClean && dNumTab && (numCmdClean === dNumTab || numCmdClean.includes(dNumTab) || dNumTab.includes(numCmdClean))) {
-              vraieFamille = 'TABLIER';
-            } else if (numCmdClean && dNumCais && (numCmdClean === dNumCais || numCmdClean.includes(dNumCais) || dNumCais.includes(numCmdClean))) {
-              vraieFamille = 'CAISSON';
-            } else {
-              const hasTab = (dossierAssocie.articlesTabliers || []).length > 0;
-              const hasMstq = (dossierAssocie.articlesMoustiquaires || []).length > 0;
-              const hasPrc = (dossierAssocie.articlesPrecadres || []).length > 0;
-              const hasCais = (dossierAssocie.articlesCaissons || []).length > 0;
+            const hasTab = (dossierAssocie.articlesTabliers || []).length > 0;
+            const hasMstq = (dossierAssocie.articlesMoustiquaires || []).length > 0;
+            const hasPrc = (dossierAssocie.articlesPrecadres || []).length > 0;
+            const hasCais = (dossierAssocie.articlesCaissons || []).length > 0;
 
+            // Vérifier d'abord la correspondance spécifique du sous-numéro AVEC présence effective d'articles
+            if (numCmdClean && dNumCais && (numCmdClean === dNumCais || numCmdClean.includes(dNumCais) || dNumCais.includes(numCmdClean)) && hasCais) {
+              vraieFamille = 'CAISSON';
+            } else if (numCmdClean && dNumTab && (numCmdClean === dNumTab || numCmdClean.includes(dNumTab) || dNumTab.includes(numCmdClean)) && hasTab) {
+              vraieFamille = 'TABLIER';
+            } else if (numCmdClean && dNumMstq && (numCmdClean === dNumMstq || numCmdClean.includes(dNumMstq) || dNumMstq.includes(numCmdClean)) && hasMstq) {
+              vraieFamille = 'MOUSTIQUAIRE';
+            } else if (numCmdClean && dNumPrc && (numCmdClean === dNumPrc || numCmdClean.includes(dNumPrc) || dNumPrc.includes(numCmdClean)) && hasPrc) {
+              vraieFamille = 'PRECADRE';
+            } else {
+              // Si une seule famille possède des articles dans le dossier
               if (hasTab && !hasCais && !hasMstq && !hasPrc) {
                 vraieFamille = 'TABLIER';
               } else if (hasMstq && !hasCais && !hasTab && !hasPrc) {
@@ -1378,9 +1430,26 @@ class AtelierDatabase {
         // 2. Si pas déduit par le dossier, inspecter les lignes de coupe débit (lignesRetour)
         if (!vraieFamille) {
           const lignes = ofObj.lignesRetour || [];
+          const hasCAIS = lignes.some((l: any) => {
+            const code = (l.articleCode || '').toUpperCase();
+            const des = (l.piecesInfoStr || l.designation || l.articleDesignation || '').toUpperCase();
+            const label = (l.repere || l.labelPiece || '').toUpperCase();
+            return (
+              code.includes('ART0009') ||
+              code.includes('ART0016') ||
+              des.includes('CT SOMO') ||
+              des.includes('CAISSON') ||
+              des.includes('SOUS-FACE') ||
+              des.includes('SF KERNOU') ||
+              des.includes('SF ') ||
+              label.startsWith('CT-') ||
+              label.startsWith('SF-')
+            );
+          });
+
           const hasPRC = lignes.some((l: any) => {
             const code = (l.articleCode || '').toUpperCase();
-            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
+            const des = (l.piecesInfoStr || l.designation || l.articleDesignation || '').toUpperCase();
             const label = (l.repere || l.labelPiece || '').toUpperCase();
             return (
               code.includes('ART007') ||
@@ -1395,7 +1464,7 @@ class AtelierDatabase {
 
           const hasTBL = lignes.some((l: any) => {
             const code = (l.articleCode || '').toUpperCase();
-            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
+            const des = (l.piecesInfoStr || l.designation || l.articleDesignation || '').toUpperCase();
             const label = (l.repere || l.labelPiece || '').toUpperCase();
             return (
               code.includes('ART004') ||
@@ -1413,7 +1482,7 @@ class AtelierDatabase {
 
           const hasMSTQ = lignes.some((l: any) => {
             const code = (l.articleCode || '').toUpperCase();
-            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
+            const des = (l.piecesInfoStr || l.designation || l.articleDesignation || '').toUpperCase();
             const label = (l.repere || l.labelPiece || '').toUpperCase();
             return (
               code.includes('ART005') ||
@@ -1427,39 +1496,26 @@ class AtelierDatabase {
             );
           }) || (ofObj.chutesMailleReservees && ofObj.chutesMailleReservees.length > 0);
 
-          const hasCAIS = lignes.some((l: any) => {
-            const des = (l.piecesInfoStr || l.designation || '').toUpperCase();
-            const label = (l.repere || l.labelPiece || '').toUpperCase();
-            return (
-              des.includes('CT SOMO') ||
-              des.includes('CAISSON') ||
-              des.includes('SOUS-FACE') ||
-              des.includes('SF ') ||
-              label.startsWith('CT-') ||
-              label.startsWith('SF-')
-            );
-          });
-
-          if (hasPRC && !hasTBL && !hasMSTQ && !hasCAIS) vraieFamille = 'PRECADRE';
+          if (hasCAIS && !hasTBL && !hasMSTQ && !hasPRC) vraieFamille = 'CAISSON';
+          else if (hasPRC && !hasTBL && !hasMSTQ && !hasCAIS) vraieFamille = 'PRECADRE';
           else if (hasTBL && !hasMSTQ && !hasPRC && !hasCAIS) vraieFamille = 'TABLIER';
           else if (hasMSTQ && !hasTBL && !hasPRC && !hasCAIS) vraieFamille = 'MOUSTIQUAIRE';
-          else if (hasCAIS && !hasTBL && !hasMSTQ && !hasPRC) vraieFamille = 'CAISSON';
         }
 
         // 3. Si toujours pas résolu, inspecter les titres et les préfixes de codification
         if (!vraieFamille) {
-          if (cmdUpper.startsWith('SA-') || titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) {
+          if (cmdUpper.startsWith('CT-') || cmdUpper.startsWith('A-') || titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) {
+            vraieFamille = 'CAISSON';
+          } else if (cmdUpper.startsWith('SA-') || titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) {
             vraieFamille = 'TABLIER';
           } else if (cmdUpper.startsWith('SC-') || cmdUpper.startsWith('D-') || titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ')) {
             vraieFamille = 'MOUSTIQUAIRE';
           } else if (cmdUpper.startsWith('1R') || titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE') || titreUpper.includes('PRC')) {
             vraieFamille = 'PRECADRE';
-          } else if (cmdUpper.startsWith('CT-') || cmdUpper.startsWith('A-') || titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) {
-            vraieFamille = 'CAISSON';
           }
         }
 
-        // 4. Si une vraie famille différente de 'CAISSON' (ou différente de la famille stockée) est détectée
+        // 4. Si une vraie famille différente de la famille stockée est détectée
         if (vraieFamille && vraieFamille !== familleActuelle) {
           ofObj.famille = vraieFamille;
           updateStmt.run(vraieFamille, JSON.stringify(ofObj), r.id);
@@ -1470,10 +1526,82 @@ class AtelierDatabase {
       if (repares > 0) {
         console.log(`[AtelierDB] ${repares} ordre(s) de fabrication réparé(s) automatiquement vers leur véritable famille de produit.`);
       }
+
+      // Synchroniser immédiatement les statuts des dossiers en cohérence
+      this.synchroniserStatutsDossiersOF();
     } catch (err) {
       console.warn('[AtelierDB] Warning lors de la réparation des familles OF:', err);
     }
     return { repares };
+  }
+
+  /**
+   * Synchronise l'état de fabrication de chaque dossier de commande
+   * en fonction des Ordres de Fabrication (OF) réellement émis et clôturés.
+   */
+  synchroniserStatutsDossiersOF(): { misAJour: number } {
+    let misAJour = 0;
+    try {
+      const dossiers = this.getDossiers();
+      const allOFs = this.getSuivisOF();
+
+      for (const d of dossiers) {
+        if (d.statut === 'LIVRE') continue; // Ne pas toucher aux dossiers déjà livrés au client
+
+        const dRef = (d.refCommande || '').trim().toLowerCase();
+        const dClient = (d.nomClientFinal || '').trim().toLowerCase();
+        const subRefs = [
+          d.numCommandeCaisson,
+          d.numCommandeSousFace,
+          d.numCommandeTablier,
+          d.numCommandeMoustiquaire,
+          d.numCommandePrecadre,
+          ...(d.commandesConfirmees || [])
+        ].filter(Boolean).map(r => r.trim().toLowerCase());
+
+        const relatedOFs = allOFs.filter(o => {
+          if (o.dossierId && o.dossierId === d.id) return true;
+          const oCmd = (o.numCommande || '').trim().toLowerCase();
+          const oClient = (o.nomClient || '').trim().toLowerCase();
+          const matchesRef = (dRef && (oCmd === dRef || oCmd.includes(dRef) || dRef.includes(oCmd))) ||
+            subRefs.some(sr => sr && (oCmd === sr || oCmd.includes(sr) || sr.includes(oCmd)));
+          const matchesClient = dClient && oClient && (dClient === oClient);
+          return matchesRef || (matchesClient && !dRef);
+        });
+
+        if (relatedOFs.length === 0) {
+          // Aucun OF émis pour cette commande : si elle était indûment en "EN_COURS", elle doit être "EN_ATTENTE"
+          if (d.statut === 'EN_COURS' && !d.estEnPause) {
+            d.statut = 'EN_ATTENTE';
+            this.upsertDossier(d);
+            misAJour++;
+          }
+        } else {
+          const hasEmis = relatedOFs.some(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE');
+          const allClosed = relatedOFs.every(o => o.statut === 'CLOTURE');
+
+          let targetStatut = d.statut;
+          if (allClosed) {
+            targetStatut = 'FABRIQUE';
+          } else if (hasEmis) {
+            targetStatut = d.estEnPause ? 'EN_PAUSE' : 'EN_COURS';
+          }
+
+          if (d.statut !== targetStatut) {
+            d.statut = targetStatut;
+            this.upsertDossier(d);
+            misAJour++;
+          }
+        }
+      }
+
+      if (misAJour > 0) {
+        console.log(`[AtelierDB] ${misAJour} dossier(s) synchronisé(s) avec le statut réel de leurs OF.`);
+      }
+    } catch (err) {
+      console.warn('[AtelierDB] Warning lors de la synchronisation des statuts dossiers:', err);
+    }
+    return { misAJour };
   }
 
   getSuivisOF(): SuiviOF[] {
@@ -2115,35 +2243,8 @@ class AtelierDatabase {
       // Mise à jour de l'OF en statut CLOTURE
       this.internalUpsertSuiviOF(s);
 
-      // Synchronisation intelligente avec les Dossiers de Commande
-      const cmdRefs = (s.numCommande || '')
-        .split(/[\s,+/]+/)
-        .map(c => c.trim().toLowerCase())
-        .filter(Boolean);
-
-      const allDossiers = this.getDossiers();
-      for (const dossier of allDossiers) {
-        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-        const matchesClient = s.nomClient && dossier.nomClientFinal &&
-          dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
-
-        if (matchesCmd || (matchesClient && dossier.statut !== 'FABRIQUE')) {
-          const relatedOFs = (this.getSuivisOF() || []).filter(o => {
-            const oCmds = (o.numCommande || '').toLowerCase();
-            return cmdRefs.some(ref => oCmds.includes(ref)) ||
-              (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
-          });
-
-          const allClosed = relatedOFs.length > 0 && relatedOFs.every(o => o.id === s.id || o.statut === 'CLOTURE');
-          const newStatut = allClosed ? 'FABRIQUE' : 'EN_COURS';
-
-          if (dossier.statut !== newStatut) {
-            dossier.statut = newStatut;
-            this.upsertDossier(dossier);
-          }
-        }
-      }
+      // Synchronisation intelligente et exhaustive des Dossiers de Commande
+      this.synchroniserStatutsDossiersOF();
 
       this.db.exec('COMMIT');
     } catch (e) {
@@ -2175,25 +2276,8 @@ class AtelierDatabase {
       this.internalUpsertSuiviOF(s);
 
       // Mettre à jour les dossiers de commande correspondants vers EN_COURS
-      const cmdRefs = (s.numCommande || '')
-        .split(/[\s,+/]+/)
-        .map(c => c.trim().toLowerCase())
-        .filter(Boolean);
-
-      const allDossiers = this.getDossiers();
-      for (const dossier of allDossiers) {
-        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-        const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-        const matchesClient = s.nomClient && dossier.nomClientFinal &&
-          dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
-
-        if (matchesCmd || matchesClient) {
-          if (dossier.statut === 'FABRIQUE' || dossier.statut === 'CLOTURE') {
-            dossier.statut = 'EN_COURS';
-            this.upsertDossier(dossier);
-          }
-        }
-      }
+      // Synchronisation intelligente et exhaustive des Dossiers de Commande
+      this.synchroniserStatutsDossiersOF();
 
       this.db.exec('COMMIT');
     } catch (e) {
@@ -2230,30 +2314,8 @@ class AtelierDatabase {
       `);
       updateStmt.run(JSON.stringify(s), id);
 
-      // Mettre à jour les dossiers de commande correspondants vers EN_ATTENTE si aucun autre OF n'est actif
-      try {
-        const cmdRefs = (s.numCommande || '')
-          .split(/[\s,+/]+/)
-          .map(c => c.trim().toLowerCase())
-          .filter(Boolean);
-
-        const allDossiers = this.getDossiers();
-        for (const dossier of allDossiers) {
-          const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-          const matchesClient = s.nomClient && dossier.nomClientFinal &&
-            dossier.nomClientFinal.trim().toLowerCase() === s.nomClient.trim().toLowerCase();
-
-          if (matchesCmd || matchesClient) {
-            if (dossier.statut === 'EN_COURS') {
-              dossier.statut = 'EN_ATTENTE';
-              this.upsertDossier(dossier);
-            }
-          }
-        }
-      } catch (errD) {
-        console.warn('Erreur mise à jour statut dossier après annulation OF:', errD);
-      }
+      // Synchronisation des statuts dossiers
+      this.synchroniserStatutsDossiersOF();
 
       this.syncArticlesQuantiteReservee();
       this.db.exec('COMMIT');
@@ -2281,40 +2343,8 @@ class AtelierDatabase {
       this.db.prepare('DELETE FROM mouvements_stock WHERE of_id = ?').run(id);
       this.db.prepare('DELETE FROM suivis_of WHERE id = ?').run(id);
 
-      // Si l'OF supprimé était associé à un dossier, vérifier si le dossier doit repasser à EN_ATTENTE
-      if (row) {
-        try {
-          const cmdRefs = (row.num_commande || '')
-            .split(/[\s,+/]+/)
-            .map(c => c.trim().toLowerCase())
-            .filter(Boolean);
-
-          const allDossiers = this.getDossiers();
-          const remainingOFs = this.getSuivisOF() || [];
-          for (const dossier of allDossiers) {
-            const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-            const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-            const matchesClient = row.nom_client && dossier.nomClientFinal &&
-              dossier.nomClientFinal.trim().toLowerCase() === row.nom_client.trim().toLowerCase();
-
-            if (matchesCmd || matchesClient) {
-              const hasActiveOF = remainingOFs.some(o => {
-                if (o.id === id) return false;
-                if (o.statut === 'ANNULE') return false;
-                const oCmds = (o.numCommande || '').toLowerCase();
-                return cmdRefs.some(ref => oCmds.includes(ref)) ||
-                  (o.nomClient && dossier.nomClientFinal && o.nomClient.toLowerCase() === dossier.nomClientFinal.toLowerCase());
-              });
-              if (!hasActiveOF && (dossier.statut === 'EN_COURS' || dossier.statut === 'FABRIQUE')) {
-                dossier.statut = 'EN_ATTENTE';
-                this.upsertDossier(dossier);
-              }
-            }
-          }
-        } catch (errD) {
-          console.warn('Erreur mise à jour statut dossier après suppression OF:', errD);
-        }
-      }
+      // Synchronisation des statuts dossiers
+      this.synchroniserStatutsDossiersOF();
 
       this.syncArticlesQuantiteReservee();
       this.db.exec('COMMIT');

@@ -226,12 +226,19 @@ export function sqlitePlugin(): Plugin {
           broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
+        if (url === '/api/dossiers/synchroniser-statuts' && method === 'POST') {
+          const resSync = atelierDb.synchroniserStatutsDossiersOF();
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
+          broadcastEvent({ type: 'of_updated', target: 'of' });
+          return sendJson(res, { success: true, misAJour: resSync.misAJour, dossiers: atelierDb.getDossiers() });
+        }
 
         // --- 7. SUIVIS OF ---
         if (url === '/api/of/reparer-familles' && method === 'POST') {
           const resReparation = atelierDb.reparerFamillesOF();
           broadcastEvent({ type: 'of_updated', target: 'of' });
-          return sendJson(res, { success: true, repares: resReparation.repares, data: atelierDb.getSuivisOF() });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
+          return sendJson(res, { success: true, repares: resReparation.repares, data: atelierDb.getSuivisOF(), dossiers: atelierDb.getDossiers() });
         }
         if (url === '/api/of' && method === 'GET') {
           return sendJson(res, { success: true, data: atelierDb.getSuivisOF() });

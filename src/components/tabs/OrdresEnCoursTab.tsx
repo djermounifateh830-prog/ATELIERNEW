@@ -360,14 +360,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     setReparationFeedback(null);
     try {
       const res = await StorageService.reparerFamillesOF();
+      const resSync = await StorageService.synchroniserStatutsDossiers();
       onRefreshData();
-      if (res.repares > 0) {
-        setReparationFeedback(`✅ ${res.repares} commande(s) réassignée(s) avec succès à leur véritable famille !`);
+      if (res.repares > 0 || (resSync.misAJour && resSync.misAJour > 0)) {
+        setReparationFeedback(`✅ ${res.repares} OF réassigné(s) à leur vraie famille et ${resSync.misAJour || 0} statut(s) de commande synchronisé(s) !`);
       } else {
-        setReparationFeedback('✨ Toutes vos commandes ont déjà leur famille de produit correctement identifiée.');
+        setReparationFeedback('✨ Toutes vos commandes et familles sont déjà parfaitement synchronisées.');
       }
     } catch (err) {
-      setReparationFeedback('Erreur lors de la détection des familles.');
+      setReparationFeedback('Erreur lors de la synchronisation des familles.');
     } finally {
       setIsReparing(false);
       setTimeout(() => setReparationFeedback(null), 5000);
@@ -572,7 +573,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     const totalBarresNeuves = suivisOF.reduce((acc, o) => acc + (o.totalBarresNeuvesPrevu || 0), 0);
     const totalChutesRecyclees = suivisOF.reduce((acc, o) => acc + (o.totalChutesUtiliseesPrevu || 0), 0);
 
-    return { total, enPause, emis, retourEnAttente, clotures, livres, totalBarresNeuves, totalChutesRecyclees };
+    const emisCaissons = suivisOF.filter(o => o.famille === 'CAISSON' && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')).length;
+    const emisTabliers = suivisOF.filter(o => o.famille === 'TABLIER' && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')).length;
+    const emisMstq = suivisOF.filter(o => o.famille === 'MOUSTIQUAIRE' && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')).length;
+    const emisPrecadres = suivisOF.filter(o => o.famille === 'PRECADRE' && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')).length;
+
+    return {
+      total, enPause, emis, retourEnAttente, clotures, livres, totalBarresNeuves, totalChutesRecyclees,
+      emisCaissons, emisTabliers, emisMstq, emisPrecadres
+    };
   }, [suivisOF]);
 
   const handleTogglePauseOF = async (of: SuiviOF) => {
@@ -911,11 +920,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             onChange={e => setFiltreFamille(e.target.value)}
             className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500"
           >
-            <option value="TOUTES">Toutes les Familles</option>
-            <option value="TABLIER">Tablier (Lames)</option>
-            <option value="CAISSON">Caisson (Coffre &amp; Sous-Face)</option>
-            <option value="MOUSTIQUAIRE">Moustiquaire (Toile &amp; Profilés)</option>
-            <option value="PRECADRE">Précadre</option>
+            <option value="TOUTES">Toutes les Familles ({stats.emis + stats.retourEnAttente})</option>
+            <option value="CAISSON">Caisson ({stats.emisCaissons})</option>
+            <option value="TABLIER">Tablier ({stats.emisTabliers})</option>
+            <option value="MOUSTIQUAIRE">Moustiquaire ({stats.emisMstq})</option>
+            <option value="PRECADRE">Précadre ({stats.emisPrecadres})</option>
           </select>
 
           {/* Filtre Client */}

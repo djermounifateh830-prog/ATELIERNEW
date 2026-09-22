@@ -436,29 +436,42 @@ export function detecterFamilleOF(
   titreProduit?: string,
   refCommande?: string
 ): FamilleProduit {
-  if (famille === 'TABLIER' || famille === 'MOUSTIQUAIRE' || famille === 'CAISSON' || famille === 'PRECADRE') {
-    return famille;
-  }
+  const titreUpper = (titreProduit || '').toUpperCase();
+  const refUpper = (refCommande || '').toUpperCase();
+
+  // 1. Détection prioritaire par le titre explicite de l'OF ou de la fiche
+  if (titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) return 'CAISSON';
+  if (titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) return 'TABLIER';
+  if (titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ')) return 'MOUSTIQUAIRE';
+  if (titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE')) return 'PRECADRE';
+
+  // 2. Détection par les sections effectives et leurs articles
   if (sections && sections.length > 0) {
+    const allTitles = sections.map((s: any) => (s.titre || s.nom || '').toUpperCase()).join(' ');
+    if (allTitles.includes('CAISSON') || allTitles.includes('SOUS-FACE') || allTitles.includes('CT SOMO') || allTitles.includes('SF KERNOU')) {
+      return 'CAISSON';
+    }
     const secFamilies = sections.map((s: any) => s.famille).filter(Boolean);
     const uniqueFams = Array.from(new Set(secFamilies));
-    if (uniqueFams.includes('TABLIER') && !uniqueFams.includes('CAISSON')) return 'TABLIER';
-    if (uniqueFams.includes('MOUSTIQUAIRE') && !uniqueFams.includes('CAISSON')) return 'MOUSTIQUAIRE';
-    if (uniqueFams.includes('PRECADRE') && !uniqueFams.includes('CAISSON')) return 'PRECADRE';
     if (uniqueFams.length === 1 && (uniqueFams[0] === 'TABLIER' || uniqueFams[0] === 'MOUSTIQUAIRE' || uniqueFams[0] === 'PRECADRE' || uniqueFams[0] === 'CAISSON')) {
       return uniqueFams[0] as FamilleProduit;
     }
   }
+
+  // 3. Famille passée en paramètre si elle n'est pas contredite
+  if (famille === 'TABLIER' || famille === 'MOUSTIQUAIRE' || famille === 'CAISSON' || famille === 'PRECADRE') {
+    return famille;
+  }
+
+  // 4. Par les lignes de moustiquaires
   if (lignesMoustiquaires && lignesMoustiquaires.length > 0) return 'MOUSTIQUAIRE';
-  const titreUpper = (titreProduit || '').toUpperCase();
-  if (titreUpper.includes('TABLIER') || titreUpper.includes('VOLET') || titreUpper.includes('LAME')) return 'TABLIER';
-  if (titreUpper.includes('MOUSTIQUAIRE') || titreUpper.includes('MSTQ')) return 'MOUSTIQUAIRE';
-  if (titreUpper.includes('PRÉCADRE') || titreUpper.includes('PRECADRE')) return 'PRECADRE';
-  if (titreUpper.includes('CAISSON') || titreUpper.includes('SOUS-FACE')) return 'CAISSON';
-  const refUpper = (refCommande || '').toUpperCase();
+
+  // 5. Par le préfixe de référence
+  if (refUpper.startsWith('CT-') || refUpper.startsWith('A-') || refUpper.includes('CAISSON')) return 'CAISSON';
   if (refUpper.startsWith('SA-')) return 'TABLIER';
-  if (refUpper.startsWith('SC-') || refUpper.startsWith('D-')) return 'MOUSTIQUAIRE';
-  if (refUpper.startsWith('1R')) return 'PRECADRE';
+  if (refUpper.startsWith('SC-') || refUpper.startsWith('D-') || refUpper.includes('MSTQ')) return 'MOUSTIQUAIRE';
+  if (refUpper.startsWith('1R') || refUpper.includes('PRC') || refUpper.includes('PRECADRE')) return 'PRECADRE';
+
   return 'CAISSON';
 }
 
