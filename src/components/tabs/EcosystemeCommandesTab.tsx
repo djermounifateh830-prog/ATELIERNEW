@@ -1354,13 +1354,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         });
 
         // Générer les pièces :
-        // - Si avec Barre Inférieure : 2 Montants (H-37) + 1 Traverse Haute (L-62)
-        // - Si sans Barre Inférieure : 2 Montants (H-62) + 2 Traverses (L-62)
+        // - Si avec Barre Inférieure : 2 Montants (H-37) + 1 Traverse Haute (L + debordement)
+        // - Si sans Barre Inférieure : 2 Montants (H + debordement) + 2 Traverses (L + debordement)
         const pieces: { longueur: number; quantite: number; label: string; repere?: string; refCommande?: string }[] = [];
         for (const m of lignesGroup) {
           const Q = Math.max(1, m.quantite);
-          const dedH = m.avecBarreInferieure ? -37 : (mstqCadreTechParams.debordement ?? cadreObj.debordement ?? -62);
-          const dedL = -62;
+          const dedH = m.avecBarreInferieure ? -37 : cutParamsCadre.debordement;
+          const dedL = cutParamsCadre.debordement;
           const lenMontant = m.hauteur + dedH;
           const lenTraverse = m.largeur + dedL;
           pieces.push({ longueur: lenMontant, quantite: 2 * Q, label: `Ha/Hb-${m.repere} (Montant Cadre ${lenMontant}mm)`, repere: `HaCadre-${m.repere}`, refCommande: m.refCommande });
@@ -1379,7 +1379,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         res.nomClient = clientDeMonClient.trim() || 'CLIENT';
         res.donneurOrdre = monClient;
         res.dateCommande = dateCommande;
-        generatedSections.push({ articleCode: cadreObj.code_art, articleDesignation: cadreObj.designation, articleObj: cadreObj, resultat: res, type: 'CADRE', famille: 'MOUSTIQUAIRE' });
+        generatedSections.push({
+          articleCode: cadreObj.code_art,
+          articleDesignation: cadreObj.designation,
+          articleObj: cadreObj,
+          resultat: res,
+          type: 'CADRE',
+          famille: 'MOUSTIQUAIRE',
+          debordement: cutParamsCadre.debordement,
+          conditionsCoupe: {
+            longueurBarre: cutParamsCadre.longueurBarre,
+            epaisseurScie: cutParamsCadre.epaisseurScie,
+            debordement: cutParamsCadre.debordement,
+            refusMin: cutParamsCadre.refusMin,
+            refusMax: cutParamsCadre.refusMax
+          }
+        });
       });
     }
 
@@ -1412,7 +1427,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         for (const m of lignesGroup) {
           if (m.typeOuverture === 'FIXE' || m.typeFabrication === 'SEMI_FINI_MAILLE') continue;
           const Q = Math.max(1, m.quantite);
-          const dedCoulisse = m.avecBarreInferieure ? -33 : (mstqCoulisseTechParams.debordement ?? coulisseObj.debordement ?? -46);
+          const dedCoulisse = m.avecBarreInferieure ? -33 : cutParamsCoulisse.debordement;
           // Déterminer nombre de coulisses et dimension selon le type
           let qtyCoulisse = 1;
           let dimCoulisse = m.hauteur + dedCoulisse; // Défaut : tirage selon H (Porte-Fenêtre)
@@ -1432,7 +1447,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         res.nomClient = clientDeMonClient.trim() || 'CLIENT';
         res.donneurOrdre = monClient;
         res.dateCommande = dateCommande;
-        generatedSections.push({ articleCode: coulisseObj.code_art, articleDesignation: coulisseObj.designation, articleObj: coulisseObj, resultat: res, type: 'GL', famille: 'MOUSTIQUAIRE' });
+        generatedSections.push({
+          articleCode: coulisseObj.code_art,
+          articleDesignation: coulisseObj.designation,
+          articleObj: coulisseObj,
+          resultat: res,
+          type: 'GL',
+          famille: 'MOUSTIQUAIRE',
+          debordement: cutParamsCoulisse.debordement,
+          conditionsCoupe: {
+            longueurBarre: cutParamsCoulisse.longueurBarre,
+            epaisseurScie: cutParamsCoulisse.epaisseurScie,
+            debordement: cutParamsCoulisse.debordement,
+            refusMin: cutParamsCoulisse.refusMin,
+            refusMax: cutParamsCoulisse.refusMax
+          }
+        });
       });
     }
 
@@ -1475,7 +1505,22 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         res.nomClient = clientDeMonClient.trim() || 'CLIENT';
         res.donneurOrdre = monClient;
         res.dateCommande = dateCommande;
-        generatedSections.push({ articleCode: biObj.code_art, articleDesignation: biObj.designation, articleObj: biObj, resultat: res, type: 'SF', famille: 'MOUSTIQUAIRE' });
+        generatedSections.push({
+          articleCode: biObj.code_art,
+          articleDesignation: biObj.designation,
+          articleObj: biObj,
+          resultat: res,
+          type: 'SF',
+          famille: 'MOUSTIQUAIRE',
+          debordement: cutParamsBI.debordement,
+          conditionsCoupe: {
+            longueurBarre: cutParamsBI.longueurBarre,
+            epaisseurScie: cutParamsBI.epaisseurScie,
+            debordement: cutParamsBI.debordement,
+            refusMin: cutParamsBI.refusMin,
+            refusMax: cutParamsBI.refusMax
+          }
+        });
       });
     }
 
@@ -2445,6 +2490,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       res.dateCommande = dateCommande;
       const refsPRCInvolved = Array.from(new Set(lignesPrecadres.map(p => (p.refCommande || numCommandePrecadre || numCommande || '').trim()).filter(Boolean)));
       const activeRefs = refsPRCInvolved.length > 0 ? refsPRCInvolved : [numCommande.trim() || 'CMD-01'];
+      const conditionsCoupePRC = {
+        longueurBarre: cutParamsPRC.longueurBarre,
+        epaisseurScie: cutParamsPRC.epaisseurScie,
+        debordement: cutParamsPRC.debordement,
+        refusMin: cutParamsPRC.refusMin,
+        refusMax: cutParamsPRC.refusMax
+      };
+
       generatedSections.push({
         articleCode: artObj.code_art,
         articleDesignation: artObj.designation,
@@ -2452,7 +2505,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         resultat: res,
         type: 'PRC',
         famille: 'PRECADRE',
-        commandesInvolved: activeRefs
+        commandesInvolved: activeRefs,
+        debordement: cutParamsPRC.debordement,
+        conditionsCoupe: conditionsCoupePRC
       });
     });
 
@@ -2564,7 +2619,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         avecPeinture: false,
         avecSousFace: false,
         montageSousFace: 'NON_MONTEE',
-        isSousFace: false
+        isSousFace: false,
+        debordement: sec.debordement,
+        conditionsCoupe: sec.conditionsCoupe
       };
     });
   }, [sectionsMultiMSTQ]);
@@ -2930,6 +2987,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeTBL = {
+            longueurBarre: cutParamsTBL.longueurBarre,
+            epaisseurScie: cutParamsTBL.epaisseurScie,
+            debordement: cutParamsTBL.debordement,
+            refusMin: cutParamsTBL.refusMin,
+            refusMax: cutParamsTBL.refusMax
+          };
+
           generatedSections.push({
             articleCode: artObj?.code_art || artCode,
             articleDesignation: `🚪 [LAME TABLIER] ${artObj?.designation || 'Lame Tablier'}`,
@@ -2937,7 +3002,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'CT',
             famille: 'TABLIER',
-            commandesInvolved: refsTabliersInvolved
+            commandesInvolved: refsTabliersInvolved,
+            debordement: cutParamsTBL.debordement,
+            conditionsCoupe: conditionsCoupeTBL
           });
         }
 
@@ -2984,6 +3051,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeLF = {
+            longueurBarre: cutParamsLF.longueurBarre,
+            epaisseurScie: cutParamsLF.epaisseurScie,
+            debordement: cutParamsLF.debordement,
+            refusMin: cutParamsLF.refusMin,
+            refusMax: cutParamsLF.refusMax
+          };
+
           generatedSections.push({
             articleCode: lfObj?.code_art || lfCode,
             articleDesignation: `🏁 [LAME FINALE] ${lfObj?.designation || 'Lame Finale'}`,
@@ -2991,7 +3066,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'LF',
             famille: 'TABLIER',
-            commandesInvolved: refsTabliersInvolved
+            commandesInvolved: refsTabliersInvolved,
+            debordement: cutParamsLF.debordement,
+            conditionsCoupe: conditionsCoupeLF
           });
         }
 
@@ -3033,6 +3110,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeGL = {
+            longueurBarre: cutParamsGL.longueurBarre,
+            epaisseurScie: cutParamsGL.epaisseurScie,
+            debordement: cutParamsGL.debordement,
+            refusMin: cutParamsGL.refusMin,
+            refusMax: cutParamsGL.refusMax
+          };
+
           generatedSections.push({
             articleCode: glObj?.code_art || glCode,
             articleDesignation: `📐 [TAB COULISSE] ${glObj?.designation || 'Coulisses'}`,
@@ -3040,7 +3125,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'GL',
             famille: 'TABLIER',
-            commandesInvolved: refsTabliersInvolved
+            commandesInvolved: refsTabliersInvolved,
+            debordement: cutParamsGL.debordement,
+            conditionsCoupe: conditionsCoupeGL
           });
         }
       }
@@ -3074,8 +3161,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           for (const m of lignesGroup) {
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
-            const dedH = m.avecBarreInferieure ? -37 : (mstqCadreTechParams.debordement !== undefined && mstqCadreTechParams.debordement !== null ? mstqCadreTechParams.debordement : (cutParamsCadre.debordement || -62));
-            const dedL = -62;
+            const dedH = m.avecBarreInferieure ? -37 : cutParamsCadre.debordement;
+            const dedL = cutParamsCadre.debordement;
             const lenH = m.hauteur + dedH;
             const lenL = m.largeur + dedL;
             pieces.push({ longueur: lenH, quantite: 2 * Q, label: `CD-${m.repere} (Montant ${lenH}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `Ha-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
@@ -3092,6 +3179,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeCadre = {
+            longueurBarre: cutParamsCadre.longueurBarre,
+            epaisseurScie: cutParamsCadre.epaisseurScie,
+            debordement: cutParamsCadre.debordement,
+            refusMin: cutParamsCadre.refusMin,
+            refusMax: cutParamsCadre.refusMax
+          };
+
           generatedSections.push({
             articleCode: cadreObj.code_art,
             articleDesignation: `🖼️ [CADRE MOUSTIQUAIRE] ${cadreObj.designation}`,
@@ -3099,7 +3194,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'CADRE',
             famille: 'MOUSTIQUAIRE',
-            commandesInvolved: refsMSTQInvolved
+            commandesInvolved: refsMSTQInvolved,
+            debordement: cutParamsCadre.debordement,
+            conditionsCoupe: conditionsCoupeCadre
           });
         }
 
@@ -3126,8 +3223,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             if (m.typeOuverture === 'FIXE' || m.typeFabrication === 'SEMI_FINI_MAILLE') continue;
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
-            const dedCoulisseDefault = mstqCoulisseTechParams.debordement !== undefined && mstqCoulisseTechParams.debordement !== null ? mstqCoulisseTechParams.debordement : (cutParamsCoulisse.debordement || -46);
-            const dedCoulisse = m.avecBarreInferieure ? -33 : dedCoulisseDefault;
+            const dedCoulisse = m.avecBarreInferieure ? -33 : cutParamsCoulisse.debordement;
             let qtyCoulisse = 1;
             let dimCoulisse = m.hauteur + dedCoulisse;
             if (m.typeOuverture === 'DOUBLE_VANTAUX' || m.typeOuverture === 'CENTRALE') { qtyCoulisse = 2; dimCoulisse = m.hauteur + dedCoulisse; }
@@ -3145,6 +3241,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeCoulisse = {
+            longueurBarre: cutParamsCoulisse.longueurBarre,
+            epaisseurScie: cutParamsCoulisse.epaisseurScie,
+            debordement: cutParamsCoulisse.debordement,
+            refusMin: cutParamsCoulisse.refusMin,
+            refusMax: cutParamsCoulisse.refusMax
+          };
+
           generatedSections.push({
             articleCode: coulisseObj.code_art,
             articleDesignation: `🔩 [MSTQ COULISSE] ${coulisseObj.designation}`,
@@ -3152,7 +3256,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'GL',
             famille: 'MOUSTIQUAIRE',
-            commandesInvolved: refsMSTQInvolved
+            commandesInvolved: refsMSTQInvolved,
+            debordement: cutParamsCoulisse.debordement,
+            conditionsCoupe: conditionsCoupeCoulisse
           });
         }
 
@@ -3178,7 +3284,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           for (const m of lignesGroup) {
             const Q = Math.max(1, m.quantite);
             const cmdTag = (m.refCommande || numCommandeMoustiquaire || '').trim();
-            const ded = mstqBarreInfTechParams.debordement !== undefined && mstqBarreInfTechParams.debordement !== null ? mstqBarreInfTechParams.debordement : (cutParamsBI.debordement || -13);
+            const ded = cutParamsBI.debordement;
             const lenBI = m.largeur + ded;
             pieces.push({ longueur: lenBI, quantite: 1 * Q, label: `BI-${m.repere} (Barre Inférieure ${lenBI}mm)${cmdTag ? ` [Cmd ${cmdTag}]` : ''}`, repere: `BI-${m.repere}`, refCommande: cmdTag || 'CMD-01' });
           }
@@ -3190,6 +3296,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupeBI = {
+            longueurBarre: cutParamsBI.longueurBarre,
+            epaisseurScie: cutParamsBI.epaisseurScie,
+            debordement: cutParamsBI.debordement,
+            refusMin: cutParamsBI.refusMin,
+            refusMax: cutParamsBI.refusMax
+          };
+
           generatedSections.push({
             articleCode: biObj.code_art,
             articleDesignation: `📏 [BARRE INFÉRIEURE MSTQ] ${biObj.designation}`,
@@ -3197,7 +3311,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'SF',
             famille: 'MOUSTIQUAIRE',
-            commandesInvolved: refsMSTQInvolved
+            commandesInvolved: refsMSTQInvolved,
+            debordement: cutParamsBI.debordement,
+            conditionsCoupe: conditionsCoupeBI
           });
         }
       }
@@ -3263,6 +3379,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           res.donneurOrdre = monClient;
           res.dateCommande = dateCommande;
 
+          const conditionsCoupePRC = {
+            longueurBarre: cutParamsPRC.longueurBarre,
+            epaisseurScie: cutParamsPRC.epaisseurScie,
+            debordement: cutParamsPRC.debordement,
+            refusMin: cutParamsPRC.refusMin,
+            refusMax: cutParamsPRC.refusMax
+          };
+
           generatedSections.push({
             articleCode: artObj?.code_art || artCode,
             articleDesignation: `🔲 [PRÉCADRE] ${artObj?.designation || 'Précadre'}`,
@@ -3270,7 +3394,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
             resultat: res,
             type: 'PRC',
             famille: 'PRECADRE',
-            commandesInvolved: refsPRCInvolved
+            commandesInvolved: refsPRCInvolved,
+            debordement: cutParamsPRC.debordement,
+            conditionsCoupe: conditionsCoupePRC
           });
         }
       }
@@ -4414,6 +4540,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       // Construction de la cartographie des délais propres à chaque commande / famille
       const datesCommandesToSave: Partial<Record<FamilleProduit, {
         dateLivraison: string;
+        dateLivraisonPrevisionnelle?: string;
         dateLivraisonISO: string;
         delaiJours: number;
         numCommande?: string;
@@ -4427,6 +4554,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           const numCmd = famKey === 'CAISSON' ? numCommandeCaisson : famKey === 'PRECADRE' ? numCommandePrecadre : famKey === 'TABLIER' ? numCommandeTablier : numCommandeMoustiquaire;
           datesCommandesToSave[famKey] = {
             dateLivraison: det.dateLivraisonFormattee,
+            dateLivraisonPrevisionnelle: det.dateLivraisonFormattee,
             dateLivraisonISO: DelaisProductionService.toISODateString(det.dateLivraisonPrevue),
             delaiJours: det.joursOuvresRequis,
             numCommande: numCmd ? numCmd.trim() : undefined,

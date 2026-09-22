@@ -329,9 +329,9 @@ export class MonitoringService {
       d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE' && d.statut !== 'FABRIQUE'
     );
 
-    // Filtre des OFs actifs (émis ou en attente de retour atelier)
+    // Filtre des OFs actifs (strictement émis non clôturés et non reçus)
     const ofsActifs = suivisOF.filter(o =>
-      o && (o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE')
+      o && (o.statut === 'EMIS' || o.statut === 'EN_PAUSE')
     );
 
     // Helpers locaux pour correspondance stricte
@@ -425,7 +425,7 @@ export class MonitoringService {
 
       mapCmds.forEach((articlesCmd, cmdRef) => {
         const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'CAISSON'));
-        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE' || matchingOF.statut === 'RETOUR_EN_ATTENTE')) {
           return;
         }
 
@@ -740,7 +740,7 @@ export class MonitoringService {
 
       mapCmds.forEach((articlesCmd, cmdRef) => {
         const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'TABLIER'));
-        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE' || matchingOF.statut === 'RETOUR_EN_ATTENTE')) {
           return;
         }
 
@@ -1033,7 +1033,7 @@ export class MonitoringService {
 
       mapCmds.forEach((articlesCmd, cmdRef) => {
         const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'PRECADRE'));
-        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE' || matchingOF.statut === 'RETOUR_EN_ATTENTE')) {
           return;
         }
 
@@ -1325,7 +1325,7 @@ export class MonitoringService {
 
       mapCmds.forEach((articlesCmd, cmdRef) => {
         const matchingOF = suivisOF.find(o => doesOfMatchCommande(o, dossier, cmdRef, 'MOUSTIQUAIRE'));
-        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE')) {
+        if (matchingOF && (matchingOF.statut === 'CLOTURE' || matchingOF.statut === 'LIVRE' || matchingOF.statut === 'RETOUR_EN_ATTENTE')) {
           return;
         }
 

@@ -290,11 +290,13 @@ export interface DossierCommandeGlobal {
    */
   datesLivraisonCommandes?: Partial<Record<FamilleProduit, {
     dateLivraison: string;       // ex: "MERCREDI 16/09"
+    dateLivraisonPrevisionnelle?: string; // Synonyme garanti pour compatibilité totale
     dateLivraisonISO: string;    // ex: "2026-09-16"
     delaiJours: number;          // ex: 3
     numCommande?: string;        // ex: "CMD-CAISS-2601"
     nbPieces: number;            // ex: 12
     chargeFileAttente?: number;  // pièces en file pour cette famille
+    typePriorite?: TypePrioriteCommande;
   }>>;
 }
 

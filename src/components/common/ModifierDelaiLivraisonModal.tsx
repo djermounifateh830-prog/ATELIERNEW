@@ -60,8 +60,8 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
         if (match.estEnPause !== undefined) setEstEnPause(!!match.estEnPause);
         if (match.motifPause) setMotifPause(match.motifPause);
         // Si le dossier a une date personnalisée ou par famille
-        const famKey = (of.famille || '').toUpperCase();
-        const customFamDate = match.datesLivraisonCommandes?.[famKey];
+        const famKeyRaw = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille || '').toUpperCase();
+        const customFamDate = match.datesLivraisonCommandes?.[famKeyRaw as any];
         const dateISOFromDossier = customFamDate?.dateLivraisonISO || match.dateLivraisonPrevisionnelleISO;
         if (dateISOFromDossier && !of.dateLivraisonPrevisionnelleISO) {
           setDateSelectionnee(dateISOFromDossier);
@@ -118,11 +118,6 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
 
   // Raccourcis rapides de date
   const appliquerRaccourci = (joursAjoutes: number) => {
-    if (joursAjoutes === 0) {
-      const aujourdhui = new Date();
-      setDateSelectionnee(DelaisProductionService.toISODateString(aujourdhui));
-      return;
-    }
     const params = DelaisProductionService.getParametres();
     const aujourdhui = new Date();
     const cible = DelaisProductionService.ajouterJoursOuvres(aujourdhui, joursAjoutes, params.joursOuvres);

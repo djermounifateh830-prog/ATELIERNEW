@@ -17,6 +17,7 @@ import { SecurityLockOverlay } from './components/common/SecurityLockOverlay';
 import { StorageService } from './services/storage';
 import { userService } from './services/userService';
 import { realtimeSync } from './services/realtimeSync';
+import { DelaisProductionService } from './services/delaisProductionService';
 import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert, FamilleProduit } from './types';
 
 const getInitialTab = (): string => {
@@ -51,6 +52,8 @@ export default function App() {
   const loadData = useCallback(async () => {
     try {
       const data = await StorageService.initSqlite();
+      // Charger les paramètres d'atelier pour que les cadences et jours ouvrés soient à jour dès l'ouverture
+      DelaisProductionService.loadParametresFromDb().catch(() => {});
       setArticles(data.articles);
       setChutesBarres(data.chutesBarres);
       setChutesMaille(data.chutesMaille);

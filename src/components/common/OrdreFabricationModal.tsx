@@ -10,6 +10,7 @@ import { detecterAgence } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
 import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
+import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { ModifierDelaiLivraisonModal } from './ModifierDelaiLivraisonModal';
 import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock, Edit2, Zap, FileText } from 'lucide-react';
 
@@ -575,11 +576,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       }
       const nbPiecesOFReelles = Math.max(1, totalPiecesDuOF);
 
-      const famKey = (familleRecherche || famille || '').toUpperCase();
+      const famKeyRaw = (familleRecherche || famille || '').toUpperCase();
+      const famKey = (famKeyRaw === 'SOUS_FACE' ? 'CAISSON' : famKeyRaw) as FamilleProduit;
       const customFamDate = matchedDossier?.datesLivraisonCommandes?.[famKey];
 
-      // Priorité absolue à la date configurée dans le dossier ou passée en props lors de la saisie
-      const dateConfiguredText = dateLivraisonPrevisionnelle || customFamDate?.dateLivraisonPrevisionnelle || matchedDossier?.dateLivraisonPrevisionnelle;
+      // Priorité absolue à la date configurée dans le dossier pour cette famille ou passée en props lors de la saisie
+      const dateConfiguredText = dateLivraisonPrevisionnelle || customFamDate?.dateLivraisonPrevisionnelle || customFamDate?.dateLivraison || matchedDossier?.dateLivraisonPrevisionnelle;
       const dateConfiguredISO = dateLivraisonPrevisionnelleISO || customFamDate?.dateLivraisonISO || matchedDossier?.dateLivraisonPrevisionnelleISO;
 
       const match = ofs.find(o =>
@@ -692,18 +694,19 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     return rawSections.map((sec, idx) => {
       const res = sec.resultat;
       const art = sec.article;
+      const fallbackParams = art ? getArticleCuttingParams(art) : null;
       const barresNeuves = Array.isArray(res.barres_neuves) ? res.barres_neuves : [];
       const chutesUtilisees = Array.isArray(res.chutes_utilisees) ? res.chutes_utilisees : [];
 
-      const barreLongueur = sec.conditionsCoupe?.longueurBarre || art?.longeur || barresNeuves[0]?.longueur_barre || 6000;
-      const lameScie = sec.conditionsCoupe?.epaisseurLame || art?.lame || 4.5;
+      const barreLongueur = sec.conditionsCoupe?.longueurBarre || art?.longeur || fallbackParams?.longueurBarre || barresNeuves[0]?.longueur_barre || 6000;
+      const lameScie = sec.conditionsCoupe?.epaisseurLame || art?.lame || fallbackParams?.epaisseurScie || 4.5;
       const margeDebord = (sec.conditionsCoupe?.debordement !== undefined && sec.conditionsCoupe?.debordement !== null)
         ? sec.conditionsCoupe.debordement
         : (sec.debordement !== undefined && sec.debordement !== null)
         ? sec.debordement
-        : (art?.debordement || 0.0);
-      const refusMin = sec.conditionsCoupe?.refusMin ?? res.refus_min ?? art?.refus_min ?? 500;
-      const refusMax = sec.conditionsCoupe?.refusMax ?? res.refus_max ?? art?.refus_max ?? 1100;
+        : (fallbackParams ? fallbackParams.debordement : (art?.debordement || 0.0));
+      const refusMin = sec.conditionsCoupe?.refusMin ?? res.refus_min ?? art?.refus_min ?? fallbackParams?.refusMin ?? 500;
+      const refusMax = sec.conditionsCoupe?.refusMax ?? res.refus_max ?? art?.refus_max ?? fallbackParams?.refusMax ?? 1100;
       const familleCalculee = determinerFamille(sec, famille);
 
       // Groupement BARRES NEUVES
@@ -1081,7 +1084,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           <span>•</span>
           <span>Lame scie : <strong>${sec.lameScie || 4.5} mm</strong></span>
           <span>•</span>
-          <span style="${sec.margeDebord > 0 ? 'background:#fef3c7;border:1px solid #f59e0b;padding:1px 6px;border-radius:3px;' : ''}">Débordement : <strong>${sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : '0 mm'}</strong></span>
+          <span style="${sec.margeDebord !== 0 ? (sec.margeDebord < 0 ? 'background:#fee2e2;border:1px solid #ef4444;color:#991b1b;padding:1px 6px;border-radius:3px;' : 'background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:1px 6px;border-radius:3px;') : ''}">${sec.margeDebord < 0 ? 'Déduction' : 'Débordement'} : <strong>${sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong></span>
           <span>•</span>
           <span>Reste min / max : <strong>${sec.refusMin || 500} / ${sec.refusMax || 1100} mm</strong></span>
         </div>
@@ -1832,8 +1835,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                 Lame scie : <strong>{sec.lameScie || 4.5} mm</strong>
               </span>
               <span>•</span>
-              <span className={sec.margeDebord > 0 ? 'bg-amber-100 text-amber-900 border border-amber-400 px-2 py-0.5 rounded font-bold' : ''}>
-                Débordement : <strong>{sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : '0 mm'}</strong>
+              <span className={sec.margeDebord < 0 ? 'bg-rose-100 text-rose-900 border border-rose-400 px-2 py-0.5 rounded font-bold' : (sec.margeDebord > 0 ? 'bg-amber-100 text-amber-900 border border-amber-400 px-2 py-0.5 rounded font-bold' : '')}>
+                {sec.margeDebord < 0 ? 'Déduction' : 'Débordement'} : <strong>{sec.margeDebord > 0 ? `+${sec.margeDebord} mm` : (sec.margeDebord < 0 ? `${sec.margeDebord} mm` : '0 mm')}</strong>
               </span>
               <span>•</span>
               <span>

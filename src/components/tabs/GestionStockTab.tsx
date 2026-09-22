@@ -1158,10 +1158,10 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   }, [safeChutesMaille, chuteSortKey, chuteSortDir]);
 
   // 3. Mouvements Stock
-  const [mvtSortKey, setMvtSortKey] = useState<'date' | 'type' | 'articleCode' | 'quantite' | null>(null);
+  const [mvtSortKey, setMvtSortKey] = useState<'date' | 'type' | 'numCommande' | 'articleCode' | 'nomClient' | 'quantite' | null>(null);
   const [mvtSortDir, setMvtSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const handleMvtSort = (key: 'date' | 'type' | 'articleCode' | 'quantite') => {
+  const handleMvtSort = (key: 'date' | 'type' | 'numCommande' | 'articleCode' | 'nomClient' | 'quantite') => {
     if (mvtSortKey === key) {
       setMvtSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
@@ -2622,16 +2622,31 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                       Type <SortIcon col="type" currentKey={mvtSortKey} currentDir={mvtSortDir} />
                     </th>
                     <th
+                      className={`py-2 px-3 text-left border-r border-slate-700 cursor-pointer select-none transition group hover:bg-slate-700/60 ${mvtSortKey === 'numCommande' ? 'text-amber-300 bg-slate-700/50' : 'hover:text-amber-300'}`}
+                      onClick={() => handleMvtSort('numCommande')}
+                      onDoubleClick={() => handleMvtSort('numCommande')}
+                      title="Cliquer ou double-cliquer pour trier par N° Commande / OF"
+                    >
+                      N° Commande / OF <SortIcon col="numCommande" currentKey={mvtSortKey} currentDir={mvtSortDir} />
+                    </th>
+                    <th
                       className={`py-2 px-3 text-left border-r border-slate-700 cursor-pointer select-none transition group hover:bg-slate-700/60 ${mvtSortKey === 'articleCode' ? 'text-amber-300 bg-slate-700/50' : 'hover:text-amber-300'}`}
                       onClick={() => handleMvtSort('articleCode')}
                       onDoubleClick={() => handleMvtSort('articleCode')}
-                      title="Cliquer ou double-cliquer pour trier par Article / N° OF"
+                      title="Cliquer ou double-cliquer pour trier par Article"
                     >
                       Article <SortIcon col="articleCode" currentKey={mvtSortKey} currentDir={mvtSortDir} />
                     </th>
-                    <th className="py-2 px-3 text-left border-r border-slate-700">Client</th>
                     <th
-                      className={`py-2 px-3 text-center border-r border-slate-700 w-24 cursor-pointer select-none transition group hover:bg-slate-700/60 ${mvtSortKey === 'quantite' ? 'text-amber-300 bg-slate-700/50' : 'hover:text-amber-300'}`}
+                      className={`py-2 px-3 text-left border-r border-slate-700 cursor-pointer select-none transition group hover:bg-slate-700/60 ${mvtSortKey === 'nomClient' ? 'text-amber-300 bg-slate-700/50' : 'hover:text-amber-300'}`}
+                      onClick={() => handleMvtSort('nomClient')}
+                      onDoubleClick={() => handleMvtSort('nomClient')}
+                      title="Cliquer ou double-cliquer pour trier par Client"
+                    >
+                      Client <SortIcon col="nomClient" currentKey={mvtSortKey} currentDir={mvtSortDir} />
+                    </th>
+                    <th
+                      className={`py-2 px-3 text-center border-r border-slate-700 w-28 cursor-pointer select-none transition group hover:bg-slate-700/60 ${mvtSortKey === 'quantite' ? 'text-amber-300 bg-slate-700/50' : 'hover:text-amber-300'}`}
                       onClick={() => handleMvtSort('quantite')}
                       onDoubleClick={() => handleMvtSort('quantite')}
                       title="Cliquer ou double-cliquer pour trier par Quantité / Longueur"
@@ -2644,10 +2659,10 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                 <tbody className="divide-y divide-slate-800">
                   {filteredAndSortedMouvements.map((m, idx) => (
                       <tr key={m.id} className={`${ idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/50'} hover:bg-slate-800/30 transition`}>
-                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-slate-400 text-[11px]">{m.date}</td>
-                        <td className="py-2 px-3 border-r border-slate-800">
+                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-slate-400 text-[11px] whitespace-nowrap">{m.date}</td>
+                        <td className="py-2 px-3 border-r border-slate-800 whitespace-nowrap">
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                            m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE' || m.type === 'SORTIE_MANUELLE'
+                            m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE' || m.type === 'SORTIE_MANUELLE' || m.type === 'SORTIE_ACCESSOIRE'
                               ? 'bg-rose-900/40 text-rose-300 border-rose-700/40'
                             : m.type === 'ENTREE_CHUTE' || m.type === 'RECEPTION_MARCHANDISE'
                               ? 'bg-emerald-900/40 text-emerald-300 border-emerald-700/40'
@@ -2657,6 +2672,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                           }`}>
                             {m.type === 'SORTIE_BARRE_NEUVE' ? '🔻 Sortie Barre'
                               : m.type === 'SORTIE_CHUTE' ? '🔻 Sortie Chute'
+                              : m.type === 'SORTIE_ACCESSOIRE' ? '🔻 Sortie Accessoire'
                               : m.type === 'SORTIE_MANUELLE' ? '📤 Sortie Manuelle'
                               : m.type === 'RECEPTION_MARCHANDISE' ? '📥 Réception'
                               : m.type === 'ENTREE_CHUTE' ? '🔺 Entrée Chute'
@@ -2664,13 +2680,23 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                               : '📝 Ajust. Inventaire'}
                           </span>
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-amber-300 font-bold">
+                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-amber-300 font-bold whitespace-nowrap">
                           {m.numCommande || '—'}
+                        </td>
+                        <td className="py-2 px-3 border-r border-slate-800 text-slate-200">
+                          {m.articleCode ? (
+                            <div>
+                              <span className="font-mono font-bold text-amber-400/90">{m.articleCode}</span>
+                              {m.designation && <span className="text-[11px] text-slate-400 ml-1.5 font-normal">({m.designation})</span>}
+                            </div>
+                          ) : (
+                            <span className="text-slate-500">—</span>
+                          )}
                         </td>
                         <td className="py-2 px-3 border-r border-slate-800 text-slate-300">
                           {m.nomClient || '—'}
                         </td>
-                        <td className="py-2 px-3 border-r border-slate-800 text-center font-mono font-bold text-slate-200">
+                        <td className="py-2 px-3 border-r border-slate-800 text-center font-mono font-bold text-slate-200 whitespace-nowrap">
                           {m.longueurMm ? `${m.longueurMm} mm` : m.quantite ? `×${m.quantite}` : '—'}
                         </td>
                         <td className="py-2 px-3 text-slate-400 text-[11px]">{m.remarque || '—'}</td>

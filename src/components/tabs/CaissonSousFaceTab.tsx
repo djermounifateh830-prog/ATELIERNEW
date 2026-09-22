@@ -220,6 +220,14 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
           articleDesignation: string;
           article: Article;
           resultat: ResultatOptimisation;
+          debordement?: number;
+          conditionsCoupe?: {
+            longueurBarre?: number;
+            epaisseurLame?: number;
+            debordement?: number;
+            refusMin?: number;
+            refusMax?: number;
+          };
         }> = [];
 
         // 1. Découpe de l'article principal (ex: Caisson CT)
@@ -254,7 +262,15 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
           type: isCT ? 'CT' : 'SF',
           articleDesignation: selectedArticle.designation,
           article: selectedArticle,
-          resultat: resCT
+          resultat: resCT,
+          debordement: paramsCT.debordement,
+          conditionsCoupe: {
+            longueurBarre: paramsCT.longueurBarre,
+            epaisseurLame: paramsCT.epaisseurScie,
+            debordement: paramsCT.debordement,
+            refusMin: paramsCT.refusMin,
+            refusMax: paramsCT.refusMax
+          }
         });
 
         // 2. Si c'est un Caisson CT, générer également la Sous-Face SF associée (si disponible dans les articles)
@@ -299,7 +315,15 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
               type: 'SF',
               articleDesignation: sfArticle.designation,
               article: sfArticle,
-              resultat: resSF
+              resultat: resSF,
+              debordement: paramsSF.debordement,
+              conditionsCoupe: {
+                longueurBarre: paramsSF.longueurBarre,
+                epaisseurLame: paramsSF.epaisseurScie,
+                debordement: paramsSF.debordement,
+                refusMin: paramsSF.refusMin,
+                refusMax: paramsSF.refusMax
+              }
             });
           }
         }
@@ -746,7 +770,9 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
             badge: sec.type === 'CT' ? 'CAISSON TUNNEL' : 'SOUS-FACE',
             isSousFace: sec.type === 'SF',
             famille: 'CAISSON',
-            type: sec.type
+            type: sec.type,
+            debordement: sec.debordement,
+            conditionsCoupe: sec.conditionsCoupe
           }))}
           articles={articles}
           mapping={mapping}

@@ -164,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({
     setDragOverTabId(null);
   };
 
-  const activeOfCount = suivisOF.filter(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE').length;
+  const activeOfCount = suivisOF.filter(o => o.statut === 'EMIS' || o.statut === 'EN_PAUSE').length;
   const dossiersActifsCount = (dossiers || []).filter(d => d && d.statut !== 'CLOTURE' && d.statut !== 'LIVRE' && d.statut !== 'TERMINE').length;
   const totalActifsAtelier = Math.max(activeOfCount, dossiersActifsCount);
 

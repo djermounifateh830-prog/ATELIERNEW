@@ -61,29 +61,29 @@ export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
     CAISSON: {
       famille: 'CAISSON',
       libelle: 'Caissons & Sous-faces',
-      tempsUnitaireMinutes: 5, // 5 min par caisson/sous-face (soit 120 pcs/jour sur base 8h)
-      capaciteJournalierePieces: 120, // 120 caissons / jour
+      tempsUnitaireMinutes: 4, // 4 min par caisson/sous-face (soit 120 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 120, // 120 caissons / jour (120 * 4 min = 480 min = 8h)
       delaiFixeJours: 0
     },
     PRECADRE: {
       famille: 'PRECADRE',
       libelle: 'Précadres',
       tempsUnitaireMinutes: 6, // 6 min par précadre (soit 80 pcs/jour sur base 8h)
-      capaciteJournalierePieces: 80, // 80 précadres / jour
+      capaciteJournalierePieces: 80, // 80 précadres / jour (80 * 6 min = 480 min = 8h)
       delaiFixeJours: 0
     },
     MOUSTIQUAIRE: {
       famille: 'MOUSTIQUAIRE',
       libelle: 'Moustiquaires plissées',
-      tempsUnitaireMinutes: 10, // 10 min par moustiquaire (soit 50 pcs/jour sur base 8h)
-      capaciteJournalierePieces: 50, // 50 moustiquaires / jour
+      tempsUnitaireMinutes: 10, // 10 min par moustiquaire (soit 48 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 48, // 48 moustiquaires / jour (48 * 10 min = 480 min = 8h)
       delaiFixeJours: 0
     },
     TABLIER: {
       famille: 'TABLIER',
       libelle: 'Tabliers de volet',
-      tempsUnitaireMinutes: 15, // 15 min par tablier (soit 35 pcs/jour sur base 8h)
-      capaciteJournalierePieces: 35, // 35 tabliers / jour
+      tempsUnitaireMinutes: 15, // 15 min par tablier (soit 32 pcs/jour sur base 8h)
+      capaciteJournalierePieces: 32, // 32 tabliers / jour (32 * 15 min = 480 min = 8h)
       delaiFixeJours: 0
     }
   }
@@ -187,8 +187,12 @@ export class DelaisProductionService {
     const d = new Date(dateDepart);
     if (isNaN(d.getTime())) return new Date();
 
-    // Si aucun jour ouvré n'est requis (ex: livraison demandée AUJOURD'HUI / délai 0j)
+    // Si aucun jour ouvré supplémentaire n'est requis (ex: livraison demandée AUJOURD'HUI / délai 0j) :
+    // Si la date de départ tombe sur un jour de repos, la fabrication/livraison démarre le premier jour ouvré d'ouverture
     if (joursRequis <= 0) {
+      while (!activeJours.includes(d.getDay())) {
+        d.setDate(d.getDate() + 1);
+      }
       return d;
     }
 
@@ -211,7 +215,7 @@ export class DelaisProductionService {
   }
 
   /**
-   * Parse une date au format DD/MM/YYYY ou YYYY-MM-DD (ISO)
+   * Parse une date au format DD/MM/YYYY ou YYYY-MM-DD (ISO) en heure locale stricte
    */
   static parseDateString(str?: string): Date {
     if (!str) return new Date();
@@ -259,6 +263,7 @@ export class DelaisProductionService {
 
   /**
    * Extrait ou reconstruit la date de livraison cible d'une commande
+   * Protégé contre les décalages de fuseau horaire (UTC vs local) et les passages d'année
    */
   static extraireDateLivraison(
     dateLivTexte?: string,
@@ -266,7 +271,7 @@ export class DelaisProductionService {
     dateReferenceFallback?: string
   ): Date {
     if (dateLivISO) {
-      const parsedIso = new Date(dateLivISO);
+      const parsedIso = this.parseDateString(dateLivISO);
       if (!isNaN(parsedIso.getTime())) return parsedIso;
     }
     if (dateLivTexte) {
@@ -288,6 +293,11 @@ export class DelaisProductionService {
           const fallbackDate = this.parseDateString(dateReferenceFallback);
           annee = fallbackDate.getFullYear();
         }
+        // Gestion robuste du passage d'année (ex: commande passée en nov/déc pour janvier/février)
+        const currentMonth = new Date().getMonth();
+        if (currentMonth >= 10 && m <= 2) {
+          annee += 1;
+        }
         return new Date(annee, m, j);
       }
     }
@@ -298,9 +308,63 @@ export class DelaisProductionService {
   }
 
   /**
+   * Compte le nombre de jours ouvrés écoulés entre deux dates (dateDebut exclue, dateFin incluse)
+   */
+  static compterJoursOuvresEntre(dateDebut: Date, dateFin: Date, joursOuvres?: number[]): number {
+    const activeJours = joursOuvres && joursOuvres.length > 0 ? joursOuvres : [0, 1, 2, 3, 4];
+    const cur = new Date(dateDebut);
+    cur.setHours(0, 0, 0, 0);
+    const end = new Date(dateFin);
+    end.setHours(0, 0, 0, 0);
+
+    if (cur.getTime() >= end.getTime()) return 0;
+
+    let count = 0;
+    cur.setDate(cur.getDate() + 1);
+    while (cur.getTime() <= end.getTime()) {
+      if (activeJours.includes(cur.getDay())) {
+        count++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return count;
+  }
+
+  /**
+   * Renvoie la capacité journalière en pièces pour une famille donnée
+   * Harmonisée de manière cohérente avec le temps unitaire et les heures de travail
+   */
+  static getCapaciteJournaliere(famille: FamilleProduit, params?: ParametresProductionAtelier): number {
+    const p = params || this.getParametres();
+    const cfg = p.familles[famille];
+    if (!cfg) return 80;
+    if (cfg.capaciteJournalierePieces && cfg.capaciteJournalierePieces > 0) {
+      return cfg.capaciteJournalierePieces;
+    }
+    const h = p.heuresTravailParJour || 8;
+    const t = cfg.tempsUnitaireMinutes || 10;
+    return Math.max(1, Math.floor((h * 60) / t));
+  }
+
+  /**
+   * Renvoie la cadence unitaire en minutes pour une famille donnée
+   */
+  static getCadenceMinutes(famille: FamilleProduit, params?: ParametresProductionAtelier): number {
+    const p = params || this.getParametres();
+    const cfg = p.familles[famille];
+    if (!cfg) return 10;
+    if (cfg.tempsUnitaireMinutes && cfg.tempsUnitaireMinutes > 0) {
+      return cfg.tempsUnitaireMinutes;
+    }
+    const h = p.heuresTravailParJour || 8;
+    const cap = cfg.capaciteJournalierePieces || 50;
+    return Math.max(1, (h * 60) / cap);
+  }
+
+  /**
    * Évalue le respect du délai de fabrication d'une commande.
    * RÈGLE DEMANDÉE :
-   * Si une commande dépasse son délai de plus de 3 jours (retard >= 3 jours calendaires),
+   * Si une commande dépasse son délai de plus de 3 jours ouvrés atelier,
    * le système affiche un drapeau (flag) distinctif et une alerte explicite :
    * « 🚩 À VÉRIFIER EN ATELIER : DÉLAI NON RESPECTÉ (> 3j) ».
    */
@@ -348,39 +412,52 @@ export class DelaisProductionService {
     const now = datePivot ? new Date(datePivot) : new Date();
     now.setHours(0, 0, 0, 0);
 
+    const params = this.getParametres();
+    const activeJours = params.joursOuvres || [0, 1, 2, 3, 4];
+
     // Calcul de la différence en jours
     const diffMs = now.getTime() - dateCible.getTime();
-    const diffJours = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    const diffJoursCalendaires = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffJours >= 3) {
+    // Calcul précis des jours ouvrés effectifs de retard
+    const joursOuvresRetard = (diffJoursCalendaires > 0)
+      ? this.compterJoursOuvresEntre(dateCible, now, activeJours)
+      : 0;
+
+    // Retard critique si au moins 3 jours ouvrés de retard ou 4+ jours calendaires avec retard ouvré
+    const estRetardCritique = joursOuvresRetard >= 3 || (diffJoursCalendaires >= 4 && joursOuvresRetard >= 2);
+
+    if (estRetardCritique) {
       // RETARD CRITIQUE >= 3 JOURS : FLAG ROUGE VIF + VÉRIFICATION ATELIER REQUISE
+      const jAffiche = joursOuvresRetard || diffJoursCalendaires;
       return {
         statutDelai: 'RETARD_CRITIQUE',
-        joursDeRetard: diffJours,
+        joursDeRetard: jAffiche,
         estDepasse: true,
         estRetardCritique: true,
-        texteAlerte: `⚠️ DÉLAI NON RESPECTÉ (+${diffJours} jours) : À vérifier d'urgence dans l'atelier !`,
-        badgeLabel: `🚩 Retard +${diffJours}j : À VÉRIFIER EN ATELIER`,
+        texteAlerte: `⚠️ DÉLAI NON RESPECTÉ (+${jAffiche}j) : À vérifier d'urgence dans l'atelier !`,
+        badgeLabel: `🚩 Retard +${jAffiche}j : À VÉRIFIER EN ATELIER`,
         badgeClasses: 'bg-rose-950 text-rose-200 border-2 border-rose-500 shadow-md shadow-rose-950/60 animate-pulse font-black',
         ligneClasses: 'bg-rose-950/20 border-l-4 border-l-rose-500',
         flagEmoji: '🚩',
         dateLivraisonDate: dateCible
       };
-    } else if (diffJours >= 1) {
+    } else if (diffJoursCalendaires >= 1 && (joursOuvresRetard >= 1 || diffJoursCalendaires >= 2)) {
       // Retard modéré (1 ou 2 jours)
+      const jAffiche = joursOuvresRetard || diffJoursCalendaires;
       return {
         statutDelai: 'RETARD_MODERE',
-        joursDeRetard: diffJours,
+        joursDeRetard: jAffiche,
         estDepasse: true,
         estRetardCritique: false,
-        texteAlerte: `⚠️ Délai dépassé de ${diffJours} jour(s)`,
-        badgeLabel: `⚠️ Retard (+${diffJours}j)`,
+        texteAlerte: `⚠️ Délai dépassé de ${jAffiche} jour(s)`,
+        badgeLabel: `⚠️ Retard (+${jAffiche}j)`,
         badgeClasses: 'bg-amber-950 text-amber-300 border border-amber-600 font-bold',
         ligneClasses: 'bg-amber-950/10 border-l-2 border-l-amber-500',
         flagEmoji: '⚠️',
         dateLivraisonDate: dateCible
       };
-    } else if (diffJours === 0) {
+    } else if (diffJoursCalendaires === 0) {
       // Échéance aujourd'hui
       return {
         statutDelai: 'ECHEANCE_AUJOURDHUI',
@@ -396,10 +473,10 @@ export class DelaisProductionService {
       };
     } else {
       // Dans les délais
-      const joursRestants = Math.abs(diffJours);
+      const joursRestants = Math.abs(diffJoursCalendaires);
       return {
         statutDelai: 'DANS_LES_TEMPS',
-        joursDeRetard: diffJours,
+        joursDeRetard: diffJoursCalendaires,
         estDepasse: false,
         estRetardCritique: false,
         texteAlerte: `Dans les temps (reste ${joursRestants}j)`,
@@ -651,9 +728,9 @@ export class DelaisProductionService {
     // Si l'OF est prioritaire, il ne subit pas la file d'attente des commandes ordinaires
     if (!targetOF.estPrioritaire) {
       allSuivisOF.forEach(of => {
-        // Ne considérer que les OFs encore en cours de fabrication
+        // Ne considérer que les OFs encore en cours de fabrication (exclut les reçus et clôturés)
         if (of.id === targetOF.id) return;
-        if (of.statut !== 'EMIS' && of.statut !== 'RETOUR_EN_ATTENTE') return;
+        if (of.statut !== 'EMIS' && of.statut !== 'EN_PAUSE') return;
         // Les OFs mis en pause (rupture...) ne bloquent pas les machines pour les autres commandes actives
         if (of.estEnPause) return;
 
@@ -799,10 +876,10 @@ export class DelaisProductionService {
       // Ensemble des ID de dossiers déjà comptabilisés via leurs OFs en cours pour cette famille
       const dossiersComptabilisesOF = new Set<string>();
 
-      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause)
+      // 1. D'après les OFs en cours de cette famille (en excluant les OFs suspendus/en pause, reçus et clôturés)
       const ofsEnCours = suivisOF.filter(o => {
         const st = (o.statut || '').toUpperCase();
-        if (st !== 'EMIS' && st !== 'RETOUR_EN_ATTENTE' && st !== 'EN_COURS') return false;
+        if (st !== 'EMIS' && st !== 'EN_COURS' && st !== 'EN_PAUSE') return false;
         if (o.estEnPause) return false;
         const ofFam = (o.famille as string) === 'SOUS_FACE' ? 'CAISSON' : o.famille;
         return ofFam === fam;
@@ -896,8 +973,8 @@ export class DelaisProductionService {
 
       // Volume total à absorber par l'atelier pour cette famille
       const totalChargePieces = dossier.estPrioritaire ? nbPieces : (piecesEnFile + nbPieces);
-      const cap = configFam.capaciteJournalierePieces || (fam === 'CAISSON' ? 120 : fam === 'PRECADRE' ? 80 : fam === 'MOUSTIQUAIRE' ? 50 : 35);
-      const tempsUnit = configFam.tempsUnitaireMinutes || (fam === 'CAISSON' ? 5 : fam === 'PRECADRE' ? 6 : fam === 'MOUSTIQUAIRE' ? 10 : 15);
+      const cap = this.getCapaciteJournaliere(fam, params);
+      const tempsUnit = this.getCadenceMinutes(fam, params);
 
       let joursOuvresFamille = 0;
       let dateEstimeeFamille = dateDepart;
@@ -1099,7 +1176,7 @@ export class DelaisProductionService {
   ): ResultatSimulationPlanningFamille {
     const params = paramsCustom || this.getParametres();
     const configFam = params.familles[famille] || params.familles.CAISSON;
-    const cadence = configFam.tempsUnitaireMinutes || (famille === 'CAISSON' ? 5 : famille === 'PRECADRE' ? 6 : famille === 'MOUSTIQUAIRE' ? 10 : 15);
+    const cadence = this.getCadenceMinutes(famille, params);
     const heuresStandard = params.heuresTravailParJour || 8;
     const minutesStandard = heuresStandard * 60; // ex: 480 min pour 8h
 
@@ -1141,7 +1218,7 @@ export class DelaisProductionService {
     // Ordonnancement de la file active :
     // 1. Commandes reprises récemment en tête de file (priorité absolue au démarrage)
     // 2. Commandes prioritaires ordinaires
-    // 3. FIFO (date d'émission la plus ancienne en premier)
+    // 3. FIFO (date d'émission la plus ancienne en premier, puis numéro de séquence d'émission)
     actives.sort((a, b) => {
       const repA = (a as any).repriseTimestamp || 0;
       const repB = (b as any).repriseTimestamp || 0;
@@ -1153,7 +1230,16 @@ export class DelaisProductionService {
       if (!a.estPrioritaire && b.estPrioritaire) return 1;
       const dateA = a.dateEmission ? this.parseDateString(a.dateEmission).getTime() : 0;
       const dateB = b.dateEmission ? this.parseDateString(b.dateEmission).getTime() : 0;
-      return dateA - dateB;
+      if (dateA !== dateB) return dateA - dateB;
+
+      // Déterminer l'ordre par numéro de séquence d'émission ou code OF
+      const seqA = (a as any).numeroEmission || (a as any).sequence || 0;
+      const seqB = (b as any).numeroEmission || (b as any).sequence || 0;
+      if (seqA !== seqB) return seqA - seqB;
+
+      const codeA = ((a as any).codeOF || a.refCommande || '').toString();
+      const codeB = ((b as any).codeOF || b.refCommande || '').toString();
+      return codeA.localeCompare(codeB, undefined, { numeric: true });
     });
 
     let currentDayOffset = 0;

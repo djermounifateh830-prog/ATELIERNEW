@@ -176,7 +176,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      const nouveauStock = Math.max(0, currentArticle.stock_physique - qte);
+      const nouveauStock = currentArticle.stock_physique - qte;
       const updatedArticles = articles.map(a => 
         a.code_art === currentArticle.code_art 
           ? { ...a, stock_physique: nouveauStock }
@@ -194,7 +194,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
         longueurMm: currentArticle.longeur,
         quantite: qte,
         nomClient: destinataireClient || undefined,
-        remarque: `Sortie Manuelle : -${qte} barres. Motif: ${motifSortie}${destinataireClient ? ` (Dest: ${destinataireClient})` : ''}${remarqueSortie ? ` - ${remarqueSortie}` : ''}`
+        remarque: `Sortie Manuelle : -${qte} barres [Stock: ${currentArticle.stock_physique} → ${nouveauStock}]. Motif: ${motifSortie}${destinataireClient ? ` (Dest: ${destinataireClient})` : ''}${remarqueSortie ? ` - ${remarqueSortie}` : ''}`
       };
 
       await StorageService.addMouvement(mvt);

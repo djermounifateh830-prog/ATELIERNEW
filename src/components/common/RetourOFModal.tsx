@@ -589,6 +589,9 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const makeId = () => `mvt-${Date.now()}-${mvtIdx++}`;
 
     lignes.forEach((ligne, idx) => {
+      const artObj = articles.find(a => a.code_art === ligne.articleCode);
+      const articleDesignation = ligne.articleDesignation || artObj?.designation || '';
+
       const isAccessoire = ligne.id?.startsWith('lr-acc-') || ligne.repere?.startsWith('ACCESSOIRE') || ligne.longueurPrevue === 0;
       if (isAccessoire) {
         let qte = 1;
@@ -601,6 +604,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           date: dateTimeStr,
           type: 'SORTIE_ACCESSOIRE',
           articleCode: ligne.articleCode,
+          designation: articleDesignation,
           ofId: suivi.id,
           numCommande: finalNumCmd,
           nomClient: suivi.nomClient,
@@ -626,6 +630,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           date: dateTimeStr,
           type: 'SORTIE_BARRE_NEUVE',
           articleCode: ligne.articleCode,
+          designation: articleDesignation,
           ofId: suivi.id,
           numCommande: finalNumCmd,
           nomClient: suivi.nomClient,
@@ -640,6 +645,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           date: dateTimeStr,
           type: 'AJUSTEMENT_INVENTAIRE',
           articleCode: ligne.articleCode,
+          designation: articleDesignation,
           ofId: suivi.id,
           numCommande: finalNumCmd,
           nomClient: suivi.nomClient,
@@ -655,6 +661,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           date: dateTimeStr,
           type: 'SORTIE_CHUTE',
           articleCode: ligne.articleCode,
+          designation: articleDesignation,
           ofId: suivi.id,
           numCommande: finalNumCmd,
           nomClient: suivi.nomClient,
@@ -678,6 +685,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                 date: dateTimeStr,
                 type: 'ENTREE_CHUTE',
                 articleCode: ligne.articleCode,
+                designation: articleDesignation,
                 ofId: suivi.id,
                 numCommande: finalNumCmd,
                 nomClient: suivi.nomClient,
@@ -693,6 +701,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
             date: dateTimeStr,
             type: 'ENTREE_CHUTE',
             articleCode: ligne.articleCode,
+            designation: articleDesignation,
             ofId: suivi.id,
             numCommande: finalNumCmd,
             nomClient: suivi.nomClient,
@@ -714,10 +723,8 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         remarqueGlobale
       }, mouvements);
       setIsClotureSuccess(true);
-      setTimeout(() => {
-        onCloture();
-        onClose();
-      }, 1200);
+      onCloture();
+      onClose();
     } catch (error: any) {
       setIsConfirming(false);
       alert(`Impossible de clôturer l'OF : ${error.message}`);

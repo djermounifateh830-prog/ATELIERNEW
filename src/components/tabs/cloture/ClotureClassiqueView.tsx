@@ -14,11 +14,13 @@ import {
   SlidersHorizontal,
   PackageCheck,
   X,
-  CheckCircle2
+  CheckCircle2,
+  ArrowLeft,
+  RotateCcw
 } from 'lucide-react';
 import { Article, ChuteItem, LigneRetourOF, SuiviOF, MouvementStock } from '../../../types';
 import { StorageService } from '../../../services/storage';
-import { ClotureSuccessModal } from '../../common/ClotureSuccessModal';
+import { ConfirmationModal } from '../../common/ConfirmationModal';
 
 interface ClotureClassiqueViewProps {
   suivi: SuiviOF;
@@ -51,16 +53,22 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
   const [remarqueGlobale, setRemarqueGlobale] = useState(suivi.remarqueGlobale || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isClotureTerminee, setIsClotureTerminee] = useState(suivi.statut === 'CLOTURE');
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const handleFermerOF = () => {
-    setShowSuccessModal(false);
-    if (onCloseOF) {
-      onCloseOF();
-    } else if (onClotureSuccess) {
+    setShowConfirmModal(false);
+    if (onClotureSuccess) {
       onClotureSuccess();
+    } else if (onCloseOF) {
+      onCloseOF();
+    } else if (onNavigateToTab) {
+      onNavigateToTab('encours');
     }
+  };
+
+  const handleResetInitial = () => {
+    setLignes((suivi.lignesRetour || []).map(l => ({ ...l })));
+    setLignesVerifiees({});
   };
 
   // Mettre à jour une ligne
@@ -272,11 +280,19 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
         mouvements
       );
 
-      // Verrouiller immédiatement et afficher le message de succès
+      // Verrouiller immédiatement
       setIsClotureTerminee(true);
-      setShowSuccessModal(true);
-      setSuccessMsg(`OF ${suivi.codeOF || suivi.numCommande} clôturé avec succès via la méthode classique !`);
+      setShowConfirmModal(false);
       onRefreshData();
+
+      // Fermeture immédiate de la fenêtre de clôture et retour direct au tableau des ordres
+      if (onClotureSuccess) {
+        onClotureSuccess();
+      } else if (onCloseOF) {
+        onCloseOF();
+      } else if (onNavigateToTab) {
+        onNavigateToTab('encours');
+      }
     } catch (err: any) {
       alert(`Erreur clôture : ${err?.message || 'Erreur'}`);
     } finally {
@@ -307,24 +323,6 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
           >
             <PackageCheck className="w-4 h-4" />
             <span>Fermer cet OF</span>
-          </button>
-        </div>
-      )}
-
-      {successMsg && !showSuccessModal && (
-        <div className="p-4 bg-emerald-950/80 border border-emerald-500 rounded-2xl flex items-center justify-between text-emerald-200">
-          <div className="flex items-center gap-3">
-            <ClipboardCheck className="w-6 h-6 text-emerald-400 shrink-0" />
-            <div>
-              <p className="font-bold text-sm">{successMsg}</p>
-              <p className="text-xs text-emerald-300/80">Lignes validées et mouvements enregistrés en base.</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setSuccessMsg(null)}
-            className="text-xs font-bold text-emerald-400 hover:text-emerald-200 px-3 py-1 bg-emerald-900/50 rounded-lg"
-          >
-            Fermer
           </button>
         </div>
       )}
@@ -585,53 +583,89 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
             {Object.keys(lignesVerifiees).length} / {lignes.length} ligne(s) vérifiée(s)
           </div>
 
-          {isClotureTerminee || suivi.statut === 'CLOTURE' ? (
-            <div className="flex items-center gap-2.5">
-              <div className="px-4 py-2.5 bg-emerald-950/90 border border-emerald-500/80 text-emerald-400 font-bold rounded-xl text-xs flex items-center gap-2 shadow-inner">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>OF Clôturé avec succès</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleFermerOF}
-                className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-emerald-950/40 flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <PackageCheck className="w-4 h-4" />
-                <span>Fermer cet OF</span>
-              </button>
-            </div>
-          ) : (
+          <div className="flex items-center gap-3">
+            {/* Bouton Quitter et retourner au tableau sans clôturer */}
             <button
               type="button"
-              disabled={isSubmitting || isClotureTerminee}
-              onClick={handleValiderClotureClassique}
-              className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-sm shadow-lg flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
+              onClick={() => {
+                if (onNavigateToTab) onNavigateToTab('encours');
+                else if (onCloseOF) onCloseOF();
+              }}
+              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+              title="Retourner au tableau des Ordres en cours sans clôturer"
             >
-              {isSubmitting ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Enregistrement en cours...</span>
-                </>
-              ) : (
-                <>
-                  <ClipboardCheck className="w-4 h-4" />
-                  <span>Valider la Clôture Définitive (Mode Classique)</span>
-                </>
-              )}
+              <ArrowLeft className="w-4 h-4 text-slate-400" />
+              <span>Tableau</span>
             </button>
-          )}
+
+            {/* Bouton Rétablir l'état initial */}
+            {!isClotureTerminee && suivi.statut !== 'CLOTURE' && (
+              <button
+                type="button"
+                onClick={handleResetInitial}
+                className="px-3.5 py-2.5 bg-slate-950 hover:bg-slate-800 text-amber-400 hover:text-amber-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer border border-amber-500/30"
+                title="Rétablir les lignes initiales sans quitter l'OF en cours"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Rétablir plan initial</span>
+              </button>
+            )}
+
+            {isClotureTerminee || suivi.statut === 'CLOTURE' ? (
+              <div className="flex items-center gap-2.5">
+                <div className="px-4 py-2.5 bg-emerald-950/90 border border-emerald-500/80 text-emerald-400 font-bold rounded-xl text-xs flex items-center gap-2 shadow-inner">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>OF Clôturé avec succès</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleFermerOF}
+                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-emerald-950/40 flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <PackageCheck className="w-4 h-4" />
+                  <span>Retourner au tableau</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={isSubmitting || isClotureTerminee}
+                onClick={() => setShowConfirmModal(true)}
+                className="px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black rounded-xl text-sm shadow-lg flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Enregistrement en cours...</span>
+                  </>
+                ) : (
+                  <>
+                    <ClipboardCheck className="w-4 h-4" />
+                    <span>✅ Valider la Clôture Définitive (Mode Classique)</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Modale d'annonce de Clôture avec Succès et Fermeture */}
-      <ClotureSuccessModal
-        isOpen={showSuccessModal}
-        codeOF={suivi.codeOF || suivi.numCommande}
-        numCommande={suivi.numCommande}
-        nomClient={suivi.nomClient}
-        titreSection={suivi.titreSection}
-        onFermerOF={handleFermerOF}
-        onAllerAuxOrdresEnCours={onNavigateToTab ? () => onNavigateToTab('encours') : undefined}
+      {/* Confirmation de Clôture avec Fermeture Immédiate & Retour au Tableau */}
+      <ConfirmationModal
+        isOpen={showConfirmModal}
+        title={`Clôturer l'Ordre ${suivi.codeOF || suivi.numCommande} ?`}
+        message="Voulez-vous valider définitivement la clôture de cet ordre ? La fenêtre de clôture se fermera immédiatement et vous retournerez au tableau pour une autre action."
+        confirmLabel="Valider et Retourner au Tableau"
+        cancelLabel="Annuler (Continuer sur cet OF)"
+        type="save"
+        isProcessing={isSubmitting}
+        details={[
+          `${lignes.filter(l => l.sourceReelle === 'BARRE_NEUVE' || l.typeSupport === 'BARRE_NEUVE').length} barre(s) neuve(s) débitée(s)`,
+          `${lignes.filter(l => (l.resteReelMesureMm ?? l.restePrevuMm) > 0 && l.actionReste === 'A_STOCKER').length} chute(s) à ranger`,
+          `${Object.keys(lignesVerifiees).length} / ${lignes.length} ligne(s) vérifiée(s)`
+        ]}
+        onConfirm={handleValiderClotureClassique}
+        onClose={() => setShowConfirmModal(false)}
       />
     </div>
   );

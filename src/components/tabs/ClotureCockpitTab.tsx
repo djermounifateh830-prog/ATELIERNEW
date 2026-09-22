@@ -93,6 +93,17 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
     }
   };
 
+  // Clôture validée : fermer immédiatement la fenêtre de clôture et retourner au tableau pour autre action
+  const handleClotureSuccess = (closedOFId?: string) => {
+    localStorage.removeItem('3m_cockpit_selected_of');
+    onRefreshData();
+    if (onNavigateToTab) {
+      onNavigateToTab('encours');
+    } else {
+      handleCloseOF(closedOFId);
+    }
+  };
+
   const currentOF = useMemo(() => {
     return suivisOF.find(o => o.id === selectedOFId);
   }, [suivisOF, selectedOFId]);
@@ -434,8 +445,8 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
                   mapping={mapping}
                   onBilanChange={setBilanCockpit}
                   onRefreshData={onRefreshData}
-                  onClotureSuccess={() => handleCloseOF(currentOF.id)}
-                  onCloseOF={() => handleCloseOF(currentOF.id)}
+                  onClotureSuccess={() => handleClotureSuccess(currentOF.id)}
+                  onCloseOF={() => handleClotureSuccess(currentOF.id)}
                   onNavigateToTab={onNavigateToTab}
                 />
               ) : (
@@ -453,8 +464,8 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
                 chutesBarres={chutesBarres}
                 mapping={mapping}
                 onRefreshData={onRefreshData}
-                onClotureSuccess={() => handleCloseOF(currentOF.id)}
-                onCloseOF={() => handleCloseOF(currentOF.id)}
+                onClotureSuccess={() => handleClotureSuccess(currentOF.id)}
+                onCloseOF={() => handleClotureSuccess(currentOF.id)}
                 onNavigateToTab={onNavigateToTab}
               />
             )}
