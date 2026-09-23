@@ -53,8 +53,10 @@ import {
   FileText,
   Eye,
   Pause,
-  Play
+  Play,
+  BarChart3
 } from 'lucide-react';
+import { MonitoringChartsView } from '../monitoring/MonitoringChartsView';
 
 interface MonitoringAtelierTabProps {
   dossiers?: DossierCommandeGlobal[];
@@ -73,8 +75,8 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
   onNavigateToTab,
   onLoadDossierInEcosysteme
 }) => {
-  // Mode d'affichage strict et exclusif : POSTES D'USINAGE, PORTEFEUILLE CLIENTS, ou FILE DE FABRICATION
-  const [modeVue, setModeVue] = useState<'FAMILLES' | 'CLIENTS' | 'COMMANDES'>('FAMILLES');
+  // Mode d'affichage strict et exclusif : POSTES D'USINAGE, GRAPHIQUES & CADENCES (RECHARTS), PORTEFEUILLE CLIENTS, ou FILE DE FABRICATION
+  const [modeVue, setModeVue] = useState<'FAMILLES' | 'GRAPHIQUES' | 'CLIENTS' | 'COMMANDES'>('FAMILLES');
 
   // État modale dossier détail complet
   const [selectedDossierToView, setSelectedDossierToView] = useState<DossierCommandeGlobal | null>(null);
@@ -427,6 +429,18 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
             </button>
 
             <button
+              onClick={() => setModeVue('GRAPHIQUES')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
+                modeVue === 'GRAPHIQUES'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>📊 Graphiques &amp; Cadences (Recharts)</span>
+            </button>
+
+            <button
               onClick={() => setModeVue('CLIENTS')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-2 cursor-pointer ${
                 modeVue === 'CLIENTS'
@@ -499,10 +513,47 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       </div>
 
       {/* ========================================================================= */}
+      {/* VUE GRAPHIQUES : VISUALISATION RECHARTS (CADENCES & RENDEMENT MATIÈRE)    */}
+      {/* ========================================================================= */}
+      {modeVue === 'GRAPHIQUES' && (
+        <MonitoringChartsView
+          monitoringData={monitoringData}
+          dossiers={dossiers}
+          suivisOF={suivisOF}
+          onNavigateToPoste={(familleKey) => basculerVersCommandesFamille(familleKey)}
+        />
+      )}
+
+      {/* ========================================================================= */}
       {/* VUE 1 : POSTES & FAMILLES D'USINAGE (LE CŒUR INDUSTRIEL DE L'ATELIER)   */}
       {/* ========================================================================= */}
       {modeVue === 'FAMILLES' && (
         <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Bannière d'accès direct aux graphiques Recharts */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/40 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-200">
+                  Visualisation Graphique Interactive des Cadences &amp; Rendement Matière (Recharts)
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Capacités journalières vs charge réelle, projection sur 6 jours et taux d'utilisation de l'aluminium.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setModeVue('GRAPHIQUES')}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/10"
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Ouvrir les Graphiques Recharts</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* 📦 POSTE 1 : CAISSONS & COFFRES */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between hover:border-amber-500/40 transition">

@@ -293,24 +293,81 @@ export const ParametresProductionModal: React.FC<ParametresProductionModalProps>
               })}
             </div>
 
-            {/* Heures de travail journalières */}
-            <div className="flex items-center gap-3 pt-2 text-xs text-slate-300 border-t border-slate-800/80">
-              <Clock className="w-4 h-4 text-amber-400" />
-              <span>Base horaire de calcul :</span>
-              <input
-                type="number"
-                min="1"
-                max="24"
-                value={params.heuresTravailParJour || 8}
-                onChange={e =>
-                  setParams({
-                    ...params,
-                    heuresTravailParJour: Math.max(1, parseInt(e.target.value, 10) || 8)
-                  })
-                }
-                className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center font-bold text-white font-mono"
-              />
-              <span>heures par jour ouvré</span>
+            {/* Heures de travail journalières et Minutes totales par jour */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-xs text-slate-300 border-t border-slate-800/80">
+              <div className="flex items-center gap-3">
+                <Clock className="w-4 h-4 text-amber-400" />
+                <span>Base horaire de calcul :</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="24"
+                  value={params.heuresTravailParJour || 8}
+                  onChange={e =>
+                    setParams({
+                      ...params,
+                      heuresTravailParJour: Math.max(1, parseInt(e.target.value, 10) || 8)
+                    })
+                  }
+                  className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center font-bold text-white font-mono"
+                />
+                <span>heures par jour ouvré</span>
+              </div>
+              <div className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-cyan-300">
+                Capacité journalière : <strong>{(params.heuresTravailParJour || 8) * 60} minutes</strong> / jour
+              </div>
+            </div>
+
+            {/* Option d'ordonnancement : Combler les créneaux libres (Journées pleines à 100%) */}
+            <div className={`p-4 rounded-xl border transition ${
+              params.comblerVidesProduction
+                ? 'bg-emerald-950/30 border-emerald-500/50 ring-1 ring-emerald-500/30'
+                : 'bg-slate-900/60 border-slate-800'
+            }`}>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <Zap className={`w-4 h-4 ${params.comblerVidesProduction ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    <span className="text-xs font-bold text-white">
+                      Combler les créneaux libres (Optimisation journées pleines à 100%)
+                    </span>
+                    {params.comblerVidesProduction ? (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
+                        ACTIF
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-bold border border-slate-700">
+                        STANDARD (FIFO)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Au lieu de placer systématiquement chaque commande à la suite de la dernière commande de la famille, le système calcule le temps en minutes ({params.heuresTravailParJour || 8}h × 60 = {(params.heuresTravailParJour || 8) * 60} min/jour) et recherche s'il existe des <strong>créneaux vides disponibles dans les journées antérieures</strong> pour y intercaler la commande et saturer les journées à 100%.
+                  </p>
+                  <p className="text-[10px] text-slate-400 italic">
+                    {params.comblerVidesProduction
+                      ? '✓ Activé : les commandes courtes s’insèrent dans les temps résiduels des journées antérieures sans retarder le reste de l’atelier.'
+                      : 'Par défaut : chaque commande fait la queue après la dernière commande de la famille.'}
+                  </p>
+                </div>
+
+                <div className="shrink-0 pt-0.5">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!params.comblerVidesProduction}
+                      onChange={e =>
+                        setParams({
+                          ...params,
+                          comblerVidesProduction: e.target.checked
+                        })
+                      }
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 

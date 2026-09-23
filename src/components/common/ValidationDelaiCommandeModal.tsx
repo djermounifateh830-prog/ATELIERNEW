@@ -28,7 +28,8 @@ interface ValidationDelaiCommandeModalProps {
     estPrioritaire: boolean,
     motifPriorite?: string,
     estEnPause?: boolean,
-    motifPause?: string
+    motifPause?: string,
+    comblerVidesProduction?: boolean
   ) => Promise<void> | void;
   onApplyOnly?: (
     dateFinaleISO: string,
@@ -36,7 +37,8 @@ interface ValidationDelaiCommandeModalProps {
     estPrioritaire: boolean,
     motifPriorite?: string,
     estEnPause?: boolean,
-    motifPause?: string
+    motifPause?: string,
+    comblerVidesProduction?: boolean
   ) => void;
   refCommande: string;
   nomClient: string;
@@ -50,6 +52,8 @@ interface ValidationDelaiCommandeModalProps {
   initialDateLivraisonISO?: string;
   initialEstEnPause?: boolean;
   initialMotifPause?: string;
+  initialComblerVidesProduction?: boolean;
+  onToggleComblerVides?: (val: boolean) => void;
 }
 
 export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModalProps> = ({
@@ -68,12 +72,19 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
   initialMotifPriorite = '',
   initialDateLivraisonISO = '',
   initialEstEnPause = false,
-  initialMotifPause = ''
+  initialMotifPause = '',
+  initialComblerVidesProduction,
+  onToggleComblerVides
 }) => {
+  const paramsProd = DelaisProductionService.getParametres();
   const [estPrioritaire, setEstPrioritaire] = useState<boolean>(initialEstPrioritaire);
   const [motifPriorite, setMotifPriorite] = useState<string>(initialMotifPriorite);
   const [estEnPause, setEstEnPause] = useState<boolean>(initialEstEnPause);
   const [motifPause, setMotifPause] = useState<string>(initialMotifPause);
+  const [comblerVides, setComblerVides] = useState<boolean>(() => {
+    if (initialComblerVidesProduction !== undefined) return initialComblerVidesProduction;
+    return !!paramsProd.comblerVidesProduction;
+  });
   const [dateSelectionneeISO, setDateSelectionneeISO] = useState<string>('');
   const [modeDate, setModeDate] = useState<'AUTO' | 'MANUEL'>('AUTO');
   const [expandedFamilles, setExpandedFamilles] = useState<Record<string, boolean>>({});
@@ -81,8 +92,6 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
   const toggleFamilleExpanded = (fam: string) => {
     setExpandedFamilles(prev => ({ ...prev, [fam]: !prev[fam] }));
   };
-
-  const paramsProd = DelaisProductionService.getParametres();
   const dateSystemeStr = new Date().toLocaleDateString('fr-FR', {
     weekday: 'long',
     day: '2-digit',
@@ -162,11 +171,13 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
 
   const handleValider = async () => {
     const txtFormatte = getDateAfficheeFormatee(dateSelectionneeISO);
-    const dateFinaleTexte = estPrioritaire
+    const dateFinaleTexte = estEnPause
+      ? '⏸️ EN PAUSE'
+      : estPrioritaire
       ? `⚡ PRIORITAIRE : ${txtFormatte.replace(/^LIVRAISON\s*:\s*/i, '')}`
       : txtFormatte;
 
-    await onConfirmSave(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite);
+    await onConfirmSave(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite, estEnPause, motifPause, comblerVides);
   };
 
   const detailsArray: EstimationDelaiDetail[] = Object.values(estimationGlobale.detailsParFamille || {});
@@ -331,10 +342,20 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
                               {cap} / j
                             </td>
                             <td className="py-2.5 text-center font-bold text-amber-300">
-                              {det.joursOuvresRequis}j ouvré(s)
+                              <div>{det.joursOuvresRequis}j ouvré(s)</div>
+                              {det.creneauLibreTrouve && (
+                                <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-black border border-emerald-500/40">
+                                  ⚡ Gain -{det.gainJoursComblement}j (créneau)
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 text-right font-bold text-emerald-300">
-                              {det.dateLivraisonFormattee}
+                              <div>{det.dateLivraisonFormattee}</div>
+                              {det.tauxOccupationJourEstime ? (
+                                <div className="text-[9px] text-slate-400 font-mono font-normal">
+                                  Rempli à {det.tauxOccupationJourEstime}%
+                                </div>
+                              ) : null}
                             </td>
                           </tr>
 
@@ -609,6 +630,67 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
                 </div>
               )}
             </div>
+
+            {/* Option Combler les créneaux libres (Remplissage des journées à 100%) */}
+            <div className={`p-3.5 rounded-xl border transition ${
+              comblerVides
+                ? 'bg-emerald-950/30 border-emerald-500/50 ring-1 ring-emerald-500/30'
+                : 'bg-slate-900/50 border-slate-800'
+            }`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🧩</span>
+                    <span className="text-xs font-bold text-white block">
+                      Combler les créneaux libres (Journées pleines à 100%)
+                    </span>
+                    {estimationGlobale.creneauLibreTrouve && comblerVides ? (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black border border-emerald-500/40 animate-pulse flex items-center gap-1">
+                        <span>⚡ Gain -{estimationGlobale.gainJoursComblement} jour(s)</span>
+                      </span>
+                    ) : comblerVides ? (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/40">
+                        ACTIF
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-bold border border-slate-700">
+                        STANDARD (Queue de file)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Cherche les minutes libres dans les journées antérieures (base {(paramsProd.heuresTravailParJour || 8) * 60} min/jour) pour intercaler la commande et obtenir des journées pleines à 100%, au lieu de la placer après la dernière commande de la famille.
+                  </p>
+                  {estimationGlobale.creneauLibreTrouve && comblerVides && (
+                    <p className="text-[10px] text-emerald-400 font-semibold">
+                      ✨ Un créneau libre a été trouvé avant la dernière commande ! La livraison est avancée de {estimationGlobale.gainJoursComblement} jour(s).
+                    </p>
+                  )}
+                </div>
+
+                <div className="shrink-0 pt-0.5">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={comblerVides}
+                    onClick={() => {
+                      const nextVal = !comblerVides;
+                      setComblerVides(nextVal);
+                      if (onToggleComblerVides) onToggleComblerVides(nextVal);
+                    }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                      comblerVides ? 'bg-emerald-600' : 'bg-slate-700'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${
+                        comblerVides ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -633,7 +715,7 @@ export const ValidationDelaiCommandeModal: React.FC<ValidationDelaiCommandeModal
                     : estPrioritaire
                     ? `⚡ PRIORITAIRE : ${txtFormatte.replace(/^LIVRAISON\s*:\s*/i, '')}`
                     : txtFormatte;
-                  onApplyOnly(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite, estEnPause, motifPause);
+                  onApplyOnly(dateSelectionneeISO, dateFinaleTexte, estPrioritaire, motifPriorite, estEnPause, motifPause, comblerVides);
                   onClose();
                 }}
                 disabled={isSaving || (!dateSelectionneeISO && !estEnPause)}

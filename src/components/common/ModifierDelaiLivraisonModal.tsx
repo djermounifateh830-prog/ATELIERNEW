@@ -31,6 +31,13 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
   const [estEnPause, setEstEnPause] = useState<boolean>(false);
   const [motifPause, setMotifPause] = useState<string>('');
 
+  // Option de comblement des vides (minute par minute pour journées pleines à 100%)
+  const [comblerVides, setComblerVides] = useState<boolean>(() => {
+    return !!DelaisProductionService.getParametres().comblerVidesProduction;
+  });
+  const [creneauTrouve, setCreneauTrouve] = useState<boolean>(false);
+  const [gainJours, setGainJours] = useState<number>(0);
+
   // Initialisation à l'ouverture pour l'OF cible
   useEffect(() => {
     if (!isOpen || !of) return;
@@ -59,6 +66,9 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
       if (match) {
         if (match.estEnPause !== undefined) setEstEnPause(!!match.estEnPause);
         if (match.motifPause) setMotifPause(match.motifPause);
+        if (match.comblerVidesProduction !== undefined) {
+          setComblerVides(!!match.comblerVidesProduction);
+        }
         // Si le dossier a une date personnalisée ou par famille
         const famKeyRaw = ((of.famille as string) === 'SOUS_FACE' ? 'CAISSON' : of.famille || '').toUpperCase();
         const customFamDate = match.datesLivraisonCommandes?.[famKeyRaw as any];
@@ -77,8 +87,10 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     if (of.dateLivraisonPrevisionnelleISO) {
       setDateSelectionnee(of.dateLivraisonPrevisionnelleISO);
     } else {
-      const calcul = DelaisProductionService.estimerDelaiOF(of, suivisOF);
+      const calcul = DelaisProductionService.estimerDelaiOF(of, suivisOF, comblerVides);
       setDateSelectionnee(calcul.dateLivraisonISO);
+      setCreneauTrouve(!!calcul.creneauLibreTrouve);
+      setGainJours(calcul.gainJoursComblement || 0);
     }
   }, [isOpen, of, suivisOF]);
 
@@ -124,12 +136,25 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
     setDateSelectionnee(DelaisProductionService.toISODateString(cible));
   };
 
-  const reinitialiserAutomatique = () => {
+  const appliquerRecalculAutomatique = (combler: boolean = comblerVides) => {
+    if (!of) return;
     const ofCopie: SuiviOF = { ...of, estPrioritaire: false, dateLivraisonPrevisionnelle: undefined, dateLivraisonPrevisionnelleISO: undefined };
-    const estim = DelaisProductionService.estimerDelaiOF(ofCopie, suivisOF);
+    const estim = DelaisProductionService.estimerDelaiOF(ofCopie, suivisOF, combler);
     setDateSelectionnee(estim.dateLivraisonISO);
+    setCreneauTrouve(!!estim.creneauLibreTrouve);
+    setGainJours(estim.gainJoursComblement || 0);
     setEstPrioritaire(false);
     setMotifPriorite('');
+  };
+
+  const reinitialiserAutomatique = () => {
+    appliquerRecalculAutomatique(comblerVides);
+  };
+
+  const toggleComblerVides = () => {
+    const nextVal = !comblerVides;
+    setComblerVides(nextVal);
+    appliquerRecalculAutomatique(nextVal);
   };
 
   // Calcul du volume et de la cadence pour la famille de cet OF
@@ -201,6 +226,7 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
               estEnPause,
               motifPause: estEnPause ? (motifPause.trim() || 'Interruption terrain / Rupture stock') : undefined,
               datePause: estEnPause ? (d.datePause || new Date().toISOString()) : undefined,
+              comblerVidesProduction: comblerVides,
               statut: (estEnPause ? 'EN_PAUSE' : (d.statut === 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut)) as StatutDossier
             };
           }
@@ -514,6 +540,53 @@ export const ModifierDelaiLivraisonModal: React.FC<ModifierDelaiLivraisonModalPr
                   <span>Délai Standard Auto</span>
                 </button>
               </div>
+            </div>
+
+            {/* Option Combler les créneaux libres (journées pleines à 100%) */}
+            <div className={`p-3 rounded-xl border transition-all ${
+              comblerVides
+                ? 'bg-emerald-950/40 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                : 'bg-slate-950/60 border-slate-800'
+            }`}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                    comblerVides ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'
+                  }`}>
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">
+                      Recherche de créneau libre (Comblement des vides)
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Cherche une disponibilité résiduelle en minutes avant la fin de file pour atteindre 100% par jour.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleComblerVides}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    comblerVides
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  <span>{comblerVides ? '✓ Actif' : 'Inactif'}</span>
+                </button>
+              </div>
+
+              {comblerVides && creneauTrouve && (
+                <div className="mt-2.5 pt-2 border-t border-emerald-500/30 flex items-center justify-between text-[11px] text-emerald-300">
+                  <span className="flex items-center gap-1 font-bold">
+                    ⚡ Créneau libre exploité avec succès !
+                  </span>
+                  <span className="font-mono bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/40 font-black">
+                    Gain : -{gainJours} jour(s) ouvré(s)
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

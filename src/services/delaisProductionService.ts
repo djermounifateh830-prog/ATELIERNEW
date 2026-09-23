@@ -56,6 +56,8 @@ export const PARAMETRES_PRODUCTION_DEFAUT: ParametresProductionAtelier = {
   // Jours ouvrés activés (0: Dimanche, 1: Lundi, 2: Mardi, 3: Mercredi, 4: Jeudi, 6: Samedi - personnalisable)
   joursOuvres: [0, 1, 2, 3, 4], // Dimanche au Jeudi par défaut (semaine standard atelier)
   heuresTravailParJour: 8,
+  // Remplissage optimal des journées (backfilling des créneaux libres à 100%)
+  comblerVidesProduction: false,
   tourneesDestinations: TOURNEES_DESTINATIONS_DEFAUT,
   familles: {
     CAISSON: {
@@ -644,13 +646,138 @@ export class DelaisProductionService {
   }
 
   /**
+   * Calcul du placement en minutes par journée de travail pour une famille :
+   * - Une journée compte : heuresTravailParJour * 60 minutes (ex: 8h = 480 minutes).
+   * - Par défaut : la commande est placée à la suite de la dernière commande dans la file d'attente.
+   * - Si comblerVides = true : le système examine les journées précédentes à partir du jour 0
+   *   pour détecter s'il y a un créneau libre / des minutes disponibles avant la dernière commande,
+   *   afin d'intercaler la commande et d'obtenir des journées pleines à 100% (480/480 min).
+   */
+  static calculerPlacementMinutesFamille(
+    nbPieces: number,
+    cadenceMin: number,
+    minutesParJour: number,
+    piecesParOFsEnFile: number[],
+    comblerVides: boolean
+  ): {
+    finishDayOffset: number;
+    standardFinishDayOffset: number;
+    creneauLibreTrouve: boolean;
+    gainJoursComblement: number;
+    minutesLibresComblees: number;
+    tauxOccupationJour: number;
+  } {
+    const neededMinutes = Math.max(1, nbPieces) * cadenceMin;
+
+    // 1. Simulation du remplissage par jour des commandes existantes en file
+    // Chaque élément de dailyUsedMinutes représente les minutes déjà consommées pour le jour d (0 = date de départ)
+    const dailyUsedMinutes: number[] = [];
+
+    let currentDay = 0;
+    for (const pCount of piecesParOFsEnFile) {
+      if (pCount <= 0) continue;
+      let pMinutes = pCount * cadenceMin;
+      while (pMinutes > 0) {
+        if (dailyUsedMinutes[currentDay] === undefined) {
+          dailyUsedMinutes[currentDay] = 0;
+        }
+        const avail = Math.max(0, minutesParJour - dailyUsedMinutes[currentDay]);
+        if (pMinutes <= avail) {
+          dailyUsedMinutes[currentDay] += pMinutes;
+          pMinutes = 0;
+        } else {
+          dailyUsedMinutes[currentDay] += avail;
+          pMinutes -= avail;
+          currentDay += 1;
+        }
+      }
+    }
+
+    // 2. Calcul du placement standard (à la fin de la file d'attente)
+    const totalExistingPieces = piecesParOFsEnFile.reduce((sum, p) => sum + p, 0);
+    const totalMinutesStandard = (totalExistingPieces + nbPieces) * cadenceMin;
+    const standardDaysCount = Math.max(1, Math.ceil(totalMinutesStandard / minutesParJour));
+    const standardFinishDayOffset = Math.max(0, standardDaysCount - 1);
+
+    if (!comblerVides) {
+      const minutesSurJourStandard = totalMinutesStandard % minutesParJour || minutesParJour;
+      const tauxStandard = Math.min(100, Math.round((minutesSurJourStandard / minutesParJour) * 100));
+      return {
+        finishDayOffset: standardFinishDayOffset,
+        standardFinishDayOffset,
+        creneauLibreTrouve: false,
+        gainJoursComblement: 0,
+        minutesLibresComblees: 0,
+        tauxOccupationJour: tauxStandard
+      };
+    }
+
+    // 3. Mode OPTION COMBLEMENT DES VIDES : recherche de minutes libres antérieures pour remplissage à 100%
+    let remainingToPlace = neededMinutes;
+    let dayScan = 0;
+    let finishDay = 0;
+    let creneauTrouve = false;
+    let minutesCombleesTotal = 0;
+
+    // Copie de travail pour la simulation
+    const workDailyUsed = [...dailyUsedMinutes];
+
+    while (remainingToPlace > 0) {
+      if (workDailyUsed[dayScan] === undefined) {
+        workDailyUsed[dayScan] = 0;
+      }
+      const freeOnDay = Math.max(0, minutesParJour - workDailyUsed[dayScan]);
+
+      if (freeOnDay > 0) {
+        if (dayScan < standardFinishDayOffset) {
+          creneauTrouve = true;
+        }
+        const allocated = Math.min(remainingToPlace, freeOnDay);
+        workDailyUsed[dayScan] += allocated;
+        remainingToPlace -= allocated;
+        minutesCombleesTotal += allocated;
+        finishDay = dayScan;
+      }
+
+      if (remainingToPlace > 0) {
+        dayScan += 1;
+      }
+    }
+
+    const gainJours = Math.max(0, standardFinishDayOffset - finishDay);
+    const finalDayUsed = workDailyUsed[finishDay] || 0;
+    const tauxFinalJour = Math.min(100, Math.round((finalDayUsed / minutesParJour) * 100));
+
+    return {
+      finishDayOffset: finishDay,
+      standardFinishDayOffset,
+      creneauLibreTrouve: creneauTrouve && gainJours > 0,
+      gainJoursComblement: gainJours,
+      minutesLibresComblees: minutesCombleesTotal,
+      tauxOccupationJour: tauxFinalJour
+    };
+  }
+
+  /**
    * Calcul de l'estimation de délai prévisionnel pour un OF émis ou en cours
    */
   static estimerDelaiOF(
     targetOF: SuiviOF,
     allSuivisOF: SuiviOF[],
-    paramsCustom?: ParametresProductionAtelier
-  ): { dateLivraison: Date; texteFormatte: string; dateLivraisonISO: string; joursOuvresRequis: number } {
+    paramsCustomOrCombler?: ParametresProductionAtelier | boolean,
+    comblerVidesOverride?: boolean
+  ): {
+    dateLivraison: Date;
+    texteFormatte: string;
+    dateLivraisonISO: string;
+    joursOuvresRequis: number;
+    creneauLibreTrouve?: boolean;
+    gainJoursComblement?: number;
+    tauxOccupationJour?: number;
+  } {
+    const paramsCustom = typeof paramsCustomOrCombler === 'object' && paramsCustomOrCombler !== null ? paramsCustomOrCombler : undefined;
+    const directBoolCombler = typeof paramsCustomOrCombler === 'boolean' ? paramsCustomOrCombler : undefined;
+
     // Si déjà livré avec une fiche de transfert
     if (targetOF.statut === 'LIVRE' && targetOF.dateLivraison) {
       const dLivre = this.parseDateString(targetOF.dateLivraison);
@@ -658,7 +785,9 @@ export class DelaisProductionService {
         dateLivraison: dLivre,
         texteFormatte: `LIVRÉ LE : ${targetOF.dateLivraison}`,
         dateLivraisonISO: this.toISODateString(dLivre),
-        joursOuvresRequis: 0
+        joursOuvresRequis: 0,
+        creneauLibreTrouve: false,
+        gainJoursComblement: 0
       };
     }
 
@@ -711,7 +840,9 @@ export class DelaisProductionService {
         dateLivraison: dateLiv,
         texteFormatte: texteAffiche,
         dateLivraisonISO: this.toISODateString(dateLiv),
-        joursOuvresRequis: (targetOF.delaiPrevisionnelJours || (targetOF.estPrioritaire ? 1 : 2)) + joursInterruptionOF
+        joursOuvresRequis: (targetOF.delaiPrevisionnelJours || (targetOF.estPrioritaire ? 1 : 2)) + joursInterruptionOF,
+        creneauLibreTrouve: false,
+        gainJoursComblement: 0
       };
     }
 
@@ -725,6 +856,8 @@ export class DelaisProductionService {
     const targetSeq = targetOF.numeroEmission || 999999;
 
     let piecesEnFileAttente = 0;
+    const piecesOFsEnFile: number[] = [];
+
     // Si l'OF est prioritaire, il ne subit pas la file d'attente des commandes ordinaires
     if (!targetOF.estPrioritaire) {
       allSuivisOF.forEach(of => {
@@ -739,7 +872,9 @@ export class DelaisProductionService {
           const otherSeq = of.numeroEmission || 0;
           // Si l'autre OF est prioritaire ou antérieur dans la file FIFO
           if (of.estPrioritaire || otherSeq < targetSeq) {
-            piecesEnFileAttente += this.compterPiecesOF(of);
+            const pCount = this.compterPiecesOF(of);
+            piecesEnFileAttente += pCount;
+            piecesOFsEnFile.push(pCount);
           }
         }
       });
@@ -749,17 +884,25 @@ export class DelaisProductionService {
     const cadenceMin = configFam.tempsUnitaireMinutes || (famKey === 'CAISSON' ? 5 : famKey === 'PRECADRE' ? 6 : famKey === 'MOUSTIQUAIRE' ? 10 : 15);
     const heuresJour = params.heuresTravailParJour || 8;
     const minutesJour = heuresJour * 60;
-    const capaciteJour = Math.max(1, Math.floor(minutesJour / cadenceMin));
+    const comblerVides = comblerVidesOverride !== undefined
+      ? comblerVidesOverride
+      : directBoolCombler !== undefined
+      ? directBoolCombler
+      : (targetOF as any).comblerVidesProduction !== undefined
+      ? !!(targetOF as any).comblerVidesProduction
+      : !!params.comblerVidesProduction;
 
-    // Calcul du délai requis en minutes puis conversion en jours ouvrés
-    const totalChargePieces = targetOF.estPrioritaire ? piecesTarget : (piecesEnFileAttente + piecesTarget);
-    const totalMinutesCharge = totalChargePieces * cadenceMin;
-    const joursProduction = Math.max(1, Math.ceil(totalMinutesCharge / minutesJour));
+    const placement = this.calculerPlacementMinutesFamille(
+      piecesTarget,
+      cadenceMin,
+      minutesJour,
+      targetOF.estPrioritaire ? [] : piecesOFsEnFile,
+      targetOF.estPrioritaire ? false : comblerVides
+    );
+
+    const joursProduction = targetOF.estPrioritaire ? 1 : (placement.finishDayOffset + 1);
     const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
-
-    // Si 1 jour de travail : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
-    // Si N jours de travail : achèvement à (N - 1) jours ouvrés après le jour de démarrage
-    const joursAjoutes = Math.max(0, joursProduction - 1) + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
+    const joursAjoutes = (targetOF.estPrioritaire ? 0 : placement.finishDayOffset) + (configFam.delaiFixeJours || 0) + joursInterruptionOF;
     let dateLivraison = this.ajouterJoursOuvres(ofDateRef, joursAjoutes, params.joursOuvres);
 
     // Prise en compte de la destination et de la taille de commande (<= 2 pièces)
@@ -796,7 +939,10 @@ export class DelaisProductionService {
       dateLivraison,
       texteFormatte: texteFinal,
       dateLivraisonISO: this.toISODateString(dateLivraison),
-      joursOuvresRequis: isInstantane ? 1 : Math.max(1, Math.ceil((dateLivraison.getTime() - ofDateRef.getTime()) / (1000 * 60 * 60 * 24)))
+      joursOuvresRequis: isInstantane ? 1 : Math.max(1, Math.ceil((dateLivraison.getTime() - ofDateRef.getTime()) / (1000 * 60 * 60 * 24))),
+      creneauLibreTrouve: placement.creneauLibreTrouve,
+      gainJoursComblement: placement.gainJoursComblement,
+      tauxOccupationJour: placement.tauxOccupationJour
     };
   }
 
@@ -855,6 +1001,8 @@ export class DelaisProductionService {
     let auMoinsUneFamille = false;
     let familleGoulot: FamilleProduit | undefined = undefined;
     let maxTime = -1;
+    let creneauLibreTrouveDossier = false;
+    let gainJoursComblementDossier = 0;
 
     const famillesToCheck: FamilleProduit[] = ['CAISSON', 'PRECADRE', 'MOUSTIQUAIRE', 'TABLIER'];
 
@@ -975,20 +1123,44 @@ export class DelaisProductionService {
       const totalChargePieces = dossier.estPrioritaire ? nbPieces : (piecesEnFile + nbPieces);
       const cap = this.getCapaciteJournaliere(fam, params);
       const tempsUnit = this.getCadenceMinutes(fam, params);
+      const heuresJour = params.heuresTravailParJour || 8;
+      const minutesJour = heuresJour * 60;
+      const comblerVides = dossier.comblerVidesProduction !== undefined
+        ? !!dossier.comblerVidesProduction
+        : !!params.comblerVidesProduction;
 
       let joursOuvresFamille = 0;
       let dateEstimeeFamille = dateDepart;
       let dateLivraisonFormatteeFamille = 'Disponible (0 pc)';
+      let creneauTrouveFamille = false;
+      let gainJoursFamille = 0;
+      let minutesCombleesFamille = 0;
+      let tauxOccupationFamille = 0;
 
       if (nbPieces > 0) {
         // La commande comporte des pièces à fabriquer pour cette famille
-        const chargeEffective = dossier.estPrioritaire ? nbPieces : totalChargePieces;
-        const joursProduction = Math.max(1, Math.ceil(chargeEffective / cap));
-        const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+        const piecesOFsList = ofsDetailsList.map(o => o.nbPieces);
+        const placement = this.calculerPlacementMinutesFamille(
+          nbPieces,
+          tempsUnit,
+          minutesJour,
+          dossier.estPrioritaire ? [] : piecesOFsList,
+          dossier.estPrioritaire ? false : comblerVides
+        );
 
-        // Si 1 journée de travail requise : achèvement le jour ouvré de démarrage lui-même (0 jour ouvré ajouté)
-        // Si N journées requises : achèvement à (N - 1) jours ouvrés après le jour de démarrage
-        const joursAjoutes = Math.max(0, joursProduction - 1) + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+        creneauTrouveFamille = placement.creneauLibreTrouve;
+        gainJoursFamille = placement.gainJoursComblement;
+        minutesCombleesFamille = placement.minutesLibresComblees;
+        tauxOccupationFamille = placement.tauxOccupationJour;
+
+        if (creneauTrouveFamille) {
+          creneauLibreTrouveDossier = true;
+          gainJoursComblementDossier = Math.max(gainJoursComblementDossier, gainJoursFamille);
+        }
+
+        const joursProduction = dossier.estPrioritaire ? 1 : (placement.finishDayOffset + 1);
+        const joursRequis = joursProduction + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
+        const joursAjoutes = (dossier.estPrioritaire ? 0 : placement.finishDayOffset) + (configFam.delaiFixeJours || 0) + joursInterruptionDossier;
         const dateEstimee = this.ajouterJoursOuvres(dateDepart, joursAjoutes, params.joursOuvres);
 
         joursOuvresFamille = joursRequis;
@@ -1028,7 +1200,11 @@ export class DelaisProductionService {
         capaciteJournaliere: cap,
         tempsUnitaireMinutes: tempsUnit,
         nbOfsEnCours: ofsDetailsList.length,
-        ofsDetails: ofsDetailsList
+        ofsDetails: ofsDetailsList,
+        creneauLibreTrouve: creneauTrouveFamille,
+        gainJoursComblement: gainJoursFamille,
+        minutesLibresComblees: minutesCombleesFamille,
+        tauxOccupationJourEstime: tauxOccupationFamille
       };
     });
 
@@ -1153,7 +1329,12 @@ export class DelaisProductionService {
       dateLivraisonISO: this.toISODateString(dateMax),
       joursOuvresMax: joursMax,
       familleGoulot,
-      detailsParFamille
+      detailsParFamille,
+      comblerVidesActif: dossier.comblerVidesProduction !== undefined ? !!dossier.comblerVidesProduction : !!params.comblerVidesProduction,
+      creneauLibreTrouve: creneauLibreTrouveDossier,
+      gainJoursComblement: gainJoursComblementDossier,
+      creneauLibreTrouveDossier,
+      gainJoursComblementDossier
     };
   }
 
@@ -1245,6 +1426,8 @@ export class DelaisProductionService {
     let currentDayOffset = 0;
     let usedMinutesInDay = 0;
     const planifiees: ResultatPlanningItem[] = [];
+    const comblerVides = !!params.comblerVidesProduction;
+    const dailyUsedMinutes: number[] = [];
 
     let totalPiecesActives = 0;
     let totalMinutesActives = 0;
@@ -1258,21 +1441,45 @@ export class DelaisProductionService {
       let orderFinishDay = currentDayOffset;
       let orderFinishMinutesOfDay = 0;
 
-      while (neededMinutes > 0) {
-        const capacityThisDay = (currentDayOffset === 0)
-          ? (minutesStandard + bonusMinutesAujourdhui)
-          : minutesStandard;
-        const availableThisDay = Math.max(0, capacityThisDay - usedMinutesInDay);
+      if (comblerVides) {
+        // Mode comblement des vides : cherche le premier jour à partir de 0 avec capacité restante
+        let remaining = neededMinutes;
+        let d = 0;
+        while (remaining > 0) {
+          const capDay = (d === 0) ? (minutesStandard + bonusMinutesAujourdhui) : minutesStandard;
+          if (dailyUsedMinutes[d] === undefined) {
+            dailyUsedMinutes[d] = 0;
+          }
+          const avail = Math.max(0, capDay - dailyUsedMinutes[d]);
+          if (avail > 0) {
+            const alloc = Math.min(remaining, avail);
+            dailyUsedMinutes[d] += alloc;
+            remaining -= alloc;
+            orderFinishDay = d;
+            orderFinishMinutesOfDay = 8 * 60 + dailyUsedMinutes[d];
+          }
+          if (remaining > 0) {
+            d += 1;
+          }
+        }
+      } else {
+        // Mode standard séquentiel (FIFO en bout de file)
+        while (neededMinutes > 0) {
+          const capacityThisDay = (currentDayOffset === 0)
+            ? (minutesStandard + bonusMinutesAujourdhui)
+            : minutesStandard;
+          const availableThisDay = Math.max(0, capacityThisDay - usedMinutesInDay);
 
-        if (neededMinutes <= availableThisDay) {
-          usedMinutesInDay += neededMinutes;
-          orderFinishDay = currentDayOffset;
-          orderFinishMinutesOfDay = 8 * 60 + usedMinutesInDay;
-          neededMinutes = 0;
-        } else {
-          neededMinutes -= availableThisDay;
-          currentDayOffset += 1;
-          usedMinutesInDay = 0;
+          if (neededMinutes <= availableThisDay) {
+            usedMinutesInDay += neededMinutes;
+            orderFinishDay = currentDayOffset;
+            orderFinishMinutesOfDay = 8 * 60 + usedMinutesInDay;
+            neededMinutes = 0;
+          } else {
+            neededMinutes -= availableThisDay;
+            currentDayOffset += 1;
+            usedMinutesInDay = 0;
+          }
         }
       }
 

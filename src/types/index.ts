@@ -284,6 +284,9 @@ export interface DossierCommandeGlobal {
   motifPause?: string;       // Motif de la pause (ex: "Rupture de stock CT SOMO 30 BL")
   datePause?: string;        // Date de mise en pause
   dureePauseJours?: number;  // Nombre de jours cumulés d'interruption
+  comblerVidesProduction?: boolean; // Recherche un créneau vide dans les journées antérieures pour remplir à 100%
+  creneauLibreTrouve?: boolean;      // Vrai si un créneau antérieur a été utilisé pour combler les minutes d'une journée
+  gainJoursComblement?: number;      // Nombre de jours ouvrés gagnés grâce au comblement des vides
   /**
    * Délais et dates de livraison calculés individuellement par commande / famille de produit.
    * La date globale du dossier correspond à la date la plus éloignée (goulot d'étranglement).
@@ -611,6 +614,8 @@ export interface ParametresProductionAtelier {
   heuresTravailParJour: number;       // ex: 8 heures (ou 10h)
   familles: Record<FamilleProduit, ParametresFamilleProduction>;
   tourneesDestinations?: RegleTourneeDestination[];
+  // Remplissage optimal des journées (backfilling / comblement des créneaux libres)
+  comblerVidesProduction?: boolean;   // Si true, recherche les minutes libres dans les journées antérieures pour remplir à 100%
 }
 
 export interface DetailOFEnCours {
@@ -634,6 +639,11 @@ export interface EstimationDelaiDetail {
   tempsUnitaireMinutes?: number;
   nbOfsEnCours?: number;
   ofsDetails?: DetailOFEnCours[];
+  // Indicateurs de comblement de créneau
+  creneauLibreTrouve?: boolean;
+  gainJoursComblement?: number;
+  minutesLibresComblees?: number;
+  tauxOccupationJourEstime?: number;
 }
 
 export interface EstimationLivraisonDossier {
@@ -644,6 +654,12 @@ export interface EstimationLivraisonDossier {
   joursOuvresMax: number;
   familleGoulot?: FamilleProduit;     // Famille déterminante imposant la date la plus éloignée
   detailsParFamille: Record<string, EstimationDelaiDetail>;
+  // Indicateurs de comblement de créneau
+  comblerVidesActif?: boolean;
+  creneauLibreTrouve?: boolean;
+  gainJoursComblement?: number;
+  creneauLibreTrouveDossier?: boolean;
+  gainJoursComblementDossier?: number;
 }
 
 export interface PropositionHeuresSup {

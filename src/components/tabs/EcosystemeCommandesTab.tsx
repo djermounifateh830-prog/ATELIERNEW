@@ -1780,6 +1780,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [motifPause, setMotifPause] = useState<string>('');
   const [datePause, setDatePause] = useState<string>('');
   const [dureePauseJours, setDureePauseJours] = useState<number>(0);
+  const [comblerVidesProduction, setComblerVidesProduction] = useState<boolean>(() => {
+    const p = DelaisProductionService.getParametres();
+    return !!p.comblerVidesProduction;
+  });
   const [afficherEditeurLivraison, setAfficherEditeurLivraison] = useState<boolean>(false);
   const [showValidationDelaiModal, setShowValidationDelaiModal] = useState<boolean>(false);
   const [statutCiblePourEnregistrement, setStatutCiblePourEnregistrement] = useState<'EN_ATTENTE' | 'BROUILLON' | 'EN_COURS' | 'EN_PAUSE'>('EN_ATTENTE');
@@ -1828,6 +1832,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       motifPriorite: typePriorite === 'INSTANTANE' ? motifPriorite : undefined,
       dateLivraisonPrevisionnelle: delaiFixeManuellement ? dateLivraisonPrevisionnelle : undefined,
       dateLivraisonPrevisionnelleISO: delaiFixeManuellement ? dateLivraisonPrevisionnelleISO : undefined,
+      comblerVidesProduction: comblerVidesProduction,
     };
   }, [
     editingDossierId, monClient, clientDeMonClient, dateCommande,
@@ -1836,6 +1841,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     estEnPause, motifPause, datePause, dureePauseJours,
     typePriorite, estPrioritaire, motifPriorite,
     delaiFixeManuellement, dateLivraisonPrevisionnelle, dateLivraisonPrevisionnelleISO,
+    comblerVidesProduction,
     dossiers
   ]);
 
@@ -2067,13 +2073,23 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     const ctFound = articlesCT.find(a => a.code_art === c.articleCode || a.designation === c.articleDesignation) || articlesCT[0];
     const sfFound = articlesSF.find(a => a.code_art === c.sfArticleCode || a.designation === c.sfArticleDesignation) || articlesSF[0];
 
+    const currentMode: 'CAISSON_ET_SOUS_FACE' | 'CAISSON_SEUL' | 'SOUS_FACE_SEULE' =
+      c.isSousFaceSeule || c.typePrestation === 'SOUS_FACE_SEULE'
+        ? 'SOUS_FACE_SEULE'
+        : !c.avecSousFace || c.typePrestation === 'CAISSON_SEUL'
+        ? 'CAISSON_SEUL'
+        : 'CAISSON_ET_SOUS_FACE';
+
     setEditingCaissonId(c.id);
     setEditCaissonForm({
       ...c,
-      articleCode: c.articleCode || ctFound.code_art,
-      articleDesignation: c.articleDesignation || ctFound.designation,
-      sfArticleCode: c.sfArticleCode || sfFound.code_art,
-      sfArticleDesignation: c.sfArticleDesignation || sfFound.designation
+      typePrestation: currentMode,
+      isSousFaceSeule: currentMode === 'SOUS_FACE_SEULE',
+      avecSousFace: currentMode !== 'CAISSON_SEUL',
+      articleCode: currentMode === 'SOUS_FACE_SEULE' ? undefined : (c.articleCode || ctFound?.code_art),
+      articleDesignation: currentMode === 'SOUS_FACE_SEULE' ? undefined : (c.articleDesignation || ctFound?.designation),
+      sfArticleCode: currentMode === 'CAISSON_SEUL' ? undefined : (c.sfArticleCode || sfFound?.code_art),
+      sfArticleDesignation: currentMode === 'CAISSON_SEUL' ? undefined : (c.sfArticleDesignation || sfFound?.designation)
     });
   };
 
@@ -2082,31 +2098,179 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setEditCaissonForm(null);
   };
 
+  // Bascule directe et instantanée du mode d'une ligne Caisson sans retaper
+  const changerModePrestationCaisson = (
+    id: string,
+    nouveauMode: 'CAISSON_ET_SOUS_FACE' | 'CAISSON_SEUL' | 'SOUS_FACE_SEULE'
+  ) => {
+    const defaultCT = articlesCT[0];
+    const defaultSF = articlesSF[0];
+
+    setLignesCaissons(prev =>
+      prev.map(c => {
+        if (c.id !== id) return c;
+
+        if (nouveauMode === 'CAISSON_SEUL') {
+          return {
+            ...c,
+            typePrestation: 'CAISSON_SEUL',
+            isSousFaceSeule: false,
+            avecSousFace: false,
+            montageSousFace: 'NON_MONTEE',
+            articleCode: c.articleCode || defaultCT?.code_art,
+            articleDesignation: c.articleDesignation || defaultCT?.designation,
+            refCommande: c.refCommande || numCommandeCaisson || 'CMD-CAISSON'
+          };
+        }
+
+        if (nouveauMode === 'SOUS_FACE_SEULE') {
+          return {
+            ...c,
+            typePrestation: 'SOUS_FACE_SEULE',
+            isSousFaceSeule: true,
+            avecSousFace: true,
+            montageSousFace: 'NON_MONTEE',
+            articleCode: undefined,
+            articleDesignation: undefined,
+            sfArticleCode: c.sfArticleCode || defaultSF?.code_art,
+            sfArticleDesignation: c.sfArticleDesignation || defaultSF?.designation,
+            sfRefCommande: c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || 'CMD-SF',
+            refCommande: c.refCommande || numCommandeSousFace || numCommandeCaisson || 'CMD-SF'
+          };
+        }
+
+        // 'CAISSON_ET_SOUS_FACE'
+        return {
+          ...c,
+          typePrestation: 'CAISSON_ET_SOUS_FACE',
+          isSousFaceSeule: false,
+          avecSousFace: true,
+          montageSousFace: c.montageSousFace === 'MONTEE_ATELIER' ? 'MONTEE_ATELIER' : (caissonConfig.montageSousFace || 'MONTEE_ATELIER'),
+          articleCode: c.articleCode || defaultCT?.code_art,
+          articleDesignation: c.articleDesignation || defaultCT?.designation,
+          sfArticleCode: c.sfArticleCode || defaultSF?.code_art,
+          sfArticleDesignation: c.sfArticleDesignation || defaultSF?.designation,
+          refCommande: c.refCommande || numCommandeCaisson || 'CMD-CAISSON',
+          sfRefCommande: c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || 'CMD-SF'
+        };
+      })
+    );
+
+    const modeLabels: Record<string, string> = {
+      CAISSON_SEUL: '📦 Caisson Seul (sans sous-face)',
+      SOUS_FACE_SEULE: '✂️ Sous-Face Seule (sans caisson tunnel)',
+      CAISSON_ET_SOUS_FACE: '📦+✂️ Caisson & Sous-Face'
+    };
+    showFlashNotification(`✓ Ligne convertie en : ${modeLabels[nouveauMode]}`, 'info');
+  };
+
+  // Conversion en masse de toutes les lignes du bon de caisson en un seul clic
+  const convertirToutLeBonCaisson = (
+    nouveauMode: 'CAISSON_ET_SOUS_FACE' | 'CAISSON_SEUL' | 'SOUS_FACE_SEULE'
+  ) => {
+    const activeRef = (getActiveNumCommande() || '').trim();
+    const defaultCT = articlesCT[0];
+    const defaultSF = articlesSF[0];
+
+    let count = 0;
+    setLignesCaissons(prev =>
+      prev.map(c => {
+        if (activeRef) {
+          const match = (c.refCommande || '').trim() === activeRef || (c.avecSousFace && (c.sfRefCommande || '').trim() === activeRef);
+          if (!match) return c;
+        }
+        count++;
+
+        if (nouveauMode === 'CAISSON_SEUL') {
+          return {
+            ...c,
+            typePrestation: 'CAISSON_SEUL',
+            isSousFaceSeule: false,
+            avecSousFace: false,
+            montageSousFace: 'NON_MONTEE',
+            articleCode: c.articleCode || defaultCT?.code_art,
+            articleDesignation: c.articleDesignation || defaultCT?.designation,
+            refCommande: c.refCommande || numCommandeCaisson || 'CMD-CAISSON'
+          };
+        }
+
+        if (nouveauMode === 'SOUS_FACE_SEULE') {
+          return {
+            ...c,
+            typePrestation: 'SOUS_FACE_SEULE',
+            isSousFaceSeule: true,
+            avecSousFace: true,
+            montageSousFace: 'NON_MONTEE',
+            articleCode: undefined,
+            articleDesignation: undefined,
+            sfArticleCode: c.sfArticleCode || defaultSF?.code_art,
+            sfArticleDesignation: c.sfArticleDesignation || defaultSF?.designation,
+            sfRefCommande: c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || 'CMD-SF',
+            refCommande: c.refCommande || numCommandeSousFace || numCommandeCaisson || 'CMD-SF'
+          };
+        }
+
+        return {
+          ...c,
+          typePrestation: 'CAISSON_ET_SOUS_FACE',
+          isSousFaceSeule: false,
+          avecSousFace: true,
+          montageSousFace: c.montageSousFace === 'MONTEE_ATELIER' ? 'MONTEE_ATELIER' : (caissonConfig.montageSousFace || 'MONTEE_ATELIER'),
+          articleCode: c.articleCode || defaultCT?.code_art,
+          articleDesignation: c.articleDesignation || defaultCT?.designation,
+          sfArticleCode: c.sfArticleCode || defaultSF?.code_art,
+          sfArticleDesignation: c.sfArticleDesignation || defaultSF?.designation,
+          refCommande: c.refCommande || numCommandeCaisson || 'CMD-CAISSON',
+          sfRefCommande: c.sfRefCommande || numCommandeSousFace || c.refCommande || numCommandeCaisson || 'CMD-SF'
+        };
+      })
+    );
+
+    const modeLabels: Record<string, string> = {
+      CAISSON_SEUL: 'Caisson Seul (sans sous-face)',
+      SOUS_FACE_SEULE: 'Sous-Face Seule (sans caisson)',
+      CAISSON_ET_SOUS_FACE: 'Caisson & Sous-Face'
+    };
+    showFlashNotification(`✓ ${count} ligne(s) du bon convertie(s) en « ${modeLabels[nouveauMode]} » avec succès !`, 'success');
+  };
+
   const handleSaveEditCaisson = () => {
     if (!editCaissonForm) return;
     if (editCaissonForm.longueur <= 0 || editCaissonForm.quantite <= 0) {
       showFlashNotification('Veuillez saisir une longueur et une quantité valides.', 'warn');
       return;
     }
-    const ctFound = articlesCT.find(a => a.code_art === editCaissonForm.articleCode);
-    const sfFound = articlesSF.find(a => a.code_art === editCaissonForm.sfArticleCode);
+
+    const isSFSeule = editCaissonForm.typePrestation === 'SOUS_FACE_SEULE' || editCaissonForm.isSousFaceSeule;
+    const isCaissonSeul = editCaissonForm.typePrestation === 'CAISSON_SEUL' || !editCaissonForm.avecSousFace;
+
+    const ctFound = !isSFSeule ? (articlesCT.find(a => a.code_art === editCaissonForm.articleCode) || articlesCT[0]) : undefined;
+    const sfFound = !isCaissonSeul ? (articlesSF.find(a => a.code_art === editCaissonForm.sfArticleCode) || articlesSF[0]) : undefined;
 
     const updated = lignesCaissons.map(c => {
       if (c.id === editCaissonForm.id) {
         const cmdCaisson = (editCaissonForm.refCommande || '').trim() || c.refCommande || numCommandeCaisson || 'CMD-CAISSON';
-        const cmdSF = editCaissonForm.avecSousFace
+        const cmdSF = !isCaissonSeul
           ? ((editCaissonForm.sfRefCommande || '').trim() || (editCaissonForm.refCommande || '').trim() || numCommandeSousFace || numCommandeCaisson || 'CMD-SF')
           : undefined;
 
-        return {
+        const finalTypePrestation: 'CAISSON_ET_SOUS_FACE' | 'CAISSON_SEUL' | 'SOUS_FACE_SEULE' = 
+          isSFSeule ? 'SOUS_FACE_SEULE' : isCaissonSeul ? 'CAISSON_SEUL' : 'CAISSON_ET_SOUS_FACE';
+
+        const updatedCaisson: CommandeCaisson = {
           ...editCaissonForm,
-          refCommande: cmdCaisson,
+          typePrestation: finalTypePrestation,
+          isSousFaceSeule: isSFSeule,
+          avecSousFace: !isCaissonSeul,
+          montageSousFace: isSFSeule ? 'NON_MONTEE' : editCaissonForm.montageSousFace,
+          refCommande: isSFSeule ? (cmdSF || cmdCaisson) : cmdCaisson,
           sfRefCommande: cmdSF,
-          articleCode: ctFound?.code_art || editCaissonForm.articleCode,
-          articleDesignation: ctFound?.designation || editCaissonForm.articleDesignation,
-          sfArticleCode: sfFound?.code_art || editCaissonForm.sfArticleCode,
-          sfArticleDesignation: sfFound?.designation || editCaissonForm.sfArticleDesignation
+          articleCode: isSFSeule ? undefined : (ctFound?.code_art || editCaissonForm.articleCode),
+          articleDesignation: isSFSeule ? undefined : (ctFound?.designation || editCaissonForm.articleDesignation),
+          sfArticleCode: isCaissonSeul ? undefined : (sfFound?.code_art || editCaissonForm.sfArticleCode),
+          sfArticleDesignation: isCaissonSeul ? undefined : (sfFound?.designation || editCaissonForm.sfArticleDesignation)
         };
+        return updatedCaisson;
       }
       return c;
     });
@@ -4495,7 +4659,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     customDateISO?: string,
     customDateTexte?: string,
     customEstPrioritaire?: boolean,
-    customMotifPriorite?: string
+    customMotifPriorite?: string,
+    customComblerVides?: boolean
   ) => {
     setIsSavingDossier(true);
     try {
@@ -4599,7 +4764,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               estEnPause: estEnPause,
               motifPause: estEnPause ? motifPause : undefined,
               datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
-              dureePauseJours: dureePauseJours || 0
+              dureePauseJours: dureePauseJours || 0,
+              comblerVidesProduction: customComblerVides !== undefined ? customComblerVides : comblerVidesProduction
             };
           }
           return d;
@@ -4638,7 +4804,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           estEnPause: estEnPause,
           motifPause: estEnPause ? motifPause : undefined,
           datePause: estEnPause ? (datePause || getTodayDateString()) : undefined,
-          dureePauseJours: dureePauseJours || 0
+          dureePauseJours: dureePauseJours || 0,
+          comblerVidesProduction: customComblerVides !== undefined ? customComblerVides : comblerVidesProduction
         };
 
         const updated = [nouveauDossier, ...dossiers];
@@ -5075,18 +5242,38 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   Délais par commande (selon la charge de travail spécifique de chaque famille) :
                 </span>
               </div>
-              <div className="text-[11px] text-amber-300 font-bold bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-500/40 flex items-center gap-1.5">
-                <span>📅 Date globale du dossier (échéance la plus longue) :</span>
-                <span className="font-mono text-white text-xs underline decoration-amber-400 font-black">
-                  {delaiFixeManuellement && dateLivraisonPrevisionnelle
-                    ? dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')
-                    : estimationLivraisonLive.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')}
-                </span>
-                {estimationLivraisonLive.familleGoulot && !delaiFixeManuellement && (
-                  <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
-                    Goulot : {estimationLivraisonLive.familleGoulot}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setComblerVidesProduction(prev => !prev)}
+                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1.5 ${
+                    comblerVidesProduction
+                      ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Activer/Désactiver la recherche de créneaux libres dans les journées antérieures (remplissage à 100%)"
+                >
+                  <span>🧩 Combler les vides :</span>
+                  <span className="font-black underline">{comblerVidesProduction ? 'ACTIF (100%/j)' : 'QUEUE DE FILE'}</span>
+                </button>
+                {estimationLivraisonLive.creneauLibreTrouveDossier && comblerVidesProduction && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-black px-2 py-0.5 rounded-full border border-emerald-500/40 animate-pulse">
+                    ⚡ Créneau libre (-{estimationLivraisonLive.gainJoursComblementDossier}j)
                   </span>
                 )}
+                <div className="text-[11px] text-amber-300 font-bold bg-amber-950/60 px-2.5 py-1 rounded-lg border border-amber-500/40 flex items-center gap-1.5">
+                  <span>📅 Date globale du dossier (échéance la plus longue) :</span>
+                  <span className="font-mono text-white text-xs underline decoration-amber-400 font-black">
+                    {delaiFixeManuellement && dateLivraisonPrevisionnelle
+                      ? dateLivraisonPrevisionnelle.replace(/^LIVRAISON\s*:\s*/i, '')
+                      : estimationLivraisonLive.dateLivraisonFormattee.replace(/^LIVRAISON\s*:\s*/i, '')}
+                  </span>
+                  {estimationLivraisonLive.familleGoulot && !delaiFixeManuellement && (
+                    <span className="text-[9px] bg-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+                      Goulot : {estimationLivraisonLive.familleGoulot}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -5147,6 +5334,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         <span>Cadence : {det?.capaciteJournaliere || 20} pcs/j</span>
                         <span className="font-mono text-sky-400 font-bold">{det?.joursOuvresRequis || 0}j ouvrés</span>
                       </div>
+                      {det?.creneauLibreTrouve && (
+                        <div className="flex justify-between items-center text-[9px] text-emerald-400 pt-0.5 font-bold">
+                          <span>⚡ Créneau comblé</span>
+                          <span className="font-mono">-{det.gainJoursComblement}j ouvré(s)</span>
+                        </div>
+                      )}
+                      {det?.tauxOccupationJourEstime ? (
+                        <div className="flex justify-between items-center text-[9px] text-slate-400">
+                          <span>Remplissage jour</span>
+                          <span className="font-mono text-cyan-300 font-bold">{det.tauxOccupationJourEstime}%</span>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -5514,6 +5713,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 >
                   <span>📐 Sous-Face Seule (Spécifique)</span>
                 </button>
+
+                {lignesCaissons.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => convertirToutLeBonCaisson(caissonConfig.typeCommande)}
+                    className="ml-auto text-[11px] px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                    title="Appliquer ce mode à toutes les lignes existantes du bon sans avoir à les retaper"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Appliquer aux {lignesCaissons.length} ligne(s) du bon</span>
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -7619,300 +7830,495 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           {/* TABLEAU CAISSONS */}
           {familleArticle === 'CAISSON' && (
             <div className="space-y-3">
-              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-slate-900/90 text-slate-400 text-[11px] font-semibold border-b border-slate-800">
-                    <tr>
-                      <th className="py-2.5 px-3">Repère</th>
-                      <th className="py-2.5 px-3">Longueur (mm)</th>
-                      <th className="py-2.5 px-3">Quantité</th>
-                      <th className="py-2.5 px-3">N° Commande (CT & SF)</th>
-                      <th className="py-2.5 px-3">Caisson Tunnel (CT)</th>
-                      <th className="py-2.5 px-3">Sous-Face Découpée (SF)</th>
-                      <th className="py-2.5 px-3">Montage & Finition</th>
-                      <th className="py-2.5 px-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {(() => {
-                      const activeRef = (getActiveNumCommande() || '').trim();
-                      const caissonsFiltres = activeRef
-                        ? lignesCaissons.filter(c => (c.refCommande || '').trim() === activeRef || (c.avecSousFace && (c.sfRefCommande || '').trim() === activeRef))
-                        : lignesCaissons;
+              {(() => {
+                const activeRef = (getActiveNumCommande() || '').trim();
+                const caissonsFiltres = activeRef
+                  ? lignesCaissons.filter(c => (c.refCommande || '').trim() === activeRef || (c.avecSousFace && (c.sfRefCommande || '').trim() === activeRef))
+                  : lignesCaissons;
 
-                      if (caissonsFiltres.length === 0) {
-                        return (
+                return (
+                  <>
+                    {/* BARRE D'ACTION RAPIDE : CONVERSION DU BON ENTIER EN 1 CLIC */}
+                    {caissonsFiltres.length > 0 && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 rounded-xl border border-amber-500/30 shadow-md">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                            📦 Lignes Caissons &amp; Sous-Faces ({caissonsFiltres.length} ligne{caissonsFiltres.length > 1 ? 's' : ''})
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            • Total : <strong className="text-amber-300 font-mono">{caissonsFiltres.reduce((s, c) => s + (Number(c.quantite) || 1), 0)} pcs</strong>
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                            <Zap className="w-3.5 h-3.5 text-amber-400" /> Convertir tout ce bon en :
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => convertirToutLeBonCaisson('CAISSON_ET_SOUS_FACE')}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                            title="Convertir toutes les lignes de ce bon en Caisson + Sous-Face"
+                          >
+                            <span>📦 + ✂️ Caisson &amp; SF</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => convertirToutLeBonCaisson('CAISSON_SEUL')}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                            title="Convertir toutes les lignes de ce bon en Caisson Seul (sans sous-face)"
+                          >
+                            <span>📦 Caisson Seul</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => convertirToutLeBonCaisson('SOUS_FACE_SEULE')}
+                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                            title="Convertir toutes les lignes de ce bon en Sous-Face Seule (sans caisson tunnel)"
+                          >
+                            <span>✂️ Sous-Face Seule</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-900/90 text-slate-400 text-[11px] font-semibold border-b border-slate-800">
                           <tr>
-                            <td colSpan={8} className="py-6 text-center text-slate-500 font-sans italic text-xs">
-                              Aucun caisson dans cette commande N° {activeRef || 'en cours'}. Saisissez une longueur ci-dessus puis validez.
-                            </td>
+                            <th className="py-2.5 px-3">Repère</th>
+                            <th className="py-2.5 px-3">Longueur (mm)</th>
+                            <th className="py-2.5 px-3">Quantité</th>
+                            <th className="py-2.5 px-3">Prestation / Mode</th>
+                            <th className="py-2.5 px-3">N° Commande (CT &amp; SF)</th>
+                            <th className="py-2.5 px-3">Caisson Tunnel (CT)</th>
+                            <th className="py-2.5 px-3">Sous-Face Découpée (SF)</th>
+                            <th className="py-2.5 px-3">Montage &amp; Finition</th>
+                            <th className="py-2.5 px-3 text-right">Action</th>
                           </tr>
-                        );
-                      }
-
-                      return caissonsFiltres.map((c, idx) => {
-                        const isEditing = editingCaissonId === c.id && editCaissonForm !== null;
-
-                        if (isEditing && editCaissonForm) {
-                          return (
-                            <tr key={c.id || idx} className="bg-amber-950/30 border-2 border-amber-500/50">
-                              <td className="py-2 px-2">
-                                <input
-                                  type="text"
-                                  value={editCaissonForm.repere}
-                                  onChange={e => setEditCaissonForm({ ...editCaissonForm, repere: e.target.value })}
-                                  className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-xs text-amber-300 font-bold"
-                                />
-                              </td>
-                              <td className="py-2 px-2">
-                                <input
-                                  type="number"
-                                  value={editCaissonForm.longueur}
-                                  onChange={e => setEditCaissonForm({ ...editCaissonForm, longueur: Number(e.target.value) })}
-                                  className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-xs text-slate-100 font-black"
-                                />
-                              </td>
-                              <td className="py-2 px-2">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  value={editCaissonForm.quantite}
-                                  onChange={e => setEditCaissonForm({ ...editCaissonForm, quantite: Math.max(1, Number(e.target.value)) })}
-                                  className="w-16 bg-slate-950 border border-amber-500 rounded px-1 py-1 text-xs text-amber-300 font-bold text-center"
-                                />
-                              </td>
-                              <td className="py-2 px-2">
-                                <div className="space-y-1">
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[10px] text-slate-400 font-mono">Cmd:</span>
-                                    <input
-                                      type="text"
-                                      value={editCaissonForm.refCommande || ''}
-                                      onChange={e => setEditCaissonForm({ ...editCaissonForm, refCommande: e.target.value, sfRefCommande: e.target.value })}
-                                      placeholder="N° Commande"
-                                      className="w-24 bg-slate-950 border border-amber-500 rounded px-1 py-0.5 text-[11px] text-emerald-300 font-bold font-mono"
-                                      title="N° Commande Caisson / Sous-Face"
-                                    />
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="py-2 px-2">
-                                <select
-                                  value={editCaissonForm.articleCode || ''}
-                                  onChange={e => {
-                                    const found = articlesCT.find(a => a.code_art === e.target.value);
-                                    if (found) {
-                                      setEditCaissonForm({ ...editCaissonForm, articleCode: found.code_art, articleDesignation: found.designation });
-                                    }
-                                  }}
-                                  className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-[11px] text-emerald-300 font-bold"
-                                >
-                                  {articlesCT.length === 0 ? (
-                                    <option value="">(Aucun caisson)</option>
-                                  ) : articlesCT.map(art => (
-                                    <option key={art.code_art} value={art.code_art}>{art.designation}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="py-2 px-2">
-                                <select
-                                  disabled={!editCaissonForm.avecSousFace}
-                                  value={editCaissonForm.sfArticleCode || ''}
-                                  onChange={e => {
-                                    const found = articlesSF.find(a => a.code_art === e.target.value);
-                                    if (found) {
-                                      setEditCaissonForm({ ...editCaissonForm, sfArticleCode: found.code_art, sfArticleDesignation: found.designation });
-                                    }
-                                  }}
-                                  className="w-full bg-slate-950 border border-amber-500 disabled:opacity-40 rounded px-1.5 py-1 text-[11px] text-sky-300 font-bold"
-                                >
-                                  {articlesSF.length === 0 ? (
-                                    <option value="">(Aucune sous-face)</option>
-                                  ) : articlesSF.map(sf => (
-                                    <option key={sf.code_art} value={sf.code_art}>{sf.designation}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="py-2 px-2 font-sans">
-                                <div className="flex flex-wrap items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditCaissonForm({ ...editCaissonForm, avecSousFace: !editCaissonForm.avecSousFace })}
-                                    className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
-                                      editCaissonForm.avecSousFace ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
-                                    }`}
-                                  >
-                                    {editCaissonForm.avecSousFace ? '✓ SF' : '✕ Sans SF'}
-                                  </button>
-                                  {editCaissonForm.avecSousFace && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditCaissonForm({ ...editCaissonForm, montageSousFace: editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'NON_MONTEE' : 'MONTEE_ATELIER' })}
-                                      className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
-                                        editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                      }`}
-                                    >
-                                      {editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'Avec Montage' : 'Sans Montage'}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditCaissonForm({ ...editCaissonForm, avecPeinture: !editCaissonForm.avecPeinture })}
-                                    className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
-                                      editCaissonForm.avecPeinture ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
-                                    }`}
-                                  >
-                                    {editCaissonForm.avecPeinture ? 'Avec Peinture' : 'Sans Peinture'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditCaissonForm({ ...editCaissonForm, avecPlaque: !editCaissonForm.avecPlaque })}
-                                    className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
-                                      editCaissonForm.avecPlaque ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
-                                    }`}
-                                  >
-                                    {editCaissonForm.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
-                                  </button>
-                                </div>
-                              </td>
-                              <td className="py-2 px-2 text-right font-sans">
-                                <div className="flex items-center justify-end gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={handleSaveEditCaisson}
-                                    className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded transition cursor-pointer"
-                                    title="Enregistrer les modifications"
-                                  >
-                                    <Check className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleCancelEditCaisson}
-                                    className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition cursor-pointer"
-                                    title="Annuler"
-                                  >
-                                    <X className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {caissonsFiltres.length === 0 ? (
+                            <tr>
+                              <td colSpan={9} className="py-6 text-center text-slate-500 font-sans italic text-xs">
+                                Aucun caisson dans cette commande N° {activeRef || 'en cours'}. Saisissez une longueur ci-dessus puis validez.
                               </td>
                             </tr>
-                          );
-                        }
+                          ) : (
+                            caissonsFiltres.map((c, idx) => {
+                              const isEditing = editingCaissonId === c.id && editCaissonForm !== null;
 
-                        const ctFoundObj = articlesCT.find(a => a.code_art === c.articleCode) || articles.find(a => a.code_art === c.articleCode);
-                        const sfFoundObj = articlesSF.find(a => a.code_art === c.sfArticleCode) || articles.find(a => a.code_art === c.sfArticleCode);
-                        const ctName = c.articleDesignation || ctFoundObj?.designation || (c.articleCode === 'ART0010' ? 'CT SOMO 25 ARRONDI' : 'CT SOMO 30 ARRONDI');
-                        const sfName = c.sfArticleDesignation || sfFoundObj?.designation || (c.sfArticleCode === 'ART0020' ? 'SF 200 (SOUS-FACE 200MM)' : 'SF 300');
-                        const ctCmd = (c.refCommande || numCommandeCaisson || 'CMD').trim();
-                        const sfCmd = (c.sfRefCommande || numCommandeSousFace || ctCmd).trim();
+                              if (isEditing && editCaissonForm) {
+                                const isFormSFSeule = editCaissonForm.typePrestation === 'SOUS_FACE_SEULE' || editCaissonForm.isSousFaceSeule;
+                                const isFormCaissonSeul = editCaissonForm.typePrestation === 'CAISSON_SEUL' || !editCaissonForm.avecSousFace;
 
-                        return (
-                          <tr key={c.id || idx} className="hover:bg-slate-900/50 transition">
-                            <td className="py-2.5 px-3 text-amber-300 font-bold">{c.repere}</td>
-                            <td className="py-2.5 px-3 text-slate-100 font-black text-sm">{c.longueur} mm</td>
-                            <td className="py-2.5 px-3 text-slate-200">{c.quantite}</td>
-                            <td className="py-2.5 px-3 font-sans">
-                              <span className="px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
-                                N° {ctCmd}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold">
-                                {ctName}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-sans">
-                              {c.avecSousFace ? (
-                                <div className="space-y-1">
-                                  <span className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-500/40 text-[11px] font-semibold flex items-center gap-1 w-fit">
-                                    <span>✂️</span>
-                                    <span>{sfName}</span>
-                                  </span>
-                                  <div className="text-[10px] text-amber-300 font-mono font-bold flex items-center gap-1">
-                                    <span className="text-slate-400">Repère SF :</span>
-                                    <span className="bg-amber-950/90 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40">{c.repere}</span>
-                                  </div>
-                                </div>
-                              ) : (
-                                <span className="text-slate-500 text-[11px] italic">Sans Sous-Face</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 font-sans">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => toggleLigneOption('CAISSON', c.id, 'avecSousFace')}
-                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
-                                    c.avecSousFace
-                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                      : 'bg-slate-800 text-slate-400 border-slate-700'
-                                  }`}
-                                >
-                                  {c.avecSousFace ? '✓ SF Active' : '✕ Sans SF'}
-                                </button>
-                                {c.avecSousFace && (
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleLigneOption('CAISSON', c.id, 'montage')}
-                                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
-                                      c.montageSousFace === 'MONTEE_ATELIER'
-                                        ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                                    }`}
-                                  >
-                                    {c.montageSousFace === 'MONTEE_ATELIER' ? 'Avec Montage' : 'Sans Montage'}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => toggleLigneOption('CAISSON', c.id, 'peinture')}
-                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
-                                    c.avecPeinture
-                                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                                      : 'bg-slate-800 text-slate-400 border-slate-700'
-                                  }`}
-                                >
-                                  {c.avecPeinture ? '✓ Avec Peinture' : 'Sans Peinture'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => toggleLigneOption('CAISSON', c.id, 'plaque')}
-                                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
-                                    c.avecPlaque
-                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                      : 'bg-slate-800 text-slate-400 border-slate-700'
-                                  }`}
-                                  title="Bascule Avec / Sans Plaque"
-                                >
-                                  {c.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
-                                </button>
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-3 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditCaisson(c)}
-                                  className="p-1 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded transition cursor-pointer"
-                                  title="Éditer la ligne"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleSupprimerLigne('CAISSON', c.id)}
-                                  className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
+                                return (
+                                  <tr key={c.id || idx} className="bg-amber-950/30 border-2 border-amber-500/50">
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="text"
+                                        value={editCaissonForm.repere}
+                                        onChange={e => setEditCaissonForm({ ...editCaissonForm, repere: e.target.value })}
+                                        className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-xs text-amber-300 font-bold"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        value={editCaissonForm.longueur}
+                                        onChange={e => setEditCaissonForm({ ...editCaissonForm, longueur: Number(e.target.value) })}
+                                        className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-xs text-slate-100 font-black"
+                                      />
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={editCaissonForm.quantite}
+                                        onChange={e => setEditCaissonForm({ ...editCaissonForm, quantite: Math.max(1, Number(e.target.value)) })}
+                                        className="w-16 bg-slate-950 border border-amber-500 rounded px-1 py-1 text-xs text-amber-300 font-bold text-center"
+                                      />
+                                    </td>
+                                    {/* SÉLECTEUR DE MODE EN MODE ÉDITION */}
+                                    <td className="py-2 px-2 font-sans">
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-amber-500/50">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const defaultCT = articlesCT[0];
+                                              const defaultSF = articlesSF[0];
+                                              setEditCaissonForm({
+                                                ...editCaissonForm,
+                                                typePrestation: 'CAISSON_ET_SOUS_FACE',
+                                                isSousFaceSeule: false,
+                                                avecSousFace: true,
+                                                articleCode: editCaissonForm.articleCode || defaultCT?.code_art,
+                                                articleDesignation: editCaissonForm.articleDesignation || defaultCT?.designation,
+                                                sfArticleCode: editCaissonForm.sfArticleCode || defaultSF?.code_art,
+                                                sfArticleDesignation: editCaissonForm.sfArticleDesignation || defaultSF?.designation
+                                              });
+                                            }}
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                              !isFormSFSeule && !isFormCaissonSeul
+                                                ? 'bg-emerald-500 text-slate-950 font-black shadow'
+                                                : 'text-slate-400 hover:text-slate-200'
+                                            }`}
+                                            title="Caisson + Sous-Face"
+                                          >
+                                            📦+✂️ Les 2
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const defaultCT = articlesCT[0];
+                                              setEditCaissonForm({
+                                                ...editCaissonForm,
+                                                typePrestation: 'CAISSON_SEUL',
+                                                isSousFaceSeule: false,
+                                                avecSousFace: false,
+                                                montageSousFace: 'NON_MONTEE',
+                                                articleCode: editCaissonForm.articleCode || defaultCT?.code_art,
+                                                articleDesignation: editCaissonForm.articleDesignation || defaultCT?.designation
+                                              });
+                                            }}
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                              isFormCaissonSeul
+                                                ? 'bg-amber-500 text-slate-950 font-black shadow'
+                                                : 'text-slate-400 hover:text-slate-200'
+                                            }`}
+                                            title="Caisson Seul (sans sous-face)"
+                                          >
+                                            📦 Caisson seul
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const defaultSF = articlesSF[0];
+                                              setEditCaissonForm({
+                                                ...editCaissonForm,
+                                                typePrestation: 'SOUS_FACE_SEULE',
+                                                isSousFaceSeule: true,
+                                                avecSousFace: true,
+                                                montageSousFace: 'NON_MONTEE',
+                                                sfArticleCode: editCaissonForm.sfArticleCode || defaultSF?.code_art,
+                                                sfArticleDesignation: editCaissonForm.sfArticleDesignation || defaultSF?.designation
+                                              });
+                                            }}
+                                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                              isFormSFSeule
+                                                ? 'bg-sky-500 text-slate-950 font-black shadow'
+                                                : 'text-slate-400 hover:text-slate-200'
+                                            }`}
+                                            title="Sous-Face Seule (sans caisson tunnel)"
+                                          >
+                                            ✂️ SF seule
+                                          </button>
+                                        </div>
+                                        <span className="text-[9px] text-amber-300 font-bold px-1">
+                                          {isFormSFSeule ? '✂️ Sous-Face seule' : isFormCaissonSeul ? '📦 Caisson seul' : '📦+✂️ Caisson & Sous-Face'}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[10px] text-slate-400 font-mono">Cmd:</span>
+                                          <input
+                                            type="text"
+                                            value={editCaissonForm.refCommande || ''}
+                                            onChange={e => setEditCaissonForm({ ...editCaissonForm, refCommande: e.target.value, sfRefCommande: e.target.value })}
+                                            placeholder="N° Commande"
+                                            className="w-24 bg-slate-950 border border-amber-500 rounded px-1 py-0.5 text-[11px] text-emerald-300 font-bold font-mono"
+                                            title="N° Commande Caisson / Sous-Face"
+                                          />
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      {isFormSFSeule ? (
+                                        <div className="w-full bg-slate-900/60 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-500 italic">
+                                          Non requis (SF seule)
+                                        </div>
+                                      ) : (
+                                        <select
+                                          value={editCaissonForm.articleCode || ''}
+                                          onChange={e => {
+                                            const found = articlesCT.find(a => a.code_art === e.target.value);
+                                            if (found) {
+                                              setEditCaissonForm({ ...editCaissonForm, articleCode: found.code_art, articleDesignation: found.designation });
+                                            }
+                                          }}
+                                          className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-[11px] text-emerald-300 font-bold"
+                                        >
+                                          {articlesCT.length === 0 ? (
+                                            <option value="">(Aucun caisson)</option>
+                                          ) : articlesCT.map(art => (
+                                            <option key={art.code_art} value={art.code_art}>{art.designation}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-2">
+                                      {isFormCaissonSeul ? (
+                                        <div className="w-full bg-slate-900/60 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-500 italic">
+                                          Sans sous-face
+                                        </div>
+                                      ) : (
+                                        <select
+                                          value={editCaissonForm.sfArticleCode || ''}
+                                          onChange={e => {
+                                            const found = articlesSF.find(a => a.code_art === e.target.value);
+                                            if (found) {
+                                              setEditCaissonForm({ ...editCaissonForm, sfArticleCode: found.code_art, sfArticleDesignation: found.designation });
+                                            }
+                                          }}
+                                          className="w-full bg-slate-950 border border-amber-500 rounded px-1.5 py-1 text-[11px] text-sky-300 font-bold"
+                                        >
+                                          {articlesSF.length === 0 ? (
+                                            <option value="">(Aucune sous-face)</option>
+                                          ) : articlesSF.map(sf => (
+                                            <option key={sf.code_art} value={sf.code_art}>{sf.designation}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-2 font-sans">
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        {!isFormSFSeule && !isFormCaissonSeul && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditCaissonForm({ ...editCaissonForm, montageSousFace: editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'NON_MONTEE' : 'MONTEE_ATELIER' })}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
+                                              editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                            }`}
+                                          >
+                                            {editCaissonForm.montageSousFace === 'MONTEE_ATELIER' ? 'Avec Montage' : 'Sans Montage'}
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditCaissonForm({ ...editCaissonForm, avecPeinture: !editCaissonForm.avecPeinture })}
+                                          className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
+                                            editCaissonForm.avecPeinture ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
+                                          }`}
+                                        >
+                                          {editCaissonForm.avecPeinture ? 'Avec Peinture' : 'Sans Peinture'}
+                                        </button>
+                                        {!isFormSFSeule && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditCaissonForm({ ...editCaissonForm, avecPlaque: !editCaissonForm.avecPlaque })}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded font-bold border transition ${
+                                              editCaissonForm.avecPlaque ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-900 text-slate-400 border-slate-700'
+                                            }`}
+                                          >
+                                            {editCaissonForm.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                    <td className="py-2 px-2 text-right font-sans">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={handleSaveEditCaisson}
+                                          className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded transition cursor-pointer"
+                                          title="Enregistrer les modifications"
+                                        >
+                                          <Check className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={handleCancelEditCaisson}
+                                          className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded transition cursor-pointer"
+                                          title="Annuler"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              const isLineSFSeule = c.isSousFaceSeule || c.typePrestation === 'SOUS_FACE_SEULE';
+                              const isLineCaissonSeul = !c.avecSousFace || c.typePrestation === 'CAISSON_SEUL';
+
+                              const ctFoundObj = articlesCT.find(a => a.code_art === c.articleCode) || articles.find(a => a.code_art === c.articleCode);
+                              const sfFoundObj = articlesSF.find(a => a.code_art === c.sfArticleCode) || articles.find(a => a.code_art === c.sfArticleCode);
+                              const ctName = c.articleDesignation || ctFoundObj?.designation || (c.articleCode === 'ART0010' ? 'CT SOMO 25 ARRONDI' : 'CT SOMO 30 ARRONDI');
+                              const sfName = c.sfArticleDesignation || sfFoundObj?.designation || (c.sfArticleCode === 'ART0020' ? 'SF 200 (SOUS-FACE 200MM)' : 'SF 300');
+                              const ctCmd = (c.refCommande || numCommandeCaisson || 'CMD').trim();
+                              const sfCmd = (c.sfRefCommande || numCommandeSousFace || ctCmd).trim();
+
+                              return (
+                                <tr key={c.id || idx} className="hover:bg-slate-900/50 transition">
+                                  <td className="py-2.5 px-3 text-amber-300 font-bold">{c.repere}</td>
+                                  <td className="py-2.5 px-3 text-slate-100 font-black text-sm">{c.longueur} mm</td>
+                                  <td className="py-2.5 px-3 text-slate-200">{c.quantite}</td>
+
+                                  {/* SÉLECTEUR RAPIDE DE MODE EN 1 CLIC SANS RETAPER */}
+                                  <td className="py-2.5 px-3 font-sans">
+                                    <div className="flex flex-col gap-1 w-fit">
+                                      <div className="flex items-center gap-1 bg-slate-900/90 p-0.5 rounded-lg border border-slate-800">
+                                        <button
+                                          type="button"
+                                          onClick={() => changerModePrestationCaisson(c.id, 'CAISSON_ET_SOUS_FACE')}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                            !isLineSFSeule && !isLineCaissonSeul
+                                              ? 'bg-emerald-500 text-slate-950 font-black shadow'
+                                              : 'text-slate-400 hover:text-slate-200'
+                                          }`}
+                                          title="Convertir immédiatement cette ligne en Caisson + Sous-Face"
+                                        >
+                                          📦+✂️ Les 2
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => changerModePrestationCaisson(c.id, 'CAISSON_SEUL')}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                            isLineCaissonSeul
+                                              ? 'bg-amber-500 text-slate-950 font-black shadow'
+                                              : 'text-slate-400 hover:text-slate-200'
+                                          }`}
+                                          title="Convertir immédiatement cette ligne en Caisson Seul (sans sous-face)"
+                                        >
+                                          📦 Caisson seul
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => changerModePrestationCaisson(c.id, 'SOUS_FACE_SEULE')}
+                                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                                            isLineSFSeule
+                                              ? 'bg-sky-500 text-slate-950 font-black shadow'
+                                              : 'text-slate-400 hover:text-slate-200'
+                                          }`}
+                                          title="Convertir immédiatement cette ligne en Sous-Face Seule (sans caisson tunnel)"
+                                        >
+                                          ✂️ SF seule
+                                        </button>
+                                      </div>
+                                      <span className="text-[9px] text-slate-400 px-1 font-medium">
+                                        {isLineSFSeule
+                                          ? '✂️ Sous-face uniquement'
+                                          : isLineCaissonSeul
+                                          ? '📦 Caisson uniquement'
+                                          : '📦+✂️ Caisson & Sous-face'}
+                                      </span>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-2.5 px-3 font-sans">
+                                    <span className="px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold">
+                                      N° {isLineSFSeule ? sfCmd : ctCmd}
+                                    </span>
+                                  </td>
+
+                                  {/* ARTICLE CAISSON TUNNEL */}
+                                  <td className="py-2.5 px-3">
+                                    {isLineSFSeule ? (
+                                      <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-500 border border-slate-800 text-[11px] italic">
+                                        Non commandé (SF seule)
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold">
+                                        {ctName}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  {/* ARTICLE SOUS-FACE */}
+                                  <td className="py-2.5 px-3 font-sans">
+                                    {isLineCaissonSeul ? (
+                                      <span className="text-slate-500 text-[11px] italic">Sans Sous-Face</span>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        <span className="px-2 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-500/40 text-[11px] font-semibold flex items-center gap-1 w-fit">
+                                          <span>✂️</span>
+                                          <span>{sfName}</span>
+                                        </span>
+                                        <div className="text-[10px] text-amber-300 font-mono font-bold flex items-center gap-1">
+                                          <span className="text-slate-400">Repère SF :</span>
+                                          <span className="bg-amber-950/90 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/40">{c.repere}</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* OPTIONS & FINITION */}
+                                  <td className="py-2.5 px-3 font-sans">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {!isLineSFSeule && !isLineCaissonSeul && (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleLigneOption('CAISSON', c.id, 'montage')}
+                                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
+                                            c.montageSousFace === 'MONTEE_ATELIER'
+                                              ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                                              : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                          }`}
+                                        >
+                                          {c.montageSousFace === 'MONTEE_ATELIER' ? 'Avec Montage' : 'Sans Montage'}
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleLigneOption('CAISSON', c.id, 'peinture')}
+                                        className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
+                                          c.avecPeinture
+                                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                                        }`}
+                                      >
+                                        {c.avecPeinture ? '✓ Avec Peinture' : 'Sans Peinture'}
+                                      </button>
+                                      {!isLineSFSeule && (
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleLigneOption('CAISSON', c.id, 'plaque')}
+                                          className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition ${
+                                            c.avecPlaque
+                                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                              : 'bg-slate-800 text-slate-400 border-slate-700'
+                                          }`}
+                                          title="Bascule Avec / Sans Plaque"
+                                        >
+                                          {c.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartEditCaisson(c)}
+                                        className="p-1 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded transition cursor-pointer"
+                                        title="Éditer la ligne (dimensions, quantité, articles)"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleSupprimerLigne('CAISSON', c.id)}
+                                        className="p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition cursor-pointer"
+                                        title="Supprimer cette ligne"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -9670,27 +10076,34 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         <ValidationDelaiCommandeModal
           isOpen={showValidationDelaiModal}
           onClose={() => setShowValidationDelaiModal(false)}
-          onConfirmSave={async (dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause) => {
+          onConfirmSave={async (dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause, comblerVidesOpt) => {
             if (estPause !== undefined) {
               setEstEnPause(estPause);
             }
             if (motifDePause !== undefined) {
               setMotifPause(motifDePause);
+            }
+            if (comblerVidesOpt !== undefined) {
+              setComblerVidesProduction(comblerVidesOpt);
             }
             await executerSauvegardeDossier(
               estPause ? 'EN_PAUSE' : statutCiblePourEnregistrement,
               dateFinaleISO,
               estPause ? '⏸️ EN PAUSE' : dateFinaleTexte,
               estPrio,
-              motifPrio
+              motifPrio,
+              comblerVidesOpt
             );
           }}
-          onApplyOnly={(dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause) => {
+          onApplyOnly={(dateFinaleISO, dateFinaleTexte, estPrio, motifPrio, estPause, motifDePause, comblerVidesOpt) => {
             if (estPause !== undefined) {
               setEstEnPause(estPause);
             }
             if (motifDePause !== undefined) {
               setMotifPause(motifDePause);
+            }
+            if (comblerVidesOpt !== undefined) {
+              setComblerVidesProduction(comblerVidesOpt);
             }
             setDateLivraisonPrevisionnelleISO(dateFinaleISO);
             setDateLivraisonPrevisionnelle(estPause ? '⏸️ EN PAUSE' : dateFinaleTexte);
@@ -9718,6 +10131,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           initialMotifPriorite={motifPriorite}
           initialEstEnPause={estEnPause}
           initialMotifPause={motifPause}
+          initialComblerVidesProduction={comblerVidesProduction}
+          onToggleComblerVides={(val) => setComblerVidesProduction(val)}
           initialDateLivraisonISO={delaiFixeManuellement ? (dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO) : ''}
         />
       )}
