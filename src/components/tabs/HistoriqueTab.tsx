@@ -29,7 +29,8 @@ import {
   X,
   Zap,
   Pause,
-  Play
+  Play,
+  RotateCcw
 } from 'lucide-react';
 import { DossierCommandeGlobal, SuiviOF } from '../../types';
 import { StorageService } from '../../services/storage';

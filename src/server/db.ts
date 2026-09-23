@@ -1173,36 +1173,57 @@ class AtelierDatabase {
       }
     }).filter(Boolean);
 
-    // Auto-réconciliation : si un dossier est encore 'EN_ATTENTE' ou 'BROUILLON' alors qu'un OF émis existe pour lui, le passer à 'EN_COURS'
+    // Auto-réconciliation bidirectionnelle stricte avec les OFs réels actifs
     try {
       const ofs = this.getSuivisOF();
-      const emittedOfs = ofs.filter(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE');
-      if (emittedOfs.length > 0) {
-        for (const dossier of list) {
-          if (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut) {
-            const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
-            const subRefs = [
-              dossier.numCommandeCaisson,
-              dossier.numCommandeSousFace,
-              dossier.numCommandeTablier,
-              dossier.numCommandeMoustiquaire,
-              dossier.numCommandePrecadre
-            ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
+      const activeEmittedOfs = ofs.filter(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE');
+      const allActiveOfs = ofs.filter(o => o.statut !== 'ANNULE');
 
-            const hasEmittedOf = emittedOfs.some(o => {
-              const cmdRefs = (o.numCommande || '').split(/[\s,+/]+/).map(c => c.trim().toLowerCase()).filter(Boolean);
-              const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-              const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
-              const matchesClient = o.nomClient && dossier.nomClientFinal &&
-                dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase();
-              return matchesCmd || matchesSub || matchesClient;
-            });
+      for (const dossier of list) {
+        if (dossier.statut === 'LIVRE') continue;
 
-            if (hasEmittedOf) {
-              dossier.statut = 'EN_COURS';
-              this.upsertDossier(dossier);
-            }
+        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
+        const subRefs = [
+          dossier.numCommandeCaisson,
+          dossier.numCommandeSousFace,
+          dossier.numCommandeTablier,
+          dossier.numCommandeMoustiquaire,
+          dossier.numCommandePrecadre,
+          ...(dossier.commandesConfirmees || [])
+        ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
+
+        const hasActiveEmittedOf = activeEmittedOfs.some(o => {
+          if (o.dossierId && o.dossierId === dossier.id) return true;
+          const cmdRefs = (o.numCommande || '').split(/[\s,+/]+/).map(c => c.trim().toLowerCase()).filter(Boolean);
+          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+          const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
+          const matchesClient = o.nomClient && dossier.nomClientFinal &&
+            dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase();
+          return matchesCmd || matchesSub || (matchesClient && !dossierRef);
+        });
+
+        const hasAnyActiveOf = allActiveOfs.some(o => {
+          if (o.dossierId && o.dossierId === dossier.id) return true;
+          const cmdRefs = (o.numCommande || '').split(/[\s,+/]+/).map(c => c.trim().toLowerCase()).filter(Boolean);
+          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
+          const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
+          const matchesClient = o.nomClient && dossier.nomClientFinal &&
+            dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase();
+          return matchesCmd || matchesSub || (matchesClient && !dossierRef);
+        });
+
+        // 1. Si un OF émis actif existe et dossier en attente -> passer en cours
+        if (hasActiveEmittedOf && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut)) {
+          dossier.statut = 'EN_COURS';
+          this.upsertDossier(dossier);
+        }
+        // 2. Si AUCUN OF actif n'existe (annulé ou supprimé) et dossier noté EN_COURS -> repasser en attente
+        else if (!hasAnyActiveOf && (dossier.statut === 'EN_COURS' || (dossier.commandesConfirmees && dossier.commandesConfirmees.length > 0))) {
+          if (!dossier.estEnPause && dossier.statut !== 'EN_PAUSE') {
+            dossier.statut = 'EN_ATTENTE';
           }
+          dossier.commandesConfirmees = [];
+          this.upsertDossier(dossier);
         }
       }
     } catch {
@@ -1569,26 +1590,64 @@ class AtelierDatabase {
           return matchesRef || (matchesClient && !dRef);
         });
 
-        if (relatedOFs.length === 0) {
-          // Aucun OF émis pour cette commande : si elle était indûment en "EN_COURS", elle doit être "EN_ATTENTE"
+        // Filtrer strictement les OFs actifs (exclure les OFs annulés)
+        const activeRelatedOFs = relatedOFs.filter(o => o.statut !== 'ANNULE');
+
+        if (activeRelatedOFs.length === 0) {
+          // Aucun OF actif émis pour cette commande : elle doit repasser en "EN_ATTENTE" et ses commandes confirmées être libérées
+          let modified = false;
           if (d.statut === 'EN_COURS' && !d.estEnPause) {
             d.statut = 'EN_ATTENTE';
+            modified = true;
+          }
+          if (Array.isArray(d.commandesConfirmees) && d.commandesConfirmees.length > 0) {
+            d.commandesConfirmees = [];
+            modified = true;
+          }
+          if (modified) {
             this.upsertDossier(d);
             misAJour++;
           }
         } else {
-          const hasEmis = relatedOFs.some(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE');
-          const allClosed = relatedOFs.every(o => o.statut === 'CLOTURE');
+          const hasEmis = activeRelatedOFs.some(o => o.statut === 'EMIS' || o.statut === 'RETOUR_EN_ATTENTE');
+          const allClosed = activeRelatedOFs.every(o => o.statut === 'CLOTURE');
 
           let targetStatut = d.statut;
           if (allClosed) {
             targetStatut = 'FABRIQUE';
           } else if (hasEmis) {
             targetStatut = d.estEnPause ? 'EN_PAUSE' : 'EN_COURS';
+          } else {
+            targetStatut = d.estEnPause ? 'EN_PAUSE' : 'EN_ATTENTE';
           }
 
+          // Nettoyer les commandesConfirmees pour ne garder que celles qui ont un OF actif
+          const activeRefsTokens = new Set<string>();
+          activeRelatedOFs.forEach(o => {
+            const raw = (o.numCommande || '').toLowerCase();
+            raw.split(/[\s,+/]+/).forEach(token => {
+              if (token.trim()) activeRefsTokens.add(token.trim());
+            });
+            activeRefsTokens.add(raw.trim());
+          });
+
+          const currentConfirmees = d.commandesConfirmees || [];
+          const newConfirmees = currentConfirmees.filter(c => {
+            const cLower = c.toLowerCase().trim();
+            return activeRefsTokens.has(cLower) || Array.from(activeRefsTokens).some(t => t.includes(cLower) || cLower.includes(t));
+          });
+
+          let modified = false;
           if (d.statut !== targetStatut) {
             d.statut = targetStatut;
+            modified = true;
+          }
+          if (JSON.stringify(currentConfirmees) !== JSON.stringify(newConfirmees)) {
+            d.commandesConfirmees = newConfirmees;
+            modified = true;
+          }
+
+          if (modified) {
             this.upsertDossier(d);
             misAJour++;
           }

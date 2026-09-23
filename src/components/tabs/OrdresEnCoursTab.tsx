@@ -663,10 +663,45 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     }
   };
 
+  const debloquerDossierApresAnnulation = async (of: SuiviOF) => {
+    try {
+      const freshDossiers = await StorageService.getDossiers();
+      const rawCmd = (of.numCommande || '').toLowerCase().trim();
+      const tokens = rawCmd.split(/[\s,+/]+/).filter(Boolean);
+      let modifDossier = false;
+
+      const updatedDossiers = freshDossiers.map(d => {
+        const isMatch = (of.dossierId && d.id === of.dossierId) || matchCmdInDossier(d, of.numCommande || '');
+        if (isMatch) {
+          modifDossier = true;
+          const newConfirmees = (d.commandesConfirmees || []).filter(c => {
+            const cLow = c.toLowerCase().trim();
+            const matchesOf = cLow === rawCmd || rawCmd.includes(cLow) || tokens.includes(cLow);
+            return !matchesOf;
+          });
+          const newStatut = newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut;
+          return {
+            ...d,
+            statut: newStatut,
+            commandesConfirmees: newConfirmees
+          };
+        }
+        return d;
+      });
+
+      if (modifDossier) {
+        await StorageService.saveDossiers(updatedDossiers);
+      }
+    } catch (errD) {
+      console.warn('Erreur déblocage dossier associé:', errD);
+    }
+  };
+
   const handleAnnulerOF = async (of: SuiviOF) => {
-    if (confirm(`Voulez-vous marquer comme ANNULÉ l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nToutes les réservations (barres et chutes) seront immédiatement libérées sans altérer les stocks physiques.`)) {
+    if (confirm(`Voulez-vous marquer comme ANNULÉ l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\nToutes les réservations (barres et chutes) seront immédiatement libérées sans altérer les stocks physiques et la commande repassera en attente.`)) {
       try {
         await StorageService.annulerOF(of.id);
+        await debloquerDossierApresAnnulation(of);
         onRefreshData();
       } catch (err: any) {
         alert("Erreur lors de l'annulation de l'OF : " + (err.message || err));
@@ -680,40 +715,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
     const isClosed = of.statut === 'CLOTURE' || of.statut === 'LIVRE';
     const message = isClosed
       ? `Voulez-vous vraiment annuler l'émission de l'OF N° "${of.numCommande}" (${of.nomClient}) ?\n\n⚠️ IMPORTANT : Cet OF est déjà clôturé/livré. Le stock sera fidèlement restauré (restitution des barres et chutes consommées), ses réservations seront annulées, et la commande sera ré-ouverte pour mise à jour dans l'Écosystème.`
-      : `Voulez-vous annuler l'émission de l'OF N° "${of.numCommande}" (${of.nomClient}) pour mise à jour ?\n\n✓ Toutes les réservations de barres et de chutes associées seront libérées.\n✓ La commande sera déverrouillée pour permettre sa modification ou mise à jour dans l'Écosystème.`;
+      : `Voulez-vous annuler l'émission de l'OF N° "${of.numCommande}" (${of.nomClient}) pour mise à jour ?\n\n✓ Toutes les réservations de barres et de chutes associées seront libérées.\n✓ La commande repassera en attente et sera déverrouillée pour permettre sa modification dans l'Écosystème.`;
 
     if (confirm(message)) {
       try {
         // 1. Supprimer le suivi de l'OF (libère automatiquement toutes les réservations de stock et de chutes)
         await StorageService.deleteSuiviOF(of.id);
 
-        // 2. Débloquer la commande correspondante dans le dossier global (retirer de commandesConfirmees)
-        try {
-          const freshDossiers = await StorageService.getDossiers();
-          const cmdRefClean = (of.numCommande || '').toLowerCase().trim();
-          let modifDossier = false;
-
-          const updatedDossiers = freshDossiers.map(d => {
-            const isMatch = (of.dossierId && d.id === of.dossierId) || matchCmdInDossier(d, of.numCommande || '');
-            if (isMatch) {
-              modifDossier = true;
-              const newConfirmees = (d.commandesConfirmees || []).filter(c => c.toLowerCase().trim() !== cmdRefClean);
-              const newStatut = newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? 'EN_ATTENTE' : d.statut;
-              return {
-                ...d,
-                statut: newStatut,
-                commandesConfirmees: newConfirmees
-              };
-            }
-            return d;
-          });
-
-          if (modifDossier) {
-            await StorageService.saveDossiers(updatedDossiers);
-          }
-        } catch (errD) {
-          console.warn('Erreur déblocage dossier associé:', errD);
-        }
+        // 2. Débloquer la commande correspondante dans le dossier global (retirer de commandesConfirmees et passer en attente)
+        await debloquerDossierApresAnnulation(of);
 
         onRefreshData();
       } catch (err: any) {

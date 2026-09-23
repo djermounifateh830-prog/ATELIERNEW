@@ -4872,6 +4872,69 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }
   };
 
+  // Permet d'annuler l'émission et de déconfirmer une commande pour la modifier
+  const handleAnnulerConfirmationCommandeIndividuelle = async (cmdRef: string) => {
+    try {
+      const refNettoyee = (cmdRef || '').trim();
+      if (!refNettoyee) return;
+
+      const confirmMsg = `Voulez-vous annuler l'émission de la commande N° "${refNettoyee}" ?\n\n` +
+        `✓ Les OFs associés seront supprimés de la file atelier.\n` +
+        `✓ Toutes les réservations de barres et de chutes seront libérées.\n` +
+        `✓ La commande sera déverrouillée et repassera en attente pour vous permettre de la modifier ou la compléter.`;
+
+      if (!confirm(confirmMsg)) return;
+
+      showFlashNotification(`⏳ Annulation de l'émission pour la commande N° ${refNettoyee}...`, 'info');
+
+      // 1. Supprimer tous les OFs associés à cette référence
+      const ofs = await StorageService.getSuivisOF();
+      const cleanRefLower = refNettoyee.toLowerCase();
+      const matchingOfs = ofs.filter(o => {
+        const oCmd = (o.numCommande || '').toLowerCase().trim();
+        return oCmd && (oCmd === cleanRefLower || oCmd.includes(cleanRefLower) || cleanRefLower.includes(oCmd));
+      });
+
+      for (const ofItem of matchingOfs) {
+        await StorageService.deleteSuiviOF(ofItem.id);
+      }
+
+      // 2. Retirer la commande de la liste des commandes confirmées dans le dossier
+      const freshDossiers = await StorageService.getDossiers();
+      const targetId = editingDossierId;
+      const updatedDossiers = freshDossiers.map(d => {
+        const matchesThisDossier = (targetId && d.id === targetId) ||
+          (d.refCommande || '').trim() === refNettoyee ||
+          (d.numCommandeCaisson || '').trim() === refNettoyee ||
+          (d.numCommandeTablier || '').trim() === refNettoyee ||
+          (d.numCommandeMoustiquaire || '').trim() === refNettoyee ||
+          (d.numCommandePrecadre || '').trim() === refNettoyee;
+
+        if (matchesThisDossier) {
+          const currentConfirmees = d.commandesConfirmees || [];
+          const nextConfirmees = currentConfirmees.filter(c => {
+            const cLow = c.toLowerCase().trim();
+            return cLow !== cleanRefLower && !cleanRefLower.includes(cLow);
+          });
+          return {
+            ...d,
+            statut: nextConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut,
+            commandesConfirmees: nextConfirmees
+          };
+        }
+        return d;
+      });
+
+      await StorageService.saveDossiers(updatedDossiers);
+      if (onDossiersUpdated) onDossiersUpdated();
+
+      showFlashNotification(`✓ Émission de la commande N° ${refNettoyee} annulée avec succès ! La commande est déverrouillée et repasse en attente.`, 'success');
+    } catch (err: any) {
+      console.error('Erreur annulation émission commande individuelle:', err);
+      showFlashNotification(`❌ Erreur lors de l'annulation : ${err.message || String(err)}`, 'warn');
+    }
+  };
+
   // Passer à l'Atelier de Débit correspondant
   const handleAllerAtelier = (famille: FamilleProduit) => {
     if (famille === 'CAISSON') onNavigateToTab('caisson');
@@ -9516,6 +9579,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           >
                             <FileText className="w-3.5 h-3.5 text-emerald-200" />
                             <span>🖨️ Ouvrir / Ré-imprimer OF</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAnnulerConfirmationCommandeIndividuelle(cmd.ref)}
+                            className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-700/60 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                            title={`Annuler l'émission et déconfirmer la commande N° ${cmd.ref} : libère les réservations et permet de modifier à nouveau la commande`}
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+                            <span>↩️ Annuler l'émission</span>
                           </button>
 
                           {(() => {

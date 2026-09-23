@@ -12,7 +12,7 @@ import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
 import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { ModifierDelaiLivraisonModal } from './ModifierDelaiLivraisonModal';
-import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock, Edit2, Zap, FileText } from 'lucide-react';
+import { X, Printer, Download, Send, CheckCircle2, PackageCheck, Layers, Recycle, Scissors, Clock, Edit2, Zap, FileText, RotateCcw } from 'lucide-react';
 
 export type FamilleOF = 'CAISSON' | 'TABLIER' | 'PRECADRE' | 'MOUSTIQUAIRE';
 
@@ -598,13 +598,15 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       const dateConfiguredISO = dateLivraisonPrevisionnelleISO || customFamDate?.dateLivraisonISO || matchedDossier?.dateLivraisonPrevisionnelleISO;
 
       const match = ofs.find(o =>
-        o.numCommande === (refCommande || 'CMD') &&
+        o.statut !== 'ANNULE' &&
+        (o.numCommande === (refCommande || 'CMD') ||
+         (refCommande && o.numCommande && (o.numCommande.includes(refCommande) || refCommande.includes(o.numCommande)))) &&
         (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === familleRecherche || o.famille === famille)
       );
 
       const isDossierOrOfEnPause = !!(matchedDossier?.estEnPause || matchedDossier?.statut === 'EN_PAUSE' || match?.estEnPause || match?.statut === 'EN_PAUSE');
 
-      if (match?.numeroEmission) {
+      if (match?.numeroEmission && (match.statut === 'EMIS' || match.statut === 'RETOUR_EN_ATTENTE' || match.statut === 'CLOTURE' || match.statut === 'LIVRE')) {
         setEmittedSequence(match.numeroEmission);
         setEmittedCode(match.codeOF || `OF-${String(match.numeroEmission).padStart(3, '0')}`);
         setOfEmis(true);
@@ -629,9 +631,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           setDateLivraisonISO(estim.dateLivraisonISO);
         }
       } else {
-        const maxNum = ofs.reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
-        setNextSequencePreview(maxNum + 1);
+        setOfEmis(false);
+        setEmittedSequence(null);
+        setEmittedCode(null);
         setMatchedOf(null);
+        const maxNum = ofs.filter(o => o.statut !== 'ANNULE').reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
+        setNextSequencePreview(maxNum + 1);
 
         if (matchedDossier?.estPrioritaire || matchedDossier?.typePriorite === 'INSTANTANE') {
           setEstPrioritaire(true);
@@ -1801,6 +1806,80 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     }
   };
 
+  /** Annule directement l'émission de l'OF depuis la modale */
+  const handleAnnulerEmissionDirecte = async () => {
+    const ofToCancel = matchedOf || allOfsState.find(o => o.statut !== 'ANNULE' && o.numCommande === refCommande);
+    const numAff = ofToCancel?.codeOF || (ofToCancel?.numeroEmission ? `OF-${String(ofToCancel.numeroEmission).padStart(3, '0')}` : (refCommande || 'cet OF'));
+    const msg = `Voulez-vous vraiment annuler l'émission de l'OF ${numAff} ?\n\n` +
+      `✓ Toutes les réservations de barres et de chutes associées seront libérées.\n` +
+      `✓ La commande repassera en attente dans l'Écosystème et l'Historique pour permettre sa modification ou son ré-ajustement.\n` +
+      `✓ Vous pourrez ré-émettre un nouvel OF à tout moment.`;
+
+    if (confirm(msg)) {
+      try {
+        if (ofToCancel?.id) {
+          await StorageService.deleteSuiviOF(ofToCancel.id);
+        }
+
+        // Débloquer également le dossier correspondant dans les dossiers sauvegardés
+        try {
+          const freshDossiers = await StorageService.getDossiers();
+          const targetRef = (refCommande || '').toLowerCase().trim();
+          let modifDossier = false;
+
+          const updatedDossiers = freshDossiers.map(d => {
+            const isMatch = (dossierId && d.id === dossierId) ||
+              (ofToCancel?.dossierId && d.id === ofToCancel.dossierId) ||
+              (d.refCommande || '').toLowerCase().trim() === targetRef ||
+              (d.numCommandeCaisson || '').toLowerCase().trim() === targetRef ||
+              (d.numCommandeSousFace || '').toLowerCase().trim() === targetRef ||
+              (d.numCommandeTablier || '').toLowerCase().trim() === targetRef ||
+              (d.numCommandeMoustiquaire || '').toLowerCase().trim() === targetRef ||
+              (d.numCommandePrecadre || '').toLowerCase().trim() === targetRef ||
+              (targetRef && (d.refCommande || '').toLowerCase().includes(targetRef));
+
+            if (isMatch) {
+              modifDossier = true;
+              const newConfirmees = (d.commandesConfirmees || []).filter(c => {
+                const cLow = c.toLowerCase().trim();
+                return cLow !== targetRef && !targetRef.includes(cLow);
+              });
+              return {
+                ...d,
+                statut: newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut,
+                commandesConfirmees: newConfirmees
+              };
+            }
+            return d;
+          });
+
+          if (modifDossier) {
+            await StorageService.saveDossiers(updatedDossiers);
+          }
+        } catch (eDossier) {
+          console.warn('Erreur mise à jour dossier lors annulation émission:', eDossier);
+        }
+
+        setOfEmis(false);
+        setEmittedSequence(null);
+        setEmittedCode(null);
+        setMatchedOf(null);
+
+        // Recalculer le numéro prévisionnel
+        const freshOfs = await StorageService.getSuivisOF();
+        setAllOfsState(freshOfs);
+        const maxNum = freshOfs.filter(o => o.statut !== 'ANNULE').reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
+        setNextSequencePreview(maxNum + 1);
+
+        if (onOFEmis) {
+          onOFEmis();
+        }
+      } catch (err: any) {
+        alert("Erreur lors de l'annulation de l'émission : " + (err.message || err));
+      }
+    }
+  };
+
   /** Rendu des tables de coupes pour une section */
   const renderSectionCuttingTables = (sec: SectionTraitee, sIdx: number) => {
     if (sec.groupesBarresNeuves.length === 0 && sec.groupesChutesRecup.length === 0) {
@@ -2488,6 +2567,17 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               {ofEmis ? <CheckCircle2 className="w-4 h-4 text-emerald-700" /> : <Send className="w-4 h-4 text-black" />}
               <span>{ofEmis ? 'OF Émis ✓' : isEmitting ? 'Émission en cours...' : 'Émettre l\'OF'}</span>
             </button>
+            {ofEmis && (
+              <button
+                type="button"
+                onClick={handleAnnulerEmissionDirecte}
+                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border-2 border-rose-500 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
+                title="Annuler l'émission de cet OF : libère immédiatement les réservations de barres et chutes et remet la commande en attente pour modification"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                <span>Annuler l'émission</span>
+              </button>
+            )}
             <button onClick={onClose} className="p-1.5 text-black hover:bg-slate-200 rounded-lg transition ml-1 cursor-pointer">
               <X className="w-5 h-5" />
             </button>
