@@ -76,6 +76,7 @@ export class StorageService {
     mouvements: MouvementStock[];
     clientCodifications: ClientCodification[];
     fichesTransfert: FicheTransfert[];
+    tabsOrder?: string[];
   }> {
     const maxRetries = 3;
     let lastError: any = null;
@@ -115,7 +116,8 @@ export class StorageService {
               suivisOF: Array.isArray(d.suivisOF) ? d.suivisOF : [],
               mouvements: Array.isArray(d.mouvements) ? d.mouvements : [],
               clientCodifications: Array.isArray(d.clientCodifications) && d.clientCodifications.length > 0 ? d.clientCodifications : INITIAL_CLIENT_CODIFICATIONS,
-              fichesTransfert: Array.isArray(d.fichesTransfert) ? d.fichesTransfert : []
+              fichesTransfert: Array.isArray(d.fichesTransfert) ? d.fichesTransfert : [],
+              tabsOrder: Array.isArray(d.tabsOrder) && d.tabsOrder.length > 0 ? d.tabsOrder : undefined
             };
           }
         }
@@ -139,7 +141,8 @@ export class StorageService {
       suivisOF: [],
       mouvements: [],
       clientCodifications: INITIAL_CLIENT_CODIFICATIONS,
-      fichesTransfert: []
+      fichesTransfert: [],
+      tabsOrder: undefined
     };
   }
 
@@ -976,6 +979,34 @@ export class StorageService {
     }
   }
 
+  static async updateMouvement(mvt: MouvementStock): Promise<void> {
+    try {
+      await this.request('/api/mouvements', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mvt)
+      });
+      logger.sqlite('Mouvement Stock', `Mouvement ${mvt.id} mis à jour.`);
+    } catch (e: any) {
+      console.error('Erreur mise à jour mouvement:', e);
+      logger.error('Mouvement Stock', `Erreur mise à jour mouvement ${mvt.id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
+  static async deleteMouvement(id: string): Promise<void> {
+    try {
+      await this.request(`/api/mouvements/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+      logger.sqlite('Mouvement Stock', `Mouvement ${id} supprimé.`);
+    } catch (e: any) {
+      console.error('Erreur suppression mouvement:', e);
+      logger.error('Mouvement Stock', `Erreur suppression mouvement ${id}.`, { error: e.message });
+      throw e;
+    }
+  }
+
   // =========================================================================
   // CODIFICATIONS CLIENTS & PRÉFIXES
   // =========================================================================
@@ -1207,6 +1238,83 @@ export class StorageService {
       console.error('Erreur restauration JSON:', e);
       logger.error('Restauration Base', `Échec restauration JSON : ${e.message}`);
       throw e;
+    }
+  }
+
+  // =========================================================================
+  // ORDRE DES ONGLETS (PERSISTANCE SQLite & LOCALSTORAGE)
+  // =========================================================================
+
+  static async getTabsOrder(): Promise<string[]> {
+    const DEFAULT_ORDER = [
+      'monitoring',
+      'ecosysteme',
+      'encours',
+      'historique',
+      'stock',
+      'devis',
+      'documentation',
+      'parametres'
+    ];
+
+    try {
+      const res = await this.request('/api/settings/tabs-order');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+          const combined = [...json.data];
+          DEFAULT_ORDER.forEach(id => {
+            if (!combined.includes(id)) combined.push(id);
+          });
+          // Mettre en cache localStorage
+          try {
+            localStorage.setItem('3m_tabs_order', JSON.stringify(combined));
+          } catch {}
+          return combined;
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur récupération ordre des onglets depuis SQLite:', e);
+    }
+
+    // Fallback localStorage
+    try {
+      const saved = localStorage.getItem('3m_tabs_order');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const combined = [...parsed];
+          DEFAULT_ORDER.forEach(id => {
+            if (!combined.includes(id)) combined.push(id);
+          });
+          return combined;
+        }
+      }
+    } catch {}
+
+    return DEFAULT_ORDER;
+  }
+
+  static async saveTabsOrder(tabsOrder: string[]): Promise<void> {
+    if (!Array.isArray(tabsOrder) || tabsOrder.length === 0) return;
+
+    // 1. Sauvegarde instantanée dans localStorage pour réactivité locale
+    try {
+      localStorage.setItem('3m_tabs_order', JSON.stringify(tabsOrder));
+    } catch (e) {
+      console.warn('Erreur écriture 3m_tabs_order dans localStorage:', e);
+    }
+
+    // 2. Persistance robuste dans la base SQLite de l'atelier
+    try {
+      await this.request('/api/settings/tabs-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tabsOrder })
+      });
+      logger.action('Navigation', `Nouvel ordre des onglets enregistré dans la base SQLite (${tabsOrder.join(', ')})`);
+    } catch (e) {
+      console.error('Erreur sauvegarde ordre onglets dans SQLite:', e);
     }
   }
 }

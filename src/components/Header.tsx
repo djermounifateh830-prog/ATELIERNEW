@@ -19,6 +19,7 @@ import {
   Check
 } from 'lucide-react';
 import { userService } from '../services/userService';
+import { StorageService } from '../services/storage';
 import { OperatorBadge } from './common/OperatorBadge';
 import { OperatorModal } from './common/OperatorModal';
 import { RealtimeIndicator } from './common/RealtimeIndicator';
@@ -63,8 +64,9 @@ export const Header: React.FC<HeaderProps> = ({
   const [isOperatorModalOpen, setIsOperatorModalOpen] = useState<boolean>(false);
   const [isReorderModalOpen, setIsReorderModalOpen] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<UserProfile>(userService.getActiveOperator());
+  const [isSavedFeedback, setIsSavedFeedback] = useState<boolean>(false);
 
-  // Ordre des onglets personnalisable sauvegardé en local
+  // Ordre des onglets personnalisable sauvegardé en local + SQLite
   const [tabOrder, setTabOrder] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('3m_tabs_order');
@@ -89,6 +91,37 @@ export const Header: React.FC<HeaderProps> = ({
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
 
+  // Chargement officiel depuis la base de données SQLite de l'atelier au montage
+  useEffect(() => {
+    let isMounted = true;
+    StorageService.getTabsOrder()
+      .then(order => {
+        if (isMounted && Array.isArray(order) && order.length > 0) {
+          setTabOrder(order);
+        }
+      })
+      .catch(err => {
+        console.warn('Erreur chargement ordre des onglets depuis SQLite:', err);
+      });
+    return () => { isMounted = false; };
+  }, []);
+
+  // Écoute des synchronisations inter-onglets et événements
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === '3m_tabs_order' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setTabOrder(parsed);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
   useEffect(() => {
     const unsub = userService.onOperatorChange(op => {
       setCurrentUser(op);
@@ -98,11 +131,10 @@ export const Header: React.FC<HeaderProps> = ({
 
   const saveTabOrder = (newOrder: string[]) => {
     setTabOrder(newOrder);
-    try {
-      localStorage.setItem('3m_tabs_order', JSON.stringify(newOrder));
-    } catch (e) {
-      console.warn('Erreur sauvegarde 3m_tabs_order', e);
-    }
+    // Sauvegarder dans localStorage ET dans la base SQLite de l'atelier (persistance garantie à la relance)
+    StorageService.saveTabsOrder(newOrder);
+    setIsSavedFeedback(true);
+    setTimeout(() => setIsSavedFeedback(false), 2500);
   };
 
   const handleResetTabOrder = () => {
@@ -330,12 +362,20 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Ordre par défaut</span>
               </button>
 
-              <button
-                onClick={() => setIsReorderModalOpen(false)}
-                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
-              >
-                Terminer
-              </button>
+              <div className="flex items-center gap-2">
+                {isSavedFeedback && (
+                  <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1 animate-pulse">
+                    <Check className="w-3.5 h-3.5" />
+                    Enregistré dans SQLite !
+                  </span>
+                )}
+                <button
+                  onClick={() => setIsReorderModalOpen(false)}
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow transition cursor-pointer"
+                >
+                  Terminer
+                </button>
+              </div>
             </div>
           </div>
         </div>

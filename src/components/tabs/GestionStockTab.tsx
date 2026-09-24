@@ -13,6 +13,7 @@ import { StorageService } from '../../services/storage';
 import { ImportArticlesModal } from '../stock/ImportArticlesModal';
 import { ImportChutesModal } from '../stock/ImportChutesModal';
 import { OperationsStockModal, OperationStockType } from '../stock/OperationsStockModal';
+import { ModifierMouvementModal } from '../stock/ModifierMouvementModal';
 import { InventaireStockView } from '../stock/InventaireStockView';
 import { ColumnCustomizerPopover } from '../common/ColumnCustomizerPopover';
 import { ConfirmationModal, ConfirmationType } from '../common/ConfirmationModal';
@@ -22,6 +23,7 @@ import {
   Plus,
   Trash2,
   Edit2,
+  Edit3,
   Save,
   Link,
   Search,
@@ -1160,6 +1162,9 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   // 3. Mouvements Stock
   const [mvtSortKey, setMvtSortKey] = useState<'date' | 'type' | 'numCommande' | 'articleCode' | 'nomClient' | 'quantite' | null>(null);
   const [mvtSortDir, setMvtSortDir] = useState<'asc' | 'desc'>('desc');
+  const [searchMvt, setSearchMvt] = useState<string>('');
+  const [selectedMvtForEdit, setSelectedMvtForEdit] = useState<MouvementStock | null>(null);
+  const [isEditMvtModalOpen, setIsEditMvtModalOpen] = useState<boolean>(false);
 
   const handleMvtSort = (key: 'date' | 'type' | 'numCommande' | 'articleCode' | 'nomClient' | 'quantite') => {
     if (mvtSortKey === key) {
@@ -1225,7 +1230,20 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   }, [articles, mapping, filterOnlyUnmapped, searchMapping, mapSortKey, mapSortDir, safeChutesMaille, safeChutesBarres]);
 
   const filteredAndSortedMouvements = useMemo(() => {
-    const list = mouvements.filter(m => filtreTypeMvt === 'TOUS' || m.type === filtreTypeMvt);
+    let list = mouvements.filter(m => filtreTypeMvt === 'TOUS' || m.type === filtreTypeMvt);
+    if (searchMvt.trim()) {
+      const q = searchMvt.toLowerCase().trim();
+      list = list.filter(m => 
+        (m.articleCode && m.articleCode.toLowerCase().includes(q)) ||
+        (m.designation && m.designation.toLowerCase().includes(q)) ||
+        (m.numCommande && m.numCommande.toLowerCase().includes(q)) ||
+        (m.nomClient && m.nomClient.toLowerCase().includes(q)) ||
+        (m.numBL && m.numBL.toLowerCase().includes(q)) ||
+        (m.fournisseur && m.fournisseur.toLowerCase().includes(q)) ||
+        (m.date && m.date.toLowerCase().includes(q)) ||
+        (m.remarque && m.remarque.toLowerCase().includes(q))
+      );
+    }
     if (!mvtSortKey) return list;
     return [...list].sort((a, b) => {
       const va = (a as any)[mvtSortKey] || '';
@@ -1235,7 +1253,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
       }
       return mvtSortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
-  }, [mouvements, filtreTypeMvt, mvtSortKey, mvtSortDir]);
+  }, [mouvements, filtreTypeMvt, searchMvt, mvtSortKey, mvtSortDir]);
 
   const SortIcon = ({ col, currentKey, currentDir }: { col: string; currentKey: string | null; currentDir: 'asc' | 'desc' }) => (
     <span className={`ml-1 text-[11px] inline-block select-none transition ${
@@ -2562,15 +2580,37 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
       {/* SUBTAB 4 : HISTORIQUE MOUVEMENTS */}
       {subTab === 'historique' && (
         <div className="space-y-4">
-          {/* Filtres type mouvement */}
+          {/* Filtres type mouvement & recherche */}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Barre de recherche instantanée */}
+            <div className="relative flex-1 min-w-[220px] max-w-sm">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+              <input
+                type="text"
+                value={searchMvt}
+                onChange={e => setSearchMvt(e.target.value)}
+                placeholder="Rechercher article, BL, OF, client, date..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-7 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+              />
+              {searchMvt && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMvt('')}
+                  className="absolute right-2 top-2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                  title="Effacer la recherche"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
             {['TOUS', 'RECEPTION_MARCHANDISE', 'SORTIE_MANUELLE', 'SORTIE_BARRE_NEUVE', 'SORTIE_CHUTE', 'ENTREE_CHUTE', 'AJUSTEMENT_CHUTE', 'AJUSTEMENT_INVENTAIRE'].map(t => (
               <button
                 key={t}
                 onClick={() => setFiltreTypeMvt(t)}
                 className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition border cursor-pointer ${
                   filtreTypeMvt === t
-                    ? 'bg-purple-600 text-white border-purple-500'
+                    ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
                     : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
                 }`}
               >
@@ -2584,6 +2624,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                   : '📝 Ajust. Inventaire'}
               </button>
             ))}
+
             <button
               onClick={onStockUpdated}
               className="ml-auto px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg flex items-center gap-1.5 transition border border-slate-700 cursor-pointer"
@@ -2594,14 +2635,16 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           </div>
 
           {/* Table historique */}
-          {mouvements.filter(m => filtreTypeMvt === 'TOUS' || m.type === filtreTypeMvt).length === 0 ? (
+          {filteredAndSortedMouvements.length === 0 ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-10 text-center text-slate-500">
               <History className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="font-bold">Aucun mouvement enregistré</p>
-              <p className="text-xs mt-1">Les mouvements apparaissent ici après la clôture d'un Retour OF.</p>
+              <p className="font-bold">Aucun mouvement trouvé</p>
+              <p className="text-xs mt-1">
+                {searchMvt ? 'Aucun résultat ne correspond à votre recherche.' : 'Les mouvements apparaissent ici après la clôture d\'un OF ou une réception/sortie.'}
+              </p>
             </div>
           ) : (
-            <div className="border border-slate-700 rounded-xl overflow-x-auto">
+            <div className="border border-slate-700 rounded-xl overflow-x-auto shadow-sm">
               <table className="w-full text-xs border-collapse">
                 <thead className="bg-slate-800 text-slate-300 font-bold">
                   <tr>
@@ -2653,22 +2696,34 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                     >
                       Longueur / Qte <SortIcon col="quantite" currentKey={mvtSortKey} currentDir={mvtSortDir} />
                     </th>
-                    <th className="py-2 px-3 text-left">Remarque</th>
+                    <th className="py-2 px-3 text-left border-r border-slate-700">Remarque / BL</th>
+                    <th className="py-2 px-3 text-center w-24">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {filteredAndSortedMouvements.map((m, idx) => (
-                      <tr key={m.id} className={`${ idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/50'} hover:bg-slate-800/30 transition`}>
-                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-slate-400 text-[11px] whitespace-nowrap">{m.date}</td>
+                      <tr 
+                        key={m.id} 
+                        className={`${
+                          m.isAnnule 
+                            ? 'bg-rose-950/20 opacity-70' 
+                            : idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/50'
+                        } hover:bg-slate-800/40 transition`}
+                      >
+                        <td className="py-2 px-3 border-r border-slate-800 font-mono text-slate-400 text-[11px] whitespace-nowrap">
+                          {m.date}
+                        </td>
                         <td className="py-2 px-3 border-r border-slate-800 whitespace-nowrap">
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                            m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE' || m.type === 'SORTIE_MANUELLE' || m.type === 'SORTIE_ACCESSOIRE'
+                            m.isAnnule
+                              ? 'bg-slate-800 text-slate-400 border-slate-700 line-through'
+                              : m.type === 'SORTIE_BARRE_NEUVE' || m.type === 'SORTIE_CHUTE' || m.type === 'SORTIE_MANUELLE' || m.type === 'SORTIE_ACCESSOIRE'
                               ? 'bg-rose-900/40 text-rose-300 border-rose-700/40'
-                            : m.type === 'ENTREE_CHUTE' || m.type === 'RECEPTION_MARCHANDISE'
+                              : m.type === 'ENTREE_CHUTE' || m.type === 'RECEPTION_MARCHANDISE'
                               ? 'bg-emerald-900/40 text-emerald-300 border-emerald-700/40'
-                            : m.type === 'AJUSTEMENT_CHUTE' || m.type === 'AJUSTEMENT_INVENTAIRE'
+                              : m.type === 'AJUSTEMENT_CHUTE' || m.type === 'AJUSTEMENT_INVENTAIRE'
                               ? 'bg-amber-900/40 text-amber-300 border-amber-700/40'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                              : 'bg-slate-800 text-slate-400 border-slate-700'
                           }`}>
                             {m.type === 'SORTIE_BARRE_NEUVE' ? '🔻 Sortie Barre'
                               : m.type === 'SORTIE_CHUTE' ? '🔻 Sortie Chute'
@@ -2697,9 +2752,60 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                           {m.nomClient || '—'}
                         </td>
                         <td className="py-2 px-3 border-r border-slate-800 text-center font-mono font-bold text-slate-200 whitespace-nowrap">
-                          {m.longueurMm ? `${m.longueurMm} mm` : m.quantite ? `×${m.quantite}` : '—'}
+                          <span className={m.isAnnule ? 'line-through text-slate-500' : ''}>
+                            {m.longueurMm ? `${m.longueurMm} mm` : m.quantite ? `×${m.quantite}` : '—'}
+                          </span>
                         </td>
-                        <td className="py-2 px-3 text-slate-400 text-[11px]">{m.remarque || '—'}</td>
+                        <td className="py-2 px-3 border-r border-slate-800 text-slate-400 text-[11px]">
+                          <div className="space-y-0.5">
+                            {m.numBL && (
+                              <div className="text-amber-300/90 font-mono text-[10px]">
+                                BL: <span className="font-bold">{m.numBL}</span> {m.fournisseur && `(${m.fournisseur})`}
+                              </div>
+                            )}
+                            <div className="truncate max-w-xs">{m.remarque || '—'}</div>
+                            {m.isAnnule && (
+                              <div className="text-rose-400 font-semibold text-[10px]">
+                                ⚠️ Annulé : {m.motifAnnulation || 'Annulé'} ({m.dateAnnulation || ''})
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {m.isAnnule ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                                Annulé
+                              </span>
+                            ) : null}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMvtForEdit(m);
+                                setIsEditMvtModalOpen(true);
+                              }}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 hover:border-purple-400 transition cursor-pointer"
+                              title="Modifier les détails ou la quantité de ce mouvement"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+
+                            {!m.isAnnule && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedMvtForEdit(m);
+                                  setIsEditMvtModalOpen(true);
+                                }}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 hover:border-amber-400 transition cursor-pointer"
+                                title="Annuler ce mouvement et restituer le stock"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                 </tbody>
@@ -2731,11 +2837,26 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
         initialType={operationModalType}
         initialArticle={operationModalArticle}
         articles={articles}
+        suivisOF={suivisOF}
+        mouvements={mouvements}
         onClose={() => {
           setIsOperationsModalOpen(false);
           setOperationModalArticle(null);
         }}
         onStockUpdated={onStockUpdated}
+      />
+
+      {/* Modal Modification / Annulation de Mouvement de Stock */}
+      <ModifierMouvementModal
+        isOpen={isEditMvtModalOpen}
+        mouvement={selectedMvtForEdit}
+        articles={articles}
+        suivisOF={suivisOF}
+        onClose={() => {
+          setIsEditMvtModalOpen(false);
+          setSelectedMvtForEdit(null);
+        }}
+        onMouvementUpdated={onStockUpdated}
       />
 
       {/* Modal Dédiée : Gérer les Familles de Chutes */}

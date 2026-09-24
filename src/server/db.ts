@@ -25,6 +25,32 @@ import { INITIAL_CLIENT_CODIFICATIONS } from '../data/initialCodifications';
 // Chemin du fichier de base de données physique à la racine du projet
 const DB_PATH = path.resolve(process.cwd(), '3m_atelier.db');
 
+export function matchReferencesServer(ref1?: string, ref2?: string): boolean {
+  if (!ref1 || !ref2) return false;
+  const c1 = ref1.trim().toLowerCase();
+  const c2 = ref2.trim().toLowerCase();
+  if (c1 === c2) return true;
+
+  // Tokens séparés (ex: "D-260951 + D-260950")
+  const tokens1 = c1.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
+  const tokens2 = c2.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
+  if (tokens1.some(t1 => tokens2.includes(t1))) return true;
+
+  // Sans délimiteurs
+  const n1 = c1.replace(/[-_\s]/g, '');
+  const n2 = c2.replace(/[-_\s]/g, '');
+  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+
+  // Chiffres purs
+  const d1 = ref1.replace(/\D/g, '');
+  const d2 = ref2.replace(/\D/g, '');
+  if (d1.length >= 4 && d2.length >= 4 && (d1 === d2 || d1.includes(d2) || d2.includes(d1))) {
+    return true;
+  }
+
+  return false;
+}
+
 class AtelierDatabase {
   private db: DatabaseSync;
 
@@ -345,6 +371,21 @@ class AtelierDatabase {
     } catch {}
     try {
       this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN chute_id TEXT;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN num_bl TEXT;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN fournisseur TEXT;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN is_annule INTEGER DEFAULT 0;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN date_annulation TEXT;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE mouvements_stock ADD COLUMN motif_annulation TEXT;');
     } catch {}
     try {
       this.db.exec('CREATE INDEX IF NOT EXISTS idx_res_chutes_cid ON reservations_chutes(chute_id);');
@@ -1161,6 +1202,51 @@ class AtelierDatabase {
   }
 
   // ==========================================
+  // ORDRE DES ONGLETS (PERSISTANCE SQLite)
+  // ==========================================
+  getTabsOrder(): string[] {
+    const DEFAULT_TAB_ORDER = [
+      'monitoring',
+      'ecosysteme',
+      'encours',
+      'historique',
+      'stock',
+      'devis',
+      'documentation',
+      'parametres'
+    ];
+    try {
+      const row = this.db.prepare("SELECT value FROM app_meta WHERE key = 'tabs_order'").get() as any;
+      if (row?.value) {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const combined = [...parsed];
+          DEFAULT_TAB_ORDER.forEach(id => {
+            if (!combined.includes(id)) combined.push(id);
+          });
+          return combined;
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur lecture tabs_order SQLite:', e);
+    }
+    return DEFAULT_TAB_ORDER;
+  }
+
+  saveTabsOrder(tabsOrder: string[]): void {
+    if (!Array.isArray(tabsOrder) || tabsOrder.length === 0) return;
+    try {
+      this.db.prepare(`
+        INSERT INTO app_meta (key, value)
+        VALUES ('tabs_order', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(JSON.stringify(tabsOrder));
+    } catch (e) {
+      console.error('Erreur sauvegarde tabs_order SQLite:', e);
+    }
+  }
+
+  // ==========================================
   // DOSSIERS
   // ==========================================
   getDossiers(): DossierCommandeGlobal[] {
@@ -1182,35 +1268,29 @@ class AtelierDatabase {
       for (const dossier of list) {
         if (dossier.statut === 'LIVRE') continue;
 
-        const dossierRef = (dossier.refCommande || '').trim().toLowerCase();
         const subRefs = [
+          dossier.refCommande,
           dossier.numCommandeCaisson,
           dossier.numCommandeSousFace,
           dossier.numCommandeTablier,
           dossier.numCommandeMoustiquaire,
           dossier.numCommandePrecadre,
           ...(dossier.commandesConfirmees || [])
-        ].filter(Boolean).map(sr => sr!.trim().toLowerCase());
+        ].filter(Boolean) as string[];
 
-        const hasActiveEmittedOf = activeEmittedOfs.some(o => {
+        const matchesThisDossier = (o: SuiviOF) => {
           if (o.dossierId && o.dossierId === dossier.id) return true;
-          const cmdRefs = (o.numCommande || '').split(/[\s,+/]+/).map(c => c.trim().toLowerCase()).filter(Boolean);
-          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-          const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
-          const matchesClient = o.nomClient && dossier.nomClientFinal &&
-            dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase();
-          return matchesCmd || matchesSub || (matchesClient && !dossierRef);
-        });
+          const oCmd = o.numCommande || '';
+          if (subRefs.some(sr => matchReferencesServer(sr, oCmd))) return true;
+          if (o.nomClient && dossier.nomClientFinal &&
+            dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase() && !dossier.refCommande) {
+            return true;
+          }
+          return false;
+        };
 
-        const hasAnyActiveOf = allActiveOfs.some(o => {
-          if (o.dossierId && o.dossierId === dossier.id) return true;
-          const cmdRefs = (o.numCommande || '').split(/[\s,+/]+/).map(c => c.trim().toLowerCase()).filter(Boolean);
-          const matchesCmd = cmdRefs.some(ref => ref && (dossierRef.includes(ref) || ref.includes(dossierRef)));
-          const matchesSub = subRefs.some(sr => cmdRefs.some(ref => sr.includes(ref) || ref.includes(sr)));
-          const matchesClient = o.nomClient && dossier.nomClientFinal &&
-            dossier.nomClientFinal.trim().toLowerCase() === o.nomClient.trim().toLowerCase();
-          return matchesCmd || matchesSub || (matchesClient && !dossierRef);
-        });
+        const hasActiveEmittedOf = activeEmittedOfs.some(matchesThisDossier);
+        const hasAnyActiveOf = allActiveOfs.some(matchesThisDossier);
 
         // 1. Si un OF émis actif existe et dossier en attente -> passer en cours
         if (hasActiveEmittedOf && (dossier.statut === 'EN_ATTENTE' || dossier.statut === 'BROUILLON' || !dossier.statut)) {
@@ -1569,25 +1649,24 @@ class AtelierDatabase {
       for (const d of dossiers) {
         if (d.statut === 'LIVRE') continue; // Ne pas toucher aux dossiers déjà livrés au client
 
-        const dRef = (d.refCommande || '').trim().toLowerCase();
         const dClient = (d.nomClientFinal || '').trim().toLowerCase();
         const subRefs = [
+          d.refCommande,
           d.numCommandeCaisson,
           d.numCommandeSousFace,
           d.numCommandeTablier,
           d.numCommandeMoustiquaire,
           d.numCommandePrecadre,
           ...(d.commandesConfirmees || [])
-        ].filter(Boolean).map(r => r.trim().toLowerCase());
+        ].filter(Boolean) as string[];
 
         const relatedOFs = allOFs.filter(o => {
           if (o.dossierId && o.dossierId === d.id) return true;
-          const oCmd = (o.numCommande || '').trim().toLowerCase();
+          const oCmd = o.numCommande || '';
           const oClient = (o.nomClient || '').trim().toLowerCase();
-          const matchesRef = (dRef && (oCmd === dRef || oCmd.includes(dRef) || dRef.includes(oCmd))) ||
-            subRefs.some(sr => sr && (oCmd === sr || oCmd.includes(sr) || sr.includes(oCmd)));
+          const matchesRef = subRefs.some(sr => matchReferencesServer(sr, oCmd));
           const matchesClient = dClient && oClient && (dClient === oClient);
-          return matchesRef || (matchesClient && !dRef);
+          return matchesRef || (matchesClient && !d.refCommande);
         });
 
         // Filtrer strictement les OFs actifs (exclure les OFs annulés)
@@ -1622,19 +1701,9 @@ class AtelierDatabase {
           }
 
           // Nettoyer les commandesConfirmees pour ne garder que celles qui ont un OF actif
-          const activeRefsTokens = new Set<string>();
-          activeRelatedOFs.forEach(o => {
-            const raw = (o.numCommande || '').toLowerCase();
-            raw.split(/[\s,+/]+/).forEach(token => {
-              if (token.trim()) activeRefsTokens.add(token.trim());
-            });
-            activeRefsTokens.add(raw.trim());
-          });
-
           const currentConfirmees = d.commandesConfirmees || [];
           const newConfirmees = currentConfirmees.filter(c => {
-            const cLower = c.toLowerCase().trim();
-            return activeRefsTokens.has(cLower) || Array.from(activeRefsTokens).some(t => t.includes(cLower) || cLower.includes(t));
+            return activeRelatedOFs.some(o => matchReferencesServer(c, o.numCommande));
           });
 
           let modified = false;
@@ -2428,8 +2497,14 @@ class AtelierDatabase {
       articleCode: r.article_code || undefined,
       designation: r.designation || undefined,
       longueurMm: r.longueur_mm ? Number(r.longueur_mm) : undefined,
-      quantite: r.quantite ? Number(r.quantite) : undefined,
-      remarque: r.remarque || undefined
+      quantite: r.quantite !== null && r.quantite !== undefined ? Number(r.quantite) : undefined,
+      remarque: r.remarque || undefined,
+      chuteId: r.chute_id || undefined,
+      numBL: r.num_bl || undefined,
+      fournisseur: r.fournisseur || undefined,
+      isAnnule: Boolean(r.is_annule),
+      dateAnnulation: r.date_annulation || undefined,
+      motifAnnulation: r.motif_annulation || undefined
     }));
   }
 
@@ -2437,13 +2512,16 @@ class AtelierDatabase {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO mouvements_stock (
         id, date, type, of_id, num_commande, nom_client,
-        article_code, designation, longueur_mm, quantite, remarque
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        article_code, designation, longueur_mm, quantite, remarque, chute_id,
+        num_bl, fournisseur, is_annule, date_annulation, motif_annulation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
       m.id, m.date, m.type, m.ofId || null, m.numCommande || null,
       m.nomClient || null, m.articleCode || null, m.designation || null,
-      m.longueurMm || null, m.quantite || null, m.remarque || null
+      m.longueurMm || null, m.quantite || null, m.remarque || null, m.chuteId || null,
+      m.numBL || null, m.fournisseur || null, m.isAnnule ? 1 : 0,
+      m.dateAnnulation || null, m.motifAnnulation || null
     );
   }
 
@@ -2453,14 +2531,17 @@ class AtelierDatabase {
       const stmt = this.db.prepare(`
         INSERT OR REPLACE INTO mouvements_stock (
           id, date, type, of_id, num_commande, nom_client,
-          article_code, designation, longueur_mm, quantite, remarque
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          article_code, designation, longueur_mm, quantite, remarque, chute_id,
+          num_bl, fournisseur, is_annule, date_annulation, motif_annulation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const m of mvts) {
         stmt.run(
           m.id, m.date, m.type, m.ofId || null, m.numCommande || null,
           m.nomClient || null, m.articleCode || null, m.designation || null,
-          m.longueurMm || null, m.quantite || null, m.remarque || null
+          m.longueurMm || null, m.quantite || null, m.remarque || null, m.chuteId || null,
+          m.numBL || null, m.fournisseur || null, m.isAnnule ? 1 : 0,
+          m.dateAnnulation || null, m.motifAnnulation || null
         );
       }
       this.db.exec('COMMIT');
@@ -2468,6 +2549,30 @@ class AtelierDatabase {
       this.db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  updateMouvement(m: MouvementStock) {
+    const stmt = this.db.prepare(`
+      UPDATE mouvements_stock SET
+        date = ?, type = ?, of_id = ?, num_commande = ?, nom_client = ?,
+        article_code = ?, designation = ?, longueur_mm = ?, quantite = ?,
+        remarque = ?, chute_id = ?, num_bl = ?, fournisseur = ?, is_annule = ?,
+        date_annulation = ?, motif_annulation = ?
+      WHERE id = ?
+    `);
+    stmt.run(
+      m.date, m.type, m.ofId || null, m.numCommande || null,
+      m.nomClient || null, m.articleCode || null, m.designation || null,
+      m.longueurMm || null, m.quantite || null, m.remarque || null, m.chuteId || null,
+      m.numBL || null, m.fournisseur || null, m.isAnnule ? 1 : 0,
+      m.dateAnnulation || null, m.motifAnnulation || null,
+      m.id
+    );
+  }
+
+  deleteMouvement(id: string) {
+    const stmt = this.db.prepare('DELETE FROM mouvements_stock WHERE id = ?');
+    stmt.run(id);
   }
 
   // ==========================================
@@ -2673,6 +2778,7 @@ class AtelierDatabase {
     mouvements?: MouvementStock[];
     clientCodifications?: ClientCodification[];
     fichesTransfert?: FicheTransfert[];
+    tabsOrder?: string[];
   }) {
     if (data.articles !== undefined) this.saveArticles(data.articles);
     if (data.chutesBarres !== undefined) this.saveChutesBarres(data.chutesBarres, true);
@@ -2682,6 +2788,7 @@ class AtelierDatabase {
     if (data.suivisOF !== undefined) this.saveSuivisOF(data.suivisOF);
     if (data.clientCodifications !== undefined) this.saveClientCodifications(data.clientCodifications);
     if (data.fichesTransfert !== undefined) this.saveFichesTransfert(data.fichesTransfert);
+    if (data.tabsOrder !== undefined && Array.isArray(data.tabsOrder)) this.saveTabsOrder(data.tabsOrder);
     if (data.mouvements !== undefined) {
       this.db.exec('DELETE FROM mouvements_stock');
       if (data.mouvements.length > 0) this.addMouvements(data.mouvements);
@@ -2698,7 +2805,8 @@ class AtelierDatabase {
       suivisOF: this.getSuivisOF(),
       mouvements: this.getMouvements(),
       clientCodifications: this.getClientCodifications(),
-      fichesTransfert: this.getFichesTransfert()
+      fichesTransfert: this.getFichesTransfert(),
+      tabsOrder: this.getTabsOrder()
     };
   }
 

@@ -66,6 +66,7 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
 
   // Modal sélection chute de rack pour un profilé particulier
   const [pickerProfileIdx, setPickerProfileIdx] = useState<number | null>(null);
+  const [pickerDefaultTab, setPickerDefaultTab] = useState<'RACK' | 'HORS_STOCK'>('RACK');
 
   // État de dépliage des détails fins pour les chutes utilisées
   const [expandedChuteGroups, setExpandedChuteGroups] = useState<Record<string, boolean>>({});
@@ -131,6 +132,8 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
   // Fermeture définitive de l'OF et retour direct au tableau des Ordres en cours
   const handleFermerOF = () => {
     setShowConfirmModal(false);
+    sessionStorage.setItem('3m_focus_search_of', 'true');
+    window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
     if (onClotureSuccess) {
       onClotureSuccess();
     } else if (onCloseOF) {
@@ -513,8 +516,9 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
                                     × {grp.totalCount} pcs
                                   </span>
                                   {grp.source === 'HORS_STOCK' && (
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 border border-purple-700/50">
-                                      Hors-stock
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/60 font-semibold flex items-center gap-1">
+                                      <Zap className="w-3 h-3 text-amber-400" />
+                                      <span>Hors-stock</span>
                                     </span>
                                   )}
                                 </div>
@@ -574,6 +578,46 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
                                     </button>
                                   </div>
 
+                                  {/* Actions directes pour chutes hors-stock : ajout +1 ou suppression complète */}
+                                  {grp.source === 'HORS_STOCK' && (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const newChute = {
+                                            id: `hs-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                                            longueur: grp.longueur,
+                                            utilisee: true,
+                                            source: 'HORS_STOCK' as const,
+                                            repere: `Chute hors-stock (${grp.longueur}mm)`,
+                                            remarque: grp.items[0]?.remarque
+                                          };
+                                          updateProfil(pIdx, {
+                                            chutesUtiliseesReelles: [...profil.chutesUtiliseesReelles, newChute]
+                                          });
+                                        }}
+                                        className="px-1.5 py-1 bg-amber-950/60 hover:bg-amber-900 border border-amber-800 text-amber-300 rounded-lg text-[10px] font-bold flex items-center gap-0.5 cursor-pointer transition"
+                                        title={`Ajouter une chute hors-stock supplémentaire de ${grp.longueur}mm`}
+                                      >
+                                        <Plus className="w-3 h-3 text-amber-400" />
+                                        <span>1 pc</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = profil.chutesUtiliseesReelles.filter(
+                                            c => !(c.source === 'HORS_STOCK' && c.longueur === grp.longueur)
+                                          );
+                                          updateProfil(pIdx, { chutesUtiliseesReelles: updated });
+                                        }}
+                                        className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                                        title={`Supprimer cette (ou ces ${grp.totalCount}) chute(s) hors-stock de ${grp.longueur}mm`}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  )}
+
                                   {grp.totalCount > 1 && (
                                     <button
                                       type="button"
@@ -583,7 +627,7 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
                                           [`${pIdx}_${grp.key}`]: !prev[`${pIdx}_${grp.key}`]
                                         }));
                                       }}
-                                      className="p-1 text-slate-400 hover:text-slate-200 transition"
+                                      className="p-1 text-slate-400 hover:text-slate-200 transition cursor-pointer"
                                       title="Voir les chutes individuelles"
                                     >
                                       {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -710,16 +754,31 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
                     )}
                   </div>
 
-                  {/* Bouton ajouter une autre chute du rack */}
+                  {/* Bouton ajouter une autre chute du rack ou hors-stock */}
                   <div className="pt-2 border-t border-slate-800/80 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setPickerProfileIdx(pIdx)}
+                      onClick={() => {
+                        setPickerDefaultTab('RACK');
+                        setPickerProfileIdx(pIdx);
+                      }}
                       className="flex-1 py-1.5 px-2 rounded-lg bg-sky-950/50 hover:bg-sky-950/80 border border-sky-800/60 text-sky-300 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
                       title="Choisir une autre chute dans le rack physique"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Autre chute rack</span>
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>+ Chute rack</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickerDefaultTab('HORS_STOCK');
+                        setPickerProfileIdx(pIdx);
+                      }}
+                      className="flex-1 py-1.5 px-2 rounded-lg bg-amber-950/50 hover:bg-amber-950/80 border border-amber-800/60 text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      title="Saisir une ou plusieurs chutes hors-stock trouvées à l'atelier"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-amber-400" />
+                      <span>+ Chute hors-stock</span>
                     </button>
                   </div>
                 </div>
@@ -954,6 +1013,8 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
             <button
               type="button"
               onClick={() => {
+                sessionStorage.setItem('3m_focus_search_of', 'true');
+                window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
                 if (onNavigateToTab) {
                   onNavigateToTab('encours');
                 } else if (onCloseOF) {
@@ -1062,10 +1123,11 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
         onClose={() => setShowConfirmModal(false)}
       />
 
-      {/* Modal choix autre chute de rack */}
+      {/* Modal choix autre chute de rack ou hors-stock */}
       {pickerProfileIdx !== null && currentPickerProfile && (
         <ChuteRackPickerModal
           isOpen={true}
+          initialTab={pickerDefaultTab}
           onClose={() => setPickerProfileIdx(null)}
           articleDesignation={currentPickerProfile.articleDesignation}
           articleCode={currentPickerProfile.articleCode}
@@ -1078,31 +1140,37 @@ export const CockpitEclairView: React.FC<CockpitEclairViewProps> = ({
                 .filter(Boolean) as string[]
             )
           }
-          onSelectRackChute={chute => {
+          onSelectRackChute={(chute, quantite = 1) => {
+            const count = Math.max(1, Math.min(quantite, chute.quantite || 1));
+            const now = Date.now();
+            const newChutes = Array.from({ length: count }, (_, i) => ({
+              id: `rack-${chute.id || now}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+              chuteId: chute.id,
+              longueur: chute.longueur,
+              utilisee: true,
+              source: 'STOCK_INVENTORIE' as const,
+              repere: count > 1 ? `Chute rack (${chute.longueur}mm) #${i + 1}` : `Chute rack (${chute.longueur}mm)`
+            }));
             const updated = [
               ...currentPickerProfile.chutesUtiliseesReelles,
-              {
-                id: `rack-${chute.id || Date.now()}`,
-                chuteId: chute.id,
-                longueur: chute.longueur,
-                utilisee: true,
-                source: 'STOCK_INVENTORIE' as const,
-                repere: `Chute rack (${chute.longueur}mm)`
-              }
+              ...newChutes
             ];
             updateProfil(pickerProfileIdx, { chutesUtiliseesReelles: updated });
           }}
-          onSelectHorsStockChute={(longueurMm, remarque) => {
+          onSelectHorsStockChute={(longueurMm, quantite = 1, remarque) => {
+            const count = Math.max(1, Math.floor(quantite || 1));
+            const now = Date.now();
+            const newChutes = Array.from({ length: count }, (_, i) => ({
+              id: `hs-${now}-${i}-${Math.random().toString(36).substring(2, 6)}`,
+              longueur: longueurMm,
+              utilisee: true,
+              source: 'HORS_STOCK' as const,
+              repere: count > 1 ? `Chute hors-stock (${longueurMm}mm) #${i + 1}` : `Chute hors-stock (${longueurMm}mm)`,
+              remarque: remarque ? (count > 1 ? `${remarque} (${i + 1}/${count})` : remarque) : undefined
+            }));
             const updated = [
               ...currentPickerProfile.chutesUtiliseesReelles,
-              {
-                id: `hs-${Date.now()}`,
-                longueur: longueurMm,
-                utilisee: true,
-                source: 'HORS_STOCK' as const,
-                repere: `Chute hors-stock (${longueurMm}mm)`,
-                remarque
-              }
+              ...newChutes
             ];
             updateProfil(pickerProfileIdx, { chutesUtiliseesReelles: updated });
           }}

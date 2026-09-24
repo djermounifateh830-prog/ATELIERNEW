@@ -219,6 +219,21 @@ export function sqlitePlugin(): Plugin {
           return sendJson(res, { success: true });
         }
 
+        // --- 5c. ORDRE DES ONGLETS (PERSISTANCE SQLite) ---
+        if (url === '/api/settings/tabs-order' && method === 'GET') {
+          return sendJson(res, { success: true, data: atelierDb.getTabsOrder() });
+        }
+        if (url === '/api/settings/tabs-order' && method === 'POST') {
+          const body = await parseBody(req);
+          const tabsOrder = Array.isArray(body) ? body : body?.tabsOrder;
+          if (Array.isArray(tabsOrder)) {
+            atelierDb.saveTabsOrder(tabsOrder);
+            broadcastEvent({ type: 'tabs_order_updated', target: 'header', tabsOrder });
+            return sendJson(res, { success: true, data: tabsOrder });
+          }
+          return sendJson(res, { error: 'Format tabsOrder invalide' }, 400);
+        }
+
         // --- 6. DOSSIERS ---
         if (url === '/api/dossiers' && method === 'GET') {
           return sendJson(res, { success: true, data: atelierDb.getDossiers() });
@@ -262,12 +277,14 @@ export function sqlitePlugin(): Plugin {
           const body = await parseBody(req);
           atelierDb.saveSuivisOF(Array.isArray(body) ? body : []);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/of' && method === 'PUT') {
           const body = await parseBody(req);
           atelierDb.upsertSuiviOF(body);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           return sendJson(res, { success: true });
         }
         if (url === '/api/of/close' && method === 'POST') {
@@ -277,6 +294,7 @@ export function sqlitePlugin(): Plugin {
           }
           atelierDb.closeOF(body.suivi, body.mouvements);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
@@ -284,6 +302,7 @@ export function sqlitePlugin(): Plugin {
           const id = decodeURIComponent(url.replace('/api/of/', '').replace('/rollback-cloture', ''));
           atelierDb.rollbackClotureOF(id);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
@@ -291,6 +310,7 @@ export function sqlitePlugin(): Plugin {
           const id = decodeURIComponent(url.replace('/api/of/', '').replace('/annuler', ''));
           atelierDb.annulerOF(id);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
           broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
@@ -298,6 +318,8 @@ export function sqlitePlugin(): Plugin {
           const id = decodeURIComponent(url.replace('/api/of/', ''));
           atelierDb.deleteSuiviOF(id);
           broadcastEvent({ type: 'of_updated', target: 'of' });
+          broadcastEvent({ type: 'dossiers_updated', target: 'dossiers' });
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }
 
@@ -312,6 +334,18 @@ export function sqlitePlugin(): Plugin {
           } else {
             atelierDb.addMouvement(body);
           }
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
+          return sendJson(res, { success: true });
+        }
+        if (url === '/api/mouvements' && method === 'PUT') {
+          const body = await parseBody(req);
+          atelierDb.updateMouvement(body);
+          broadcastEvent({ type: 'stock_updated', target: 'stock' });
+          return sendJson(res, { success: true });
+        }
+        if (url.startsWith('/api/mouvements/') && method === 'DELETE') {
+          const id = decodeURIComponent(url.replace('/api/mouvements/', ''));
+          atelierDb.deleteMouvement(id);
           broadcastEvent({ type: 'stock_updated', target: 'stock' });
           return sendJson(res, { success: true });
         }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Zap,
   ClipboardList,
@@ -61,6 +61,7 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
   });
 
   const [ofSearchQuery, setOfSearchQuery] = useState('');
+  const cockpitSearchInputRef = useRef<HTMLInputElement>(null);
 
   // Synchroniser la sélection et le mode si la liste change ou navigation externe
   useEffect(() => {
@@ -91,14 +92,23 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
     } else {
       setSelectedOFId('');
     }
+    // Mettre le focus sur la barre de recherche du cockpit pour localiser un autre OF
+    setTimeout(() => {
+      if (cockpitSearchInputRef.current) {
+        cockpitSearchInputRef.current.focus();
+        cockpitSearchInputRef.current.select();
+      }
+    }, 100);
   };
 
-  // Clôture validée : fermer immédiatement la fenêtre de clôture et retourner au tableau pour autre action
+  // Clôture validée : fermer immédiatement la fenêtre de clôture et retourner au tableau avec curseur sur la barre de recherche
   const handleClotureSuccess = (closedOFId?: string) => {
     localStorage.removeItem('3m_cockpit_selected_of');
+    sessionStorage.setItem('3m_focus_search_of', 'true');
     onRefreshData();
     if (onNavigateToTab) {
       onNavigateToTab('encours');
+      window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
     } else {
       handleCloseOF(closedOFId);
     }
@@ -165,7 +175,11 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
           {onNavigateToTab && (
             <button
               type="button"
-              onClick={() => onNavigateToTab('encours')}
+              onClick={() => {
+                sessionStorage.setItem('3m_focus_search_of', 'true');
+                onNavigateToTab('encours');
+                window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
+              }}
               className="px-3.5 py-2 rounded-2xl bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-xs font-bold flex items-center gap-2 transition cursor-pointer shadow-sm group"
               title="Revenir à la liste des Ordres en Cours"
             >
@@ -324,6 +338,7 @@ export const ClotureCockpitTab: React.FC<ClotureCockpitTabProps> = ({
             <div className="relative mb-3">
               <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
               <input
+                ref={cockpitSearchInputRef}
                 type="text"
                 placeholder="Filtrer OF, client, réf..."
                 value={ofSearchQuery}

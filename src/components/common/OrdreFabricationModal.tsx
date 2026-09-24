@@ -6,7 +6,7 @@ import {
   MappingChutes, ChuteReserveeOF, BarreReserveeOF, ChuteMailleReserveeOF,
   ParametresOptimisationMaille, DossierCommandeGlobal
 } from '../../types';
-import { detecterAgence } from '../../services/codificationService';
+import { detecterAgence, matchReferences } from '../../services/codificationService';
 import { calculerBesoinMaille, optimiserLotMoustiquaires } from '../../services/moteurMoustiquaire';
 import { StorageService } from '../../services/storage';
 import { DelaisProductionService } from '../../services/delaisProductionService';
@@ -537,21 +537,18 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       const familleRecherche = detecterFamilleOF(famille, sections, lignesMoustiquaires, titreProduit, refCommande);
 
       // Recherche du dossier lié pour récupérer la date paramétrée et le statut de pause
-      const cmdRefLower = (refCommande || '').trim().toLowerCase();
       const matchedDossier = (dossierId ? dossiers.find(d => d.id === dossierId) : null) ||
         dossiers.find(d => {
-          const r = (d.refCommande || '').trim().toLowerCase();
-          const c = (d.numCommandeCaisson || '').trim().toLowerCase();
-          const t = (d.numCommandeTablier || '').trim().toLowerCase();
-          const m = (d.numCommandeMoustiquaire || '').trim().toLowerCase();
-          const p = (d.numCommandePrecadre || '').trim().toLowerCase();
-          return (
-            (r && (r === cmdRefLower || cmdRefLower.includes(r))) ||
-            (c && (c === cmdRefLower || cmdRefLower.includes(c))) ||
-            (t && (t === cmdRefLower || cmdRefLower.includes(t))) ||
-            (m && (m === cmdRefLower || cmdRefLower.includes(m))) ||
-            (p && (p === cmdRefLower || cmdRefLower.includes(p)))
-          );
+          const subRefs = [
+            d.refCommande,
+            d.numCommandeCaisson,
+            d.numCommandeSousFace,
+            d.numCommandeTablier,
+            d.numCommandeMoustiquaire,
+            d.numCommandePrecadre,
+            ...(d.commandesConfirmees || [])
+          ].filter(Boolean) as string[];
+          return subRefs.some(sr => matchReferences(sr, refCommande));
         });
 
       setLinkedDossier(matchedDossier || null);
@@ -599,8 +596,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
       const match = ofs.find(o =>
         o.statut !== 'ANNULE' &&
-        (o.numCommande === (refCommande || 'CMD') ||
-         (refCommande && o.numCommande && (o.numCommande.includes(refCommande) || refCommande.includes(o.numCommande)))) &&
+        (
+          (dossierId && o.dossierId === dossierId) ||
+          matchReferences(o.numCommande, refCommande)
+        ) &&
         (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === familleRecherche || o.famille === famille)
       );
 
@@ -1543,8 +1542,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     }, 1000);
   };
 
-  const handleEmettreOF = async () => {
-    if (ofEmis) return;
+  const executerEmissionOuMiseAJour = async (isUpdate: boolean = false) => {
+    if (ofEmis && !isUpdate) return;
     setIsEmitting(true);
 
     const lignesRetour: LigneRetourOF[] = [];
@@ -1714,29 +1713,31 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
     // Récupérer les OFs existants pour vérifier si déjà existant ou déterminer le numéro de séquence
     const ofsExistants: SuiviOF[] = await StorageService.getSuivisOF().catch(() => []);
     const match = ofsExistants.find(o => 
-      o.numCommande === (refCommande || 'CMD') && 
-      (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === validFamille)
+      (matchedOf && o.id === matchedOf.id) ||
+      (dossierId && o.dossierId === dossierId && o.famille === validFamille) ||
+      (matchReferences(o.numCommande, refCommande || 'CMD') && 
+      (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === validFamille))
     );
 
-    let seqNum = match?.numeroEmission || emittedSequence;
+    let seqNum = match?.numeroEmission || matchedOf?.numeroEmission || emittedSequence;
     if (!seqNum) {
       const maxNum = ofsExistants.reduce<number>((m, o) => Math.max(m, o.numeroEmission || 0), 0);
       seqNum = maxNum + 1;
     }
-    const finalCodeOF = match?.codeOF || emittedCode || `OF-${String(seqNum).padStart(3, '0')}`;
+    const finalCodeOF = match?.codeOF || matchedOf?.codeOF || emittedCode || `OF-${String(seqNum).padStart(3, '0')}`;
 
     const suivi: SuiviOF = {
-      id: match?.id || `of-${Date.now()}`,
-      dossierId: dossierId || match?.dossierId,
+      id: match?.id || matchedOf?.id || `of-${Date.now()}`,
+      dossierId: dossierId || match?.dossierId || matchedOf?.dossierId,
       numeroEmission: seqNum,
       codeOF: finalCodeOF,
-      numCommande: refCommande || 'CMD',
-      nomClient: nomClient || 'CLIENT',
-      donneurOrdre: donneurOrdre || '',
+      numCommande: refCommande || match?.numCommande || 'CMD',
+      nomClient: nomClient || match?.nomClient || 'CLIENT',
+      donneurOrdre: donneurOrdre || match?.donneurOrdre || '',
       famille: validFamille,
-      titreSection: titreProduit || 'Fiche de Coupe',
+      titreSection: titreProduit || match?.titreSection || 'Fiche de Coupe',
       statut: 'EMIS',
-      dateEmission: dateStr,
+      dateEmission: match?.dateEmission || dateStr,
       lignesRetour,
       totalBarresNeuvesPrevu: totalBarresNeuvesToutesSections,
       totalChutesUtiliseesPrevu: totalChutesRecycleesToutesSections,
@@ -1744,10 +1745,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       chutesReservees,
       barresReservees,
       chutesMailleReservees,
-      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee,
-      dateLivraisonPrevisionnelleISO: dateLivraisonISO || undefined,
-      estPrioritaire: estPrioritaire,
-      motifPriorite: estPrioritaire ? motifPriorite : undefined
+      dateLivraisonPrevisionnelle: dateLivraisonPrevisionnelleAffichee || match?.dateLivraisonPrevisionnelle,
+      dateLivraisonPrevisionnelleISO: dateLivraisonISO || match?.dateLivraisonPrevisionnelleISO || undefined,
+      estPrioritaire: estPrioritaire ?? match?.estPrioritaire,
+      motifPriorite: (estPrioritaire ? motifPriorite : undefined) ?? match?.motifPriorite
     };
 
     try {
@@ -1799,17 +1800,47 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       if (onOFEmis) {
         onOFEmis();
       }
+
+      if (isUpdate) {
+        alert(`✅ L'OF ${finalCodeOF} a été mis à jour avec succès !\n\n✓ Le nouveau plan de coupe a été enregistré.\n✓ Les anciennes réservations ont été libérées et les nouvelles ont été décomptées du stock disponible.\n✓ À la clôture, l'atelier retrouvera cette version à jour.`);
+      }
     } catch (error: any) {
-      alert(`Impossible d'émettre l'OF : ${error.message}`);
+      alert(`Impossible d'émettre/mettre à jour l'OF : ${error.message}`);
     } finally {
       setIsEmitting(false);
     }
   };
 
+  const handleEmettreOF = async () => {
+    if (ofEmis) return;
+    await executerEmissionOuMiseAJour(false);
+  };
+
+  const handleMettreAJourOF = async () => {
+    const numAff = emittedCode || matchedOf?.codeOF || (emittedSequence ? `OF-${String(emittedSequence).padStart(3, '0')}` : 'cet OF');
+    if (!confirm(
+      `Voulez-vous mettre à jour ${numAff} avec les corrections apportées ?\n\n` +
+      `✓ Les anciennes réservations de barres et de chutes seront libérées.\n` +
+      `✓ Le nouveau plan de coupe et les nouvelles quantités réservées seront enregistrés.\n` +
+      `✓ Le même numéro d'ordre (${numAff}) sera conservé.\n` +
+      `✓ La clôture se fera automatiquement sur cette nouvelle optimisation.`
+    )) {
+      return;
+    }
+    await executerEmissionOuMiseAJour(true);
+  };
+
   /** Annule directement l'émission de l'OF depuis la modale */
   const handleAnnulerEmissionDirecte = async () => {
-    const ofToCancel = matchedOf || allOfsState.find(o => o.statut !== 'ANNULE' && o.numCommande === refCommande);
-    const numAff = ofToCancel?.codeOF || (ofToCancel?.numeroEmission ? `OF-${String(ofToCancel.numeroEmission).padStart(3, '0')}` : (refCommande || 'cet OF'));
+    // 1. Trouver TOUS les OFs actifs correspondant à cette commande / ce dossier
+    const ofsToCancel = allOfsState.filter(o => {
+      if (o.statut === 'ANNULE') return false;
+      if (dossierId && o.dossierId === dossierId) return true;
+      if (matchedOf && o.id === matchedOf.id) return true;
+      return matchReferences(o.numCommande, refCommande);
+    });
+
+    const numAff = matchedOf?.codeOF || (matchedOf?.numeroEmission ? `OF-${String(matchedOf.numeroEmission).padStart(3, '0')}` : (refCommande || 'cet OF'));
     const msg = `Voulez-vous vraiment annuler l'émission de l'OF ${numAff} ?\n\n` +
       `✓ Toutes les réservations de barres et de chutes associées seront libérées.\n` +
       `✓ La commande repassera en attente dans l'Écosystème et l'Historique pour permettre sa modification ou son ré-ajustement.\n` +
@@ -1817,36 +1848,33 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
     if (confirm(msg)) {
       try {
-        if (ofToCancel?.id) {
-          await StorageService.deleteSuiviOF(ofToCancel.id);
+        // Supprimer tous les OFs associés
+        for (const ofItem of ofsToCancel) {
+          await StorageService.deleteSuiviOF(ofItem.id);
         }
 
         // Débloquer également le dossier correspondant dans les dossiers sauvegardés
         try {
           const freshDossiers = await StorageService.getDossiers();
-          const targetRef = (refCommande || '').toLowerCase().trim();
           let modifDossier = false;
 
           const updatedDossiers = freshDossiers.map(d => {
             const isMatch = (dossierId && d.id === dossierId) ||
-              (ofToCancel?.dossierId && d.id === ofToCancel.dossierId) ||
-              (d.refCommande || '').toLowerCase().trim() === targetRef ||
-              (d.numCommandeCaisson || '').toLowerCase().trim() === targetRef ||
-              (d.numCommandeSousFace || '').toLowerCase().trim() === targetRef ||
-              (d.numCommandeTablier || '').toLowerCase().trim() === targetRef ||
-              (d.numCommandeMoustiquaire || '').toLowerCase().trim() === targetRef ||
-              (d.numCommandePrecadre || '').toLowerCase().trim() === targetRef ||
-              (targetRef && (d.refCommande || '').toLowerCase().includes(targetRef));
+              ofsToCancel.some(o => o.dossierId === d.id) ||
+              matchReferences(d.refCommande, refCommande) ||
+              matchReferences(d.numCommandeCaisson, refCommande) ||
+              matchReferences(d.numCommandeSousFace, refCommande) ||
+              matchReferences(d.numCommandeTablier, refCommande) ||
+              matchReferences(d.numCommandeMoustiquaire, refCommande) ||
+              matchReferences(d.numCommandePrecadre, refCommande);
 
             if (isMatch) {
               modifDossier = true;
-              const newConfirmees = (d.commandesConfirmees || []).filter(c => {
-                const cLow = c.toLowerCase().trim();
-                return cLow !== targetRef && !targetRef.includes(cLow);
-              });
+              const currentConf = d.commandesConfirmees || [];
+              const newConfirmees = currentConf.filter(c => !matchReferences(c, refCommande));
               return {
                 ...d,
-                statut: newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut,
+                statut: (newConfirmees.length === 0 && !d.estEnPause && d.statut !== 'EN_PAUSE') ? ('EN_ATTENTE' as const) : d.statut,
                 commandesConfirmees: newConfirmees
               };
             }
@@ -2568,15 +2596,27 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               <span>{ofEmis ? 'OF Émis ✓' : isEmitting ? 'Émission en cours...' : 'Émettre l\'OF'}</span>
             </button>
             {ofEmis && (
-              <button
-                type="button"
-                onClick={handleAnnulerEmissionDirecte}
-                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border-2 border-rose-500 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
-                title="Annuler l'émission de cet OF : libère immédiatement les réservations de barres et chutes et remet la commande en attente pour modification"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                <span>Annuler l'émission</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleMettreAJourOF}
+                  disabled={isEmitting}
+                  className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 border-2 border-black rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
+                  title="Met à jour cet OF avec la nouvelle optimisation : recalcule le plan de coupe, libère les anciennes réservations et enregistre les nouvelles quantités réservées"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
+                  <span>{isEmitting ? 'Mise à jour...' : '🔄 Mettre à jour l\'OF'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAnnulerEmissionDirecte}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border-2 border-rose-500 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
+                  title="Annuler l'émission de cet OF : libère immédiatement les réservations de barres et chutes et remet la commande en attente pour modification"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Annuler l'émission</span>
+                </button>
+              </>
             )}
             <button onClick={onClose} className="p-1.5 text-black hover:bg-slate-200 rounded-lg transition ml-1 cursor-pointer">
               <X className="w-5 h-5" />

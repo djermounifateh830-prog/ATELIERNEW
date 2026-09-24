@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   SuiviOF,
   LigneRetourOF,
@@ -59,7 +59,7 @@ import {
   Pause,
   Play
 } from 'lucide-react';
-import { extraireNumeroSansPrefixe } from '../../services/codificationService';
+import { extraireNumeroSansPrefixe, matchReferences } from '../../services/codificationService';
 
 interface OrdresEnCoursTabProps {
   suivisOF: SuiviOF[];
@@ -87,7 +87,40 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   mapping = {}
 }) => {
   const [recherche, setRecherche] = useState<string>('');
-  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE' | 'EN_PAUSE'>('TOUS');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Fonction pour replacer le curseur automatiquement sur la barre de recherche
+  const focusSearchInput = (clearText = false) => {
+    if (clearText) {
+      setRecherche('');
+    }
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+        searchInputRef.current.select();
+      }
+    }, 100);
+  };
+
+  // Écouteur global pour focaliser la barre de recherche après clôture ou retour au tableau
+  useEffect(() => {
+    const handleFocusEvent = () => {
+      focusSearchInput(true);
+    };
+
+    window.addEventListener('3m-focus-search-of', handleFocusEvent);
+
+    const shouldFocus = sessionStorage.getItem('3m_focus_search_of') === 'true';
+    if (shouldFocus) {
+      sessionStorage.removeItem('3m_focus_search_of');
+      focusSearchInput(true);
+    }
+
+    return () => {
+      window.removeEventListener('3m-focus-search-of', handleFocusEvent);
+    };
+  }, []);
+  const [filtreStatut, setFiltreStatut] = useState<'TOUS' | 'EMIS' | 'RETOUR_EN_ATTENTE' | 'CLOTURE' | 'LIVRE' | 'EN_PAUSE'>('EMIS');
   const [filtreFamille, setFiltreFamille] = useState<string>('TOUTES');
   const [filtreClient, setFiltreClient] = useState<string>('TOUS');
   const [filtrePrioritaireSeulement, setFiltrePrioritaireSeulement] = useState<boolean>(false);
@@ -101,6 +134,26 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   // Modal Fiche de Transfert
   const [isFicheTransfertModalOpen, setIsFicheTransfertModalOpen] = useState<boolean>(false);
   const [selectedFicheToView, setSelectedFicheToView] = useState<FicheTransfert | null>(null);
+  const [selectedOfIdsForTransfer, setSelectedOfIdsForTransfer] = useState<Set<string>>(new Set());
+  const [searchFicheTransfert, setSearchFicheTransfert] = useState<string>('');
+
+  const filteredFichesTransfert = useMemo(() => {
+    if (!searchFicheTransfert.trim()) return fichesTransfert;
+    const q = searchFicheTransfert.trim().toLowerCase();
+    return fichesTransfert.filter(fiche => {
+      const numMatch = (fiche.numeroFiche || '').toLowerCase().includes(q);
+      const clientMatch = (fiche.monClient || '').toLowerCase().includes(q);
+      const chauffeurMatch = (fiche.nomChauffeurPrincipal || '').toLowerCase().includes(q);
+      const dateMatch = (fiche.dateLivraison || '').toLowerCase().includes(q);
+      const matMatch = (fiche.matriculeVehicule || '').toLowerCase().includes(q);
+      const lignesMatch = (fiche.lignes || []).some(l =>
+        (l.numCommande || '').toLowerCase().includes(q) ||
+        (l.clientDeMonClient || '').toLowerCase().includes(q) ||
+        (l.designationDetail || '').toLowerCase().includes(q)
+      );
+      return numMatch || clientMatch || chauffeurMatch || dateMatch || matMatch || lignesMatch;
+    });
+  }, [fichesTransfert, searchFicheTransfert]);
 
   // Actualisation automatique à l'ouverture de l'onglet
   useEffect(() => {
@@ -666,20 +719,34 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   const debloquerDossierApresAnnulation = async (of: SuiviOF) => {
     try {
       const freshDossiers = await StorageService.getDossiers();
-      const rawCmd = (of.numCommande || '').toLowerCase().trim();
-      const tokens = rawCmd.split(/[\s,+/]+/).filter(Boolean);
+      const allOfs = await StorageService.getSuivisOF();
+      const rawCmd = (of.numCommande || '').trim();
       let modifDossier = false;
 
       const updatedDossiers = freshDossiers.map(d => {
-        const isMatch = (of.dossierId && d.id === of.dossierId) || matchCmdInDossier(d, of.numCommande || '');
+        const isMatch = (of.dossierId && d.id === of.dossierId) ||
+          matchReferences(d.refCommande, rawCmd) ||
+          matchReferences(d.numCommandeCaisson, rawCmd) ||
+          matchReferences(d.numCommandeSousFace, rawCmd) ||
+          matchReferences(d.numCommandeTablier, rawCmd) ||
+          matchReferences(d.numCommandeMoustiquaire, rawCmd) ||
+          matchReferences(d.numCommandePrecadre, rawCmd) ||
+          matchCmdInDossier(d, rawCmd);
+
         if (isMatch) {
           modifDossier = true;
-          const newConfirmees = (d.commandesConfirmees || []).filter(c => {
-            const cLow = c.toLowerCase().trim();
-            const matchesOf = cLow === rawCmd || rawCmd.includes(cLow) || tokens.includes(cLow);
-            return !matchesOf;
+          const remainingActiveOfs = allOfs.filter(o => {
+            if (o.id === of.id || o.statut === 'ANNULE') return false;
+            if (o.dossierId && o.dossierId === d.id) return true;
+            return matchReferences(o.numCommande, d.refCommande);
           });
-          const newStatut = newConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut;
+
+          const currentConfirmees = d.commandesConfirmees || [];
+          const newConfirmees = currentConfirmees.filter(c => !matchReferences(c, rawCmd));
+          const newStatut = (remainingActiveOfs.length === 0 && newConfirmees.length === 0 && !d.estEnPause && d.statut !== 'EN_PAUSE')
+            ? ('EN_ATTENTE' as const)
+            : d.statut;
+
           return {
             ...d,
             statut: newStatut,
@@ -908,6 +975,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           <div className="relative flex-1 min-w-[240px]">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-500" />
             <input
+              ref={searchInputRef}
               type="text"
               placeholder="Rechercher par Repère de pièce (ex: CF1, DF2...), N° commande, Client, N° OF..."
               value={recherche}
@@ -1039,12 +1107,73 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         </div>
       )}
 
+      {/* ── Bannière de Sélection Multiple pour Fiche de Transfert ── */}
+      {selectedOfIdsForTransfer.size > 0 && (
+        <div className="bg-amber-500/15 border-2 border-amber-500/50 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Truck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-amber-300">
+                {selectedOfIdsForTransfer.size} Ordre(s) de Fabrication sélectionné(s) pour expédition
+              </div>
+              <div className="text-xs text-slate-400">
+                Générez le bon de livraison et la fiche de transfert groupée pour ces commandes.
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedOfIdsForTransfer(new Set())}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg transition cursor-pointer"
+            >
+              Annuler sélection
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedFicheToView(null);
+                setIsFicheTransfertModalOpen(true);
+              }}
+              className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-lg shadow-md flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+            >
+              <Truck className="w-4 h-4" />
+              <span>Créer Fiche de Transfert ({selectedOfIdsForTransfer.size})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Table Principale des Ordres de Fabrication ── */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
               <tr>
+                <th className="w-10 px-2.5 text-center">
+                  <input
+                    type="checkbox"
+                    checked={
+                      displayedOFs.length > 0 &&
+                      displayedOFs.every(o => selectedOfIdsForTransfer.has(o.id))
+                    }
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        const next = new Set(selectedOfIdsForTransfer);
+                        displayedOFs.forEach(o => next.add(o.id));
+                        setSelectedOfIdsForTransfer(next);
+                      } else {
+                        const next = new Set(selectedOfIdsForTransfer);
+                        displayedOFs.forEach(o => next.delete(o.id));
+                        setSelectedOfIdsForTransfer(next);
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 cursor-pointer"
+                    title="Tout cocher / Tout décocher pour expédition"
+                  />
+                </th>
                 {columnConfigService.isColumnVisible('of_encours', 'id_of') && (
                   <SortHeader col="numeroEmission" label="Ordre" className="w-24 text-center px-2" />
                 )}
@@ -1077,7 +1206,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <tbody className="divide-y divide-slate-800/70">
               {filteredAndSortedOFs.length === 0 ? (
                 <tr>
-                  <td colSpan={columnConfigService.getVisibleColumns('of_encours').length || 9} className="py-12 text-center text-slate-500 font-sans italic text-sm">
+                  <td colSpan={(columnConfigService.getVisibleColumns('of_encours').length || 9) + 1} className="py-12 text-center text-slate-500 font-sans italic text-sm">
                     <ClipboardCheck className="w-12 h-12 mx-auto mb-3 opacity-25 text-blue-400" />
                     <p className="font-bold text-slate-400">Aucun Ordre de Fabrication correspondant</p>
                     <p className="text-xs text-slate-500 mt-1">
@@ -1088,6 +1217,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
               ) : (
                 displayedOFs.map(of => {
                   const isPause = of.statut === 'EN_PAUSE' || Boolean(of.estEnPause);
+                  const isAnnule = of.statut === 'ANNULE';
                   const isEmis = (of.statut === 'EMIS') && !isPause;
                   const isAttente = of.statut === 'RETOUR_EN_ATTENTE';
                   const isCloture = of.statut === 'CLOTURE';
@@ -1114,6 +1244,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                       className={`hover:bg-slate-800/40 transition ${
                         isPause
                           ? 'bg-rose-950/20'
+                          : isAnnule
+                          ? 'bg-slate-950/50 opacity-60'
                           : isEmis
                           ? 'bg-slate-900/40'
                           : isAttente
@@ -1123,6 +1255,24 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           : 'bg-slate-900/20'
                       }`}
                     >
+                      {/* Checkbox Sélection Expédition / Fiche de Transfert */}
+                      <td className="w-10 px-2.5 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedOfIdsForTransfer.has(of.id)}
+                          onChange={(e) => {
+                            const next = new Set(selectedOfIdsForTransfer);
+                            if (e.target.checked) {
+                              next.add(of.id);
+                            } else {
+                              next.delete(of.id);
+                            }
+                            setSelectedOfIdsForTransfer(next);
+                          }}
+                          className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 cursor-pointer"
+                          title="Cocher pour inclure dans la Fiche de Transfert"
+                        />
+                      </td>
                       {/* N° Ordre / Séquence d'Émission Atelier */}
                       {columnConfigService.isColumnVisible('of_encours', 'id_of') && (
                         <td className="py-2.5 px-2 text-center">
@@ -1299,6 +1449,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
                             isPause
                               ? 'bg-rose-950 text-rose-300 border-rose-700/80 shadow-xs'
+                              : isAnnule
+                              ? 'bg-slate-800 text-slate-400 border-slate-600 shadow-xs'
                               : isEmis
                               ? 'bg-blue-950 text-blue-300 border-blue-700/60'
                               : isAttente
@@ -1308,12 +1460,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                               : 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
                           }`}>
                             {isPause && <PauseCircle className="w-3 h-3 text-rose-400" />}
+                            {isAnnule && <RotateCcw className="w-3 h-3 text-slate-400" />}
                             {isEmis && <Clock className="w-3 h-3" />}
                             {isAttente && <AlertCircle className="w-3 h-3" />}
                             {isCloture && <CheckCircle2 className="w-3 h-3" />}
                             {isLivre && <Truck className="w-3 h-3 text-teal-400" />}
                             <span>
-                              {isPause ? 'En Pause' : isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
+                              {isPause ? 'En Pause' : isAnnule ? 'Annulé' : isEmis ? 'Émis' : isAttente ? 'Retour Reçu' : isLivre ? 'Livré' : 'Clôturé'}
                             </span>
                           </span>
                         </td>
@@ -1420,6 +1573,21 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
                             {(isCloture || isLivre) && (
                               <>
+                                {isCloture && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedFicheToView(null);
+                                      setSelectedOfIdsForTransfer(new Set([of.id]));
+                                      setIsFicheTransfertModalOpen(true);
+                                    }}
+                                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-md text-[11px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                                    title="Transférer cet ordre : créer un bon de livraison / fiche de transfert"
+                                  >
+                                    <Truck className="w-3 h-3 text-amber-400" />
+                                    <span>Transférer</span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1612,6 +1780,11 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                 <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold">
                   {fichesTransfert.length} fiche(s)
                 </span>
+                {searchFicheTransfert && (
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 text-xs font-mono">
+                    {filteredFichesTransfert.length} trouvée(s)
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-400">
                 Historique des bordereaux officiels remis aux transporteurs avec visas et commandes clôturées.
@@ -1619,16 +1792,39 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              setSelectedFicheToView(null);
-              setIsFicheTransfertModalOpen(true);
-            }}
-            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-xl flex items-center gap-1.5 transition shadow cursor-pointer"
-          >
-            <Truck className="w-4 h-4" />
-            <span>Nouvelle Fiche de Transfert</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Recherche rapide dans l'historique des fiches de transfert */}
+            <div className="relative min-w-[240px] sm:min-w-[280px]">
+              <input
+                type="text"
+                value={searchFicheTransfert}
+                onChange={e => setSearchFicheTransfert(e.target.value)}
+                placeholder="Rechercher fiche, client, chauffeur, cmd..."
+                className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 font-mono focus:outline-none"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+              {searchFicheTransfert && (
+                <button
+                  type="button"
+                  onClick={() => setSearchFicheTransfert('')}
+                  className="absolute right-2 top-2 text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                setSelectedFicheToView(null);
+                setIsFicheTransfertModalOpen(true);
+              }}
+              className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 text-xs font-black rounded-xl flex items-center gap-1.5 transition shadow cursor-pointer"
+            >
+              <Truck className="w-4 h-4" />
+              <span>Nouvelle Fiche de Transfert</span>
+            </button>
+          </div>
         </div>
 
         {fichesTransfert.length === 0 ? (
@@ -1638,6 +1834,17 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
             <p className="text-slate-500 mt-0.5">
               Cliquez sur "Créer Fiche de Transfert" dès que le transporteur de votre client se présente à l'atelier.
             </p>
+          </div>
+        ) : filteredFichesTransfert.length === 0 ? (
+          <div className="py-8 text-center text-slate-500 text-xs space-y-2">
+            <p className="font-bold text-slate-400">Aucune fiche ne correspond à votre recherche "{searchFicheTransfert}"</p>
+            <button
+              type="button"
+              onClick={() => setSearchFicheTransfert('')}
+              className="text-amber-400 hover:underline font-semibold cursor-pointer"
+            >
+              Effacer la recherche
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1654,7 +1861,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70">
-                {fichesTransfert.map(fiche => {
+                {filteredFichesTransfert.map(fiche => {
                   const totalPieces = (fiche.lignes || []).reduce((s, l) => s + (l.quantiteArticles || 1), 0);
                   return (
                     <tr key={fiche.id} className="hover:bg-slate-800/40 transition">
@@ -1729,11 +1936,13 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           onClose={() => {
             setIsRetourModalOpen(false);
             setSelectedSuiviForRetour(null);
+            focusSearchInput(false);
           }}
           onCloture={() => {
             onRefreshData();
             setIsRetourModalOpen(false);
             setSelectedSuiviForRetour(null);
+            focusSearchInput(true);
           }}
         />
       )}
@@ -1764,7 +1973,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                 </div>
               </div>
               <button
-                onClick={() => setSelectedSuiviForDetails(null)}
+                onClick={() => {
+                  setSelectedSuiviForDetails(null);
+                  focusSearchInput(false);
+                }}
                 className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1853,7 +2065,10 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
 
             <div className="p-4 border-t border-slate-800 bg-slate-950 flex justify-end">
               <button
-                onClick={() => setSelectedSuiviForDetails(null)}
+                onClick={() => {
+                  setSelectedSuiviForDetails(null);
+                  focusSearchInput(false);
+                }}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg cursor-pointer"
               >
                 Fermer
@@ -1993,12 +2208,15 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         onClose={() => {
           setIsFicheTransfertModalOpen(false);
           setSelectedFicheToView(null);
+          setSelectedOfIdsForTransfer(new Set());
         }}
         dossiers={dossiers}
         suivisOF={suivisOF}
+        fichesTransfert={fichesTransfert}
         clientCodifications={clientCodifications}
         onSaved={onRefreshData}
         ficheToView={selectedFicheToView}
+        initialSelectedOfIds={Array.from(selectedOfIdsForTransfer)}
       />
 
       {/* ── Modal Modification Date de Livraison & Priorité ── */}

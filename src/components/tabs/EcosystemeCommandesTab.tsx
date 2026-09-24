@@ -24,7 +24,8 @@ import {
   genererRepereCaissonSousFace,
   getPrefixeCommande,
   extraireNumeroSansPrefixe,
-  formaterRefCommandeAvecPrefixe
+  formaterRefCommandeAvecPrefixe,
+  matchReferences
 } from '../../services/codificationService';
 import { INITIAL_CLIENT_CODIFICATIONS } from '../../data/initialCodifications';
 import { StorageService } from '../../services/storage';
@@ -241,24 +242,50 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   const clientSuggestionsRef = useRef<HTMLDivElement>(null);
 
   // Historique unifié (Dossiers SQLite + Mémoire incrémentale persistée dans localStorage)
+  // Garantit que le DERNIER donneur d'ordre ("Mon Client") enregistré est fidèlement retenu
   const clientsHistoriqueComplet = useMemo(() => {
-    const map = new Map<string, { nom: string; donneurOrdre: string; derniereDate: string; nb: number }>();
+    const map = new Map<string, {
+      nom: string;
+      donneurOrdre: string;
+      derniereDate: string;
+      dernierTimestamp: number;
+      nb: number;
+    }>();
 
-    // 1. Depuis les dossiers existants dans SQLite
-    (dossiers || []).forEach(d => {
+    // 1. Depuis les dossiers existants dans SQLite (parcours ordonné du plus récent au plus ancien)
+    (dossiers || []).forEach((d, idx) => {
       const nom = (d.nomClientFinal || '').trim();
       if (!nom) return;
       const key = nom.toUpperCase();
+      const rawDate = (d.dateCommande || '').trim();
+      let time = 0;
+      if (rawDate) {
+        try {
+          const parsed = DelaisProductionService.parseDateString(rawDate);
+          if (parsed && !isNaN(parsed.getTime())) time = parsed.getTime();
+        } catch {}
+      }
+      // Dans l'app, les dossiers les plus récents sont en tête de liste (index 0, 1...)
+      const scoreRecence = time > 0 ? time : Math.max(1, 10000000 - idx);
+      const donneur = (d.donneurOrdre || '').trim();
+
       const existing = map.get(key);
       if (existing) {
         existing.nb += 1;
-        if (d.dateCommande) existing.derniereDate = d.dateCommande;
-        if (!existing.donneurOrdre && d.donneurOrdre) existing.donneurOrdre = d.donneurOrdre;
+        // Mettre à jour avec le dernier donneur d'ordre si plus récent
+        if (donneur) {
+          if (!existing.donneurOrdre || scoreRecence > existing.dernierTimestamp) {
+            existing.donneurOrdre = donneur;
+            existing.derniereDate = rawDate || existing.derniereDate;
+            existing.dernierTimestamp = scoreRecence;
+          }
+        }
       } else {
         map.set(key, {
           nom: nom,
-          donneurOrdre: d.donneurOrdre || '',
-          derniereDate: d.dateCommande || '',
+          donneurOrdre: donneur,
+          derniereDate: rawDate,
+          dernierTimestamp: scoreRecence,
           nb: 1
         });
       }
@@ -274,15 +301,25 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
             const nom = (item.nom || '').trim();
             if (!nom) return;
             const key = nom.toUpperCase();
+            const donneur = (item.donneurOrdre || '').trim();
+            const ts = Number(item.timestamp) || 0;
             const existing = map.get(key);
+
             if (existing) {
               existing.nb = Math.max(existing.nb, item.nb || 1);
-              if (item.donneurOrdre && !existing.donneurOrdre) existing.donneurOrdre = item.donneurOrdre;
+              if (donneur) {
+                if (!existing.donneurOrdre || (ts > 0 && ts > existing.dernierTimestamp)) {
+                  existing.donneurOrdre = donneur;
+                  existing.dernierTimestamp = Math.max(existing.dernierTimestamp, ts);
+                  if (item.derniereDate) existing.derniereDate = item.derniereDate;
+                }
+              }
             } else {
               map.set(key, {
                 nom: nom,
-                donneurOrdre: item.donneurOrdre || '',
+                donneurOrdre: donneur,
                 derniereDate: item.derniereDate || '',
+                dernierTimestamp: ts,
                 nb: item.nb || 1
               });
             }
@@ -291,7 +328,12 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
       }
     } catch (e) {}
 
-    return Array.from(map.values()).sort((a, b) => b.nb - a.nb || a.nom.localeCompare(b.nom));
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.dernierTimestamp !== a.dernierTimestamp) {
+        return b.dernierTimestamp - a.dernierTimestamp;
+      }
+      return b.nb - a.nb || a.nom.localeCompare(b.nom);
+    });
   }, [dossiers]);
 
   // Sécurité anti-perte absolue : Donneurs d'ordre trouvés dans les dossiers existants mais pas encore codifiés
@@ -307,16 +349,57 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
     return Array.from(nonCodifies).sort();
   }, [dossiers, clientCodifications]);
 
-  // Filtrer les suggestions selon la saisie en cours (ne pas afficher tant que l'utilisateur n'a pas commencé à saisir)
+  // Filtrer les suggestions selon la saisie en cours (ou afficher les plus récents si l'utilisateur ouvre la liste)
   const suggestionsClientsFiltrees = useMemo(() => {
     const q = clientDeMonClient.trim().toLowerCase();
     if (!q) {
-      return []; // N'affiche rien avant le début de la saisie
+      return clientsHistoriqueComplet.slice(0, 15);
     }
     return clientsHistoriqueComplet
       .filter(c => c.nom.toLowerCase().includes(q))
-      .slice(0, 12);
+      .slice(0, 15);
   }, [clientsHistoriqueComplet, clientDeMonClient]);
+
+  // Recherche précise du DERNIER donneur d'ordre ("Mon Client") associé à un client ou chantier
+  const trouverDernierDonneurOrdrePourClient = useCallback((nomClient: string): string => {
+    const propre = (nomClient || '').trim().toUpperCase();
+    if (!propre) return '';
+
+    // 1. Chercher dans les dossiers du plus récent au plus ancien
+    const dossiersClient = (dossiers || []).filter(d => 
+      (d.nomClientFinal || '').trim().toUpperCase() === propre && (d.donneurOrdre || '').trim() !== ''
+    );
+
+    if (dossiersClient.length > 0) {
+      const sorted = [...dossiersClient].sort((a, b) => {
+        const timeA = a.dateCommande ? (DelaisProductionService.parseDateString(a.dateCommande)?.getTime() || 0) : 0;
+        const timeB = b.dateCommande ? (DelaisProductionService.parseDateString(b.dateCommande)?.getTime() || 0) : 0;
+        if (timeA !== timeB) return timeB - timeA;
+        return (dossiers.indexOf(a) - dossiers.indexOf(b));
+      });
+      if (sorted[0]?.donneurOrdre) {
+        return sorted[0].donneurOrdre.trim();
+      }
+    }
+
+    // 2. Chercher dans la mémoire incrémentale
+    try {
+      const raw = localStorage.getItem('3m_clients_finaux_incremental');
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const item = list.find((i: any) => (i.nom || '').trim().toUpperCase() === propre && (i.donneurOrdre || '').trim() !== '');
+          if (item?.donneurOrdre) return item.donneurOrdre.trim();
+        }
+      }
+    } catch {}
+
+    // 3. Chercher dans clientsHistoriqueComplet
+    const hist = clientsHistoriqueComplet.find(c => c.nom.trim().toUpperCase() === propre);
+    if (hist?.donneurOrdre) return hist.donneurOrdre.trim();
+
+    return '';
+  }, [dossiers, clientsHistoriqueComplet]);
 
   // Enregistrer le client dans la mémoire incrémentale persistante
   const enregistrerClientDansHistoriqueIncremental = useCallback((nomClient: string, donneur: string) => {
@@ -330,15 +413,19 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
       }
       if (!Array.isArray(list)) list = [];
       const index = list.findIndex(i => (i.nom || '').toUpperCase().trim() === propre.toUpperCase());
+      const now = Date.now();
+      const todayStr = getTodayDateString();
       if (index >= 0) {
         list[index].nb = (list[index].nb || 1) + 1;
-        list[index].derniereDate = getTodayDateString();
-        if (donneur) list[index].donneurOrdre = donneur;
+        list[index].derniereDate = todayStr;
+        list[index].timestamp = now;
+        if (donneur && donneur.trim()) list[index].donneurOrdre = donneur.trim();
       } else {
         list.push({
           nom: propre,
-          donneurOrdre: donneur || '',
-          derniereDate: getTodayDateString(),
+          donneurOrdre: (donneur || '').trim(),
+          derniereDate: todayStr,
+          timestamp: now,
           nb: 1
         });
       }
@@ -346,12 +433,32 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
     } catch (e) {}
   }, []);
 
-  const handleSelectClientSuggestion = (suggestion: { nom: string; donneurOrdre: string }) => {
-    setClientDeMonClient(suggestion.nom);
-    setShowClientSuggestions(false);
-    if ((!monClient || !monClient.trim()) && suggestion.donneurOrdre) {
-      handleMonClientChange(suggestion.donneurOrdre);
+  // Applique automatiquement le dernier "Mon Client" associé à un client final
+  const appliquerDernierMonClientPourClientFinal = useCallback((nomClient: string) => {
+    const propre = (nomClient || '').trim();
+    if (!propre) return;
+    const dernierDonneur = trouverDernierDonneurOrdrePourClient(propre);
+    if (dernierDonneur && dernierDonneur !== monClient) {
+      handleMonClientChange(dernierDonneur);
+      showFlashNotification(`✓ Client "${propre}" : Agence "${dernierDonneur}" assignée automatiquement !`, 'success');
     }
+  }, [trouverDernierDonneurOrdrePourClient, monClient]);
+
+  // Sélection d'un client dans la liste des suggestions
+  const handleSelectClientSuggestion = (suggestion: { nom: string; donneurOrdre?: string }) => {
+    const nomChoisi = (suggestion.nom || '').trim();
+    setClientDeMonClient(nomChoisi);
+    setShowClientSuggestions(false);
+
+    // Détermination et application automatique du dernier donneur d'ordre enregistré
+    const dernierDonneur = (suggestion.donneurOrdre || '').trim() || trouverDernierDonneurOrdrePourClient(nomChoisi);
+    if (dernierDonneur) {
+      handleMonClientChange(dernierDonneur);
+      showFlashNotification(`✓ Client "${nomChoisi}" sélectionné ➔ Agence "${dernierDonneur}" assignée automatiquement !`, 'success');
+    }
+
+    enregistrerClientDansHistoriqueIncremental(nomChoisi, dernierDonneur || monClient);
+    inputNumCmdRef.current?.focus();
   };
 
   // ID du dossier en cours d'édition (null si nouveau dossier)
@@ -1673,6 +1780,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     const getOrCreate = (refRaw?: string) => {
       const ref = (refRaw || 'CMD').trim();
       if (!map.has(ref)) {
+        const isConfirmed = Array.from(commandesConfirmeesSet).some(c => matchReferences(c, ref)) ||
+          (suivisOF || []).some(o => {
+            if (o.statut === 'ANNULE') return false;
+            if (editingDossierId && o.dossierId === editingDossierId) {
+              return matchReferences(o.numCommande, ref);
+            }
+            return matchReferences(o.numCommande, ref);
+          });
+
         map.set(ref, {
           ref,
           caissons: 0,
@@ -1681,7 +1797,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           mstq: 0,
           precadres: 0,
           total: 0,
-          estConfirmee: commandesConfirmeesSet.has(ref)
+          estConfirmee: isConfirmed
         });
       }
       return map.get(ref)!;
@@ -4733,10 +4849,19 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         // MISE À JOUR D'UN DOSSIER EXISTANT DANS SQLITE
         const updatedDossiers: DossierCommandeGlobal[] = dossiers.map(d => {
           if (d.id === editingDossierId) {
+            const subRefs = [refPrincipal, numCommandeCaisson, numCommandeSousFace, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre].filter(Boolean);
+            const hasActiveOf = (suivisOF || []).some(o => {
+              if (o.statut === 'ANNULE') return false;
+              if (o.dossierId && o.dossierId === d.id) return true;
+              return subRefs.some(sr => matchReferences(sr, o.numCommande));
+            });
+            const hasConfirmees = (d.commandesConfirmees || []).length > 0;
             const statutPreserve: StatutDossier = estEnPause
               ? 'EN_PAUSE'
-              : (d.statut === 'EN_COURS' || d.statut === 'FABRIQUE' || d.statut === 'CLOTURE' || d.statut === 'LIVRE')
+              : (d.statut === 'FABRIQUE' || d.statut === 'CLOTURE' || d.statut === 'LIVRE')
               ? d.statut
+              : (hasActiveOf || hasConfirmees)
+              ? 'EN_COURS'
               : statutCible;
             return {
               ...d,
@@ -4891,8 +5016,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const ofs = await StorageService.getSuivisOF();
       const cleanRefLower = refNettoyee.toLowerCase();
       const matchingOfs = ofs.filter(o => {
-        const oCmd = (o.numCommande || '').toLowerCase().trim();
-        return oCmd && (oCmd === cleanRefLower || oCmd.includes(cleanRefLower) || cleanRefLower.includes(oCmd));
+        if (o.statut === 'ANNULE') return false;
+        if (editingDossierId && o.dossierId === editingDossierId) {
+          return matchReferences(o.numCommande, refNettoyee) || (o.numCommande || '').toLowerCase().includes(cleanRefLower);
+        }
+        return matchReferences(o.numCommande, refNettoyee);
       });
 
       for (const ofItem of matchingOfs) {
@@ -4904,21 +5032,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       const targetId = editingDossierId;
       const updatedDossiers = freshDossiers.map(d => {
         const matchesThisDossier = (targetId && d.id === targetId) ||
-          (d.refCommande || '').trim() === refNettoyee ||
-          (d.numCommandeCaisson || '').trim() === refNettoyee ||
-          (d.numCommandeTablier || '').trim() === refNettoyee ||
-          (d.numCommandeMoustiquaire || '').trim() === refNettoyee ||
-          (d.numCommandePrecadre || '').trim() === refNettoyee;
+          matchingOfs.some(o => o.dossierId === d.id) ||
+          matchReferences(d.refCommande, refNettoyee) ||
+          matchReferences(d.numCommandeCaisson, refNettoyee) ||
+          matchReferences(d.numCommandeSousFace, refNettoyee) ||
+          matchReferences(d.numCommandeTablier, refNettoyee) ||
+          matchReferences(d.numCommandeMoustiquaire, refNettoyee) ||
+          matchReferences(d.numCommandePrecadre, refNettoyee);
 
         if (matchesThisDossier) {
           const currentConfirmees = d.commandesConfirmees || [];
-          const nextConfirmees = currentConfirmees.filter(c => {
-            const cLow = c.toLowerCase().trim();
-            return cLow !== cleanRefLower && !cleanRefLower.includes(cLow);
-          });
+          const nextConfirmees = currentConfirmees.filter(c => !matchReferences(c, refNettoyee));
           return {
             ...d,
-            statut: nextConfirmees.length === 0 && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut,
+            statut: nextConfirmees.length === 0 && !d.estEnPause && d.statut !== 'EN_PAUSE' ? ('EN_ATTENTE' as const) : d.statut,
             commandesConfirmees: nextConfirmees
           };
         }
@@ -5194,22 +5321,32 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 type="text"
                 value={clientDeMonClient}
                 onFocus={() => {
-                  if (clientDeMonClient.trim().length > 0) {
-                    setShowClientSuggestions(true);
-                  }
+                  setShowClientSuggestions(true);
+                }}
+                onBlur={() => {
+                  setTimeout(() => {
+                    setShowClientSuggestions(false);
+                    if (clientDeMonClient.trim().length > 0) {
+                      appliquerDernierMonClientPourClientFinal(clientDeMonClient);
+                    }
+                  }, 250);
                 }}
                 onChange={e => {
-                  setClientDeMonClient(e.target.value);
-                  if (e.target.value.trim().length > 0) {
-                    setShowClientSuggestions(true);
-                  } else {
-                    setShowClientSuggestions(false);
+                  const val = e.target.value;
+                  setClientDeMonClient(val);
+                  setShowClientSuggestions(true);
+                  if (val.trim().length >= 2) {
+                    const matchExact = clientsHistoriqueComplet.find(c => c.nom.toUpperCase() === val.trim().toUpperCase());
+                    if (matchExact && matchExact.donneurOrdre && matchExact.donneurOrdre !== monClient) {
+                      handleMonClientChange(matchExact.donneurOrdre);
+                    }
                   }
                 }}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
                     setShowClientSuggestions(false);
+                    appliquerDernierMonClientPourClientFinal(clientDeMonClient);
                     enregistrerClientDansHistoriqueIncremental(clientDeMonClient, monClient);
                     inputNumCmdRef.current?.focus();
                   } else if (e.key === 'Escape') {
@@ -5224,20 +5361,25 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 }`}
               />
 
-              {/* Dropdown interactif d'auto-complétion incrémentale */}
+              {/* Dropdown interactif d'auto-complétion incrémentale avec rappel immédiat du dernier Mon Client */}
               {showClientSuggestions && suggestionsClientsFiltrees.length > 0 && (
                 <div
                   ref={clientSuggestionsRef}
-                  className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 max-h-60 overflow-y-auto space-y-1"
+                  className="absolute left-0 right-0 top-full mt-1.5 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 max-h-64 overflow-y-auto space-y-1 animate-fade-in"
                 >
                   <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between border-b border-slate-800">
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 text-emerald-400">
                       <Sparkles className="w-3 h-3 text-amber-400" />
-                      Clients correspondants ({suggestionsClientsFiltrees.length})
+                      {!clientDeMonClient.trim()
+                        ? `Derniers clients enregistrés (${suggestionsClientsFiltrees.length})`
+                        : `Clients correspondants (${suggestionsClientsFiltrees.length})`}
                     </span>
                     <button
                       type="button"
-                      onClick={() => setShowClientSuggestions(false)}
+                      onMouseDown={e => {
+                        e.preventDefault();
+                        setShowClientSuggestions(false);
+                      }}
                       className="text-slate-500 hover:text-slate-300 cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -5247,8 +5389,11 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                     <button
                       key={idx}
                       type="button"
-                      onClick={() => handleSelectClientSuggestion(sug)}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800/90 text-xs text-slate-200 flex items-center justify-between gap-2 transition cursor-pointer group"
+                      onMouseDown={e => {
+                        e.preventDefault();
+                        handleSelectClientSuggestion(sug);
+                      }}
+                      className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-slate-800/90 text-xs text-slate-200 flex items-center justify-between gap-2 transition cursor-pointer group"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -5257,10 +5402,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         </span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
-                        {sug.donneurOrdre && (
-                          <span className="px-1.5 py-0.5 rounded bg-sky-950/70 text-sky-300 border border-sky-500/30 font-medium">
-                            {sug.donneurOrdre}
+                        {sug.donneurOrdre ? (
+                          <span
+                            className="px-2 py-0.5 rounded-md bg-sky-950/90 text-sky-300 border border-sky-500/40 font-bold flex items-center gap-1 group-hover:border-sky-400 transition"
+                            title={`Dernier Donneur d'Ordre ("Mon Client") : ${sug.donneurOrdre}`}
+                          >
+                            <Building2 className="w-3 h-3 text-sky-400" />
+                            <span>{sug.donneurOrdre}</span>
                           </span>
+                        ) : (
+                          <span className="text-slate-500 italic text-[10px]">Sans agence</span>
                         )}
                         <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
                           {sug.nb} cmd{sug.nb > 1 ? 's' : ''}
@@ -9579,6 +9730,16 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           >
                             <FileText className="w-3.5 h-3.5 text-emerald-200" />
                             <span>🖨️ Ouvrir / Ré-imprimer OF</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOptimiserMultiFamillesDossier(cmd.ref)}
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
+                            title={`Mettre à jour l'OF suite à une correction de lignes : ré-optimise et permet de synchroniser immédiatement les réservations de barres et chutes`}
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
+                            <span>🔄 Mettre à jour l'OF</span>
                           </button>
 
                           <button

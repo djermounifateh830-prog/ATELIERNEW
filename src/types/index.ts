@@ -280,6 +280,8 @@ export interface DossierCommandeGlobal {
   typePriorite?: TypePrioriteCommande; // 'NORMAL' | 'INSTANTANE' (immédiate en tête) | 'DIFFERE' (planifié)
   motifPriorite?: string;    // Motif de la priorité (ex: "Chantier urgent", "VIP", etc.)
   nomChauffeur?: string;     // Nom du chauffeur transporteur
+  matriculeVehicule?: string; // Immatriculation du véhicule transporteur
+  telephoneChauffeur?: string; // Téléphone du chauffeur transporteur
   estEnPause?: boolean;      // Commande suspendue temporairement (ex: rupture matière, attente client)
   motifPause?: string;       // Motif de la pause (ex: "Rupture de stock CT SOMO 30 BL")
   datePause?: string;        // Date de mise en pause
@@ -547,7 +549,8 @@ export type TypeMouvement =
   | 'SORTIE_CHUTE'             // Chute consommée
   | 'ENTREE_CHUTE'             // Nouvelle chute créée / stockée après coupe
   | 'AJUSTEMENT_CHUTE'         // Dimension chute modifiée (abîmée → débitage)
-  | 'AJUSTEMENT_INVENTAIRE';   // Correction manuelle stock
+  | 'AJUSTEMENT_INVENTAIRE'    // Correction manuelle stock
+  | 'ANNULATION_MOUVEMENT';    // Annulation de mouvement de stock
 
 export interface MouvementStock {
   id: string;
@@ -562,6 +565,12 @@ export interface MouvementStock {
   quantite?: number;     // Pour barres neuves
   remarque?: string;
   chuteId?: string;      // ID physique de la chute découpée ou restituée
+  numBL?: string;        // N° de Bon de Livraison
+  fournisseur?: string;  // Nom du fournisseur
+  prixUnitaire?: number; // Prix unitaire
+  isAnnule?: boolean;    // Indique si le mouvement a été annulé
+  dateAnnulation?: string;
+  motifAnnulation?: string;
 }
 
 // ============================================================================

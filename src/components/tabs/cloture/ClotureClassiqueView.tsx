@@ -57,6 +57,8 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
 
   const handleFermerOF = () => {
     setShowConfirmModal(false);
+    sessionStorage.setItem('3m_focus_search_of', 'true');
+    window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
     if (onClotureSuccess) {
       onClotureSuccess();
     } else if (onCloseOF) {
@@ -588,6 +590,8 @@ export const ClotureClassiqueView: React.FC<ClotureClassiqueViewProps> = ({
             <button
               type="button"
               onClick={() => {
+                sessionStorage.setItem('3m_focus_search_of', 'true');
+                window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
                 if (onNavigateToTab) onNavigateToTab('encours');
                 else if (onCloseOF) onCloseOF();
               }}

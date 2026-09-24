@@ -437,7 +437,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>📊 Graphiques &amp; Cadences (Recharts)</span>
+              <span>📊 Graphiques : Charge, Taux de Réponse &amp; Rendement</span>
             </button>
 
             <button
@@ -529,7 +529,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
       {/* ========================================================================= */}
       {modeVue === 'FAMILLES' && (
         <div className="space-y-4 animate-in fade-in duration-200">
-          {/* Bannière d'accès direct aux graphiques Recharts */}
+          {/* Bannière d'accès direct aux graphiques */}
           <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/40 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
@@ -537,10 +537,10 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
               </div>
               <div>
                 <h4 className="text-xs font-bold text-slate-200">
-                  Visualisation Graphique Interactive des Cadences &amp; Rendement Matière (Recharts)
+                  Graphiques du Monitoring : Charge par Famille, Taux de Réponse &amp; Rendement Matière
                 </h4>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Capacités journalières vs charge réelle, projection sur 6 jours et taux d'utilisation de l'aluminium.
+                  Visualisation interactive des volumes en usinage, ponctualité de livraison (SLA) et rendement de découpe par famille.
                 </p>
               </div>
             </div>
@@ -549,7 +549,7 @@ export const MonitoringAtelierTab: React.FC<MonitoringAtelierTabProps> = ({
               className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/10"
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>Ouvrir les Graphiques Recharts</span>
+              <span>Ouvrir les Graphiques (Charge, Réponse, Rendement)</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>

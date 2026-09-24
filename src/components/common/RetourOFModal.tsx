@@ -101,10 +101,17 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
 
   const [editingNonInventorieIdx, setEditingNonInventorieIdx] = useState<number | null>(null);
   const [nonInventorieTempLg, setNonInventorieTempLg] = useState<string>('');
+  const [nonInventorieTempQte, setNonInventorieTempQte] = useState<number>(1);
+
+  // Modal d'ajout rapide de chute (avec quantité multiple)
+  const [isAddChuteModalOpen, setIsAddChuteModalOpen] = useState<boolean>(false);
+  const [addChuteTempLg, setAddChuteTempLg] = useState<string>('1500');
+  const [addChuteTempQte, setAddChuteTempQte] = useState<number>(1);
+  const [addChuteIsHorsStock, setAddChuteIsHorsStock] = useState<boolean>(true);
 
   // Gestion du remplacement d'une chute par plusieurs chutes plus petites (scission de support)
   const [splittingSupportIdx, setSplittingSupportIdx] = useState<number | null>(null);
-  const [splitSupportConfigs, setSplitSupportConfigs] = useState<Array<{ id: string; longueur: number; source: 'AUTRE_CHUTE' | 'CHUTE_NON_INVENTORIEE' }>>([]);
+  const [splitSupportConfigs, setSplitSupportConfigs] = useState<Array<{ id: string; longueur: number; quantite?: number; source: 'AUTRE_CHUTE' | 'CHUTE_NON_INVENTORIEE' }>>([]);
 
   if (!isOpen) return null;
 
@@ -261,23 +268,54 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     });
   };
 
-  // Déclarer une substitution par une chute NON INVENTORIÉE
-  const setSubstitutionChuteNonInventoriee = (idx: number, longueurChute: number) => {
+  // Déclarer une substitution par une chute NON INVENTORIÉE (avec support multi-quantité)
+  const setSubstitutionChuteNonInventoriee = (idx: number, longueurChute: number, quantite: number = 1) => {
     const l = lignes[idx];
-    const longueurPieces = getEstimationPiecesLg(l);
-    const estimatedReste = Math.max(0, longueurChute - longueurPieces);
     const article = articles.find(a => a.code_art === l.articleCode);
-    const refusMin = article?.refus_min ?? 300;
     const refusMax = article?.refus_max ?? 1200;
+    const qte = Math.max(1, Math.floor(quantite));
 
-    updateLigne(idx, {
-      sourceReelle: 'CHUTE_NON_INVENTORIEE',
-      longueurSourceReelle: longueurChute,
-      resteReelMesureMm: estimatedReste,
-      actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
-      saisieOperateur: `CHUTE NON INVENTORIÉE ${longueurChute}mm`,
-      autreChuteId: undefined
-    });
+    if (qte <= 1) {
+      const longueurPieces = getEstimationPiecesLg(l);
+      const estimatedReste = Math.max(0, longueurChute - longueurPieces);
+      updateLigne(idx, {
+        sourceReelle: 'CHUTE_NON_INVENTORIEE',
+        longueurSourceReelle: longueurChute,
+        resteReelMesureMm: estimatedReste,
+        actionReste: estimatedReste >= refusMax ? 'A_STOCKER' : 'DECHET',
+        saisieOperateur: `CHUTE NON INVENTORIÉE ${longueurChute}mm`,
+        autreChuteId: undefined
+      });
+    } else {
+      // Fractionnement / Multiplication en plusieurs chutes identiques (ex: 3 chutes de 1500mm)
+      const newSubLignes: LigneRetourOF[] = Array.from({ length: qte }, (_, k) => ({
+        id: `split-hs-${Date.now()}-${k}-${Math.floor(Math.random() * 1000)}`,
+        repere: `${l.repere} [Chute Hors-Stock ${k + 1}/${qte}]`,
+        typeSupport: 'CHUTE_BARRE',
+        articleCode: l.articleCode,
+        articleDesignation: l.articleDesignation,
+        longueurPrevue: longueurChute,
+        longueurSourceReelle: longueurChute,
+        sourceReelle: 'CHUTE_NON_INVENTORIEE',
+        restePrevuMm: 0,
+        resteReelMesureMm: 0,
+        actionReste: 'DECHET',
+        piecesInfoStr: l.piecesInfoStr ? `${l.piecesInfoStr} (${k + 1}/${qte})` : '',
+        saisieOperateur: `CHUTE HORS-STOCK ${longueurChute}mm (${k + 1}/${qte})`,
+        remarque: `Chute hors stock atelier (${k + 1}/${qte})`
+      }));
+
+      const nextLignes = [...lignes];
+      nextLignes.splice(idx, 1, ...newSubLignes);
+      setLignes(nextLignes);
+      setLignesVerifiees(prev => {
+        const nextVerif = { ...prev };
+        newSubLignes.forEach((_, k) => {
+          nextVerif[idx + k] = true;
+        });
+        return nextVerif;
+      });
+    }
   };
 
   // Ajouter un débit / barre supplémentaire (re-débit / pièce refaite)
@@ -304,30 +342,38 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     setLignesVerifiees(prev => ({ ...prev, [lignes.length]: true }));
   };
 
-  // Ajouter un débit / chute supplémentaire
-  const handleAjouterChuteSupplementaire = (longueur: number = 1000) => {
+  // Ajouter un débit / chute supplémentaire (supporte multi-quantité)
+  const handleAjouterChuteSupplementaire = (longueur: number = 1000, quantite: number = 1, isHorsStock: boolean = true) => {
     const firstLigne = lignes[0];
     const articleCode = firstLigne?.articleCode || suivi.titreSection;
     const articleDesignation = firstLigne?.articleDesignation || '';
-    const newLigne: LigneRetourOF = {
-      id: `suppl-chute-${Date.now()}`,
-      repere: `CHUTE SUPPLÉMENTAIRE #${lignes.length + 1}`,
+    const qte = Math.max(1, Math.floor(quantite));
+
+    const newSubLignes: LigneRetourOF[] = Array.from({ length: qte }, (_, k) => ({
+      id: `suppl-chute-${Date.now()}-${k}`,
+      repere: qte > 1 ? `CHUTE DÉBITÉE #${lignes.length + k + 1} (${k + 1}/${qte})` : `CHUTE SUPPLÉMENTAIRE #${lignes.length + 1}`,
       typeSupport: 'CHUTE_BARRE',
       articleCode,
       articleDesignation,
       longueurPrevue: longueur,
       restePrevuMm: 0,
-      saisieOperateur: `CHUTE DÉBITÉE ${longueur}mm`,
-      sourceReelle: 'AUTRE_CHUTE',
+      saisieOperateur: isHorsStock ? `CHUTE HORS-STOCK ${longueur}mm` : `CHUTE DÉBITÉE ${longueur}mm`,
+      sourceReelle: isHorsStock ? 'CHUTE_NON_INVENTORIEE' : 'AUTRE_CHUTE',
       longueurSourceReelle: longueur,
       resteReelMesureMm: 0,
       actionReste: 'DECHET',
-      piecesInfoStr: 'Débit chute additionnelle en atelier',
-      remarque: 'Chute additionnelle débitée en atelier'
-    };
+      piecesInfoStr: isHorsStock ? 'Débit chute atelier hors-stock' : 'Débit chute stock',
+      remarque: isHorsStock ? `Chute hors-stock atelier (${longueur}mm)` : `Chute additionnelle débitée en atelier (${longueur}mm)`
+    }));
 
-    setLignes(prev => [...prev, newLigne]);
-    setLignesVerifiees(prev => ({ ...prev, [lignes.length]: true }));
+    setLignes(prev => [...prev, ...newSubLignes]);
+    setLignesVerifiees(prev => {
+      const nextVerif = { ...prev };
+      newSubLignes.forEach((_, k) => {
+        nextVerif[lignes.length + k] = true;
+      });
+      return nextVerif;
+    });
   };
 
   // Scinder une chute / remplacer 1 chute par plusieurs chutes plus petites
@@ -341,6 +387,7 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
       Array.from({ length: count }, (_, i) => ({
         id: String(i + 1),
         longueur: i === count - 1 ? lg - (eachLg * (count - 1)) : eachLg,
+        quantite: 1,
         source: 'AUTRE_CHUTE'
       }))
     );
@@ -350,24 +397,32 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
     const oldLigne = lignes[idx];
     if (!splitSupportConfigs || splitSupportConfigs.length === 0) return;
 
-    const newSubLignes: LigneRetourOF[] = splitSupportConfigs.map((cfg, subIdx) => {
+    const totalParts = splitSupportConfigs.reduce((acc, c) => acc + (c.quantite || 1), 0);
+    const newSubLignes: LigneRetourOF[] = [];
+    let currentPart = 1;
+
+    splitSupportConfigs.forEach((cfg) => {
+      const qte = Math.max(1, cfg.quantite || 1);
       const lg = Math.max(10, Math.round(cfg.longueur));
-      return {
-        id: `split-${Date.now()}-${subIdx}-${Math.floor(Math.random() * 1000)}`,
-        repere: `${oldLigne.repere} [Chute ${subIdx + 1}/${splitSupportConfigs.length}]`,
-        typeSupport: 'CHUTE_BARRE',
-        articleCode: oldLigne.articleCode,
-        articleDesignation: oldLigne.articleDesignation,
-        longueurPrevue: lg,
-        longueurSourceReelle: lg,
-        sourceReelle: cfg.source,
-        restePrevuMm: 0,
-        resteReelMesureMm: 0,
-        actionReste: 'DECHET',
-        piecesInfoStr: oldLigne.piecesInfoStr ? `${oldLigne.piecesInfoStr} (Partie ${subIdx + 1})` : '',
-        saisieOperateur: `Remplacement de ${oldLigne.longueurPrevue}mm par chute ${lg}mm (${subIdx + 1}/${splitSupportConfigs.length})`,
-        remarque: `Chute issue du fractionnement (${subIdx + 1}/${splitSupportConfigs.length})`
-      };
+      for (let k = 0; k < qte; k++) {
+        newSubLignes.push({
+          id: `split-${Date.now()}-${currentPart}-${Math.floor(Math.random() * 1000)}`,
+          repere: `${oldLigne.repere} [Chute ${currentPart}/${totalParts}]`,
+          typeSupport: 'CHUTE_BARRE',
+          articleCode: oldLigne.articleCode,
+          articleDesignation: oldLigne.articleDesignation,
+          longueurPrevue: lg,
+          longueurSourceReelle: lg,
+          sourceReelle: cfg.source,
+          restePrevuMm: 0,
+          resteReelMesureMm: 0,
+          actionReste: 'DECHET',
+          piecesInfoStr: oldLigne.piecesInfoStr ? `${oldLigne.piecesInfoStr} (Partie ${currentPart}/${totalParts})` : '',
+          saisieOperateur: `Remplacement par chute ${lg}mm (${currentPart}/${totalParts})`,
+          remarque: `Chute issue du fractionnement (${currentPart}/${totalParts})`
+        });
+        currentPart++;
+      }
     });
 
     const nextLignes = [...lignes];
@@ -723,6 +778,8 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
         remarqueGlobale
       }, mouvements);
       setIsClotureSuccess(true);
+      sessionStorage.setItem('3m_focus_search_of', 'true');
+      window.dispatchEvent(new CustomEvent('3m-focus-search-of'));
       onCloture();
       onClose();
     } catch (error: any) {

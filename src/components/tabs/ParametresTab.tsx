@@ -30,7 +30,10 @@ import {
   FolderOpen,
   Terminal,
   Truck,
-  MapPin
+  MapPin,
+  ArrowUp,
+  ArrowDown,
+  GripVertical
 } from 'lucide-react';
 import { SystemLogsViewer } from '../common/SystemLogsViewer';
 import {
@@ -74,10 +77,33 @@ type ParamSubTab =
   | 'codification'
   | 'mappage'
   | 'colonnes'
+  | 'onglets'
   | 'sauvegarde'
   | 'restauration'
   | 'logs'
   | 'vidage';
+
+const TAB_CONFIG_META: Record<string, { label: string; desc: string; iconEmoji: string }> = {
+  monitoring: { label: 'Monitoring Atelier', desc: 'KPIs en direct, jauges de charge et alertes stocks', iconEmoji: '📊' },
+  ecosysteme: { label: 'Écosystème & Commandes', desc: 'Création dossiers, algorithme d\'optimisation de coupe', iconEmoji: '📁' },
+  encours: { label: 'Ordres en Cours (OF)', desc: 'Suivi de fabrication, fiches transfert inter-sites, clôtures', iconEmoji: '📋' },
+  historique: { label: 'Historique Commandes', desc: 'Archive globale des commandes traitées et rapports', iconEmoji: '📜' },
+  stock: { label: 'Gestion Stock & Chutes', desc: 'Inventaire physique, longueurs et réemploi intelligent', iconEmoji: '📦' },
+  devis: { label: 'Devis & Coûts', desc: 'Calcul des coûts matières et chiffrage des profils', iconEmoji: '💰' },
+  documentation: { label: 'Règles Métier', desc: 'Formules d\'atelier, abaques et spécifications techniques', iconEmoji: '📘' },
+  parametres: { label: 'Paramètres Atelier', desc: 'Configuration globale, cadences, profils et base SQLite', iconEmoji: '⚙️' }
+};
+
+const DEFAULT_TABS_LIST = [
+  'monitoring',
+  'ecosysteme',
+  'encours',
+  'historique',
+  'stock',
+  'devis',
+  'documentation',
+  'parametres'
+];
 
 export const ParametresTab: React.FC<ParametresTabProps> = ({
   articles = [],
@@ -88,6 +114,58 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
   onRefreshData
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<ParamSubTab>('sauvegarde');
+
+  // État de l'ordre des onglets (Persistance SQLite)
+  const [tabsOrderConfig, setTabsOrderConfig] = useState<string[]>(DEFAULT_TABS_LIST);
+  const [isSavingTabsOrder, setIsSavingTabsOrder] = useState<boolean>(false);
+  const [tabsOrderFeedback, setTabsOrderFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    StorageService.getTabsOrder().then(order => {
+      if (mounted && Array.isArray(order) && order.length > 0) {
+        const combined = [...order];
+        DEFAULT_TABS_LIST.forEach(id => {
+          if (!combined.includes(id)) combined.push(id);
+        });
+        setTabsOrderConfig(combined);
+      }
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  const handleMoveTabInConfig = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= tabsOrderConfig.length) return;
+    const next = [...tabsOrderConfig];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    setTabsOrderConfig(next);
+    // Sauvegarde immédiate dans SQLite et LocalStorage
+    StorageService.saveTabsOrder(next);
+    setTabsOrderFeedback('Disposition enregistrée dans SQLite !');
+    setTimeout(() => setTabsOrderFeedback(null), 3000);
+  };
+
+  const handleResetTabsInConfig = async () => {
+    setTabsOrderConfig(DEFAULT_TABS_LIST);
+    await StorageService.saveTabsOrder(DEFAULT_TABS_LIST);
+    setTabsOrderFeedback('Ordre par défaut rétabli et enregistré dans SQLite !');
+    setTimeout(() => setTabsOrderFeedback(null), 3000);
+  };
+
+  const handleSaveTabsInConfigExplicit = async () => {
+    setIsSavingTabsOrder(true);
+    try {
+      await StorageService.saveTabsOrder(tabsOrderConfig);
+      setTabsOrderFeedback('✅ Ordre définitivement persisté dans la base 3m_atelier.db !');
+      setTimeout(() => setTabsOrderFeedback(null), 3500);
+    } catch {
+      setTabsOrderFeedback('❌ Erreur lors de la sauvegarde SQLite.');
+    } finally {
+      setIsSavingTabsOrder(false);
+    }
+  };
 
   // =========================================================================
   // 1. ÉTAT GESTION UTILISATEURS & PERMISSIONS
@@ -618,6 +696,18 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveSubTab('onglets')}
+            className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
+              activeSubTab === 'onglets'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <GripVertical className="w-3.5 h-3.5" />
+            <span>📑 Ordre des Onglets</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('utilisateurs')}
             className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
               activeSubTab === 'utilisateurs'
@@ -1110,6 +1200,113 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 3b. SECTION ORDRE DES ONGLETS (PERSISTANCE SQLite)                  */}
+      {/* =================================================================== */}
+      {activeSubTab === 'onglets' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-amber-400" />
+                <span>Disposition & Ordre des Onglets de l'Application</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Personnalisez la séquence des onglets principaux dans la barre de navigation. L'ordre est immédiatement sauvegardé dans la base de données SQLite <code className="text-amber-400 font-mono">3m_atelier.db</code> et conservé de manière permanente à la fermeture et réouverture de l'application.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {tabsOrderFeedback && (
+                <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 rounded-lg animate-fade-in">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  {tabsOrderFeedback}
+                </span>
+              )}
+
+              <button
+                onClick={handleResetTabsInConfig}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
+                title="Rétablir l'ordre d'origine de l'application"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                <span>Ordre d'origine</span>
+              </button>
+
+              <button
+                onClick={handleSaveTabsInConfigExplicit}
+                disabled={isSavingTabsOrder}
+                className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSavingTabsOrder ? 'Enregistrement...' : 'Enregistrer dans SQLite'}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 max-w-3xl">
+            {tabsOrderConfig.map((tabId, index) => {
+              const meta = TAB_CONFIG_META[tabId] || { label: tabId, desc: '', iconEmoji: '📑' };
+              const isFirst = index === 0;
+              const isLast = index === tabsOrderConfig.length - 1;
+
+              return (
+                <div
+                  key={tabId}
+                  className="flex items-center justify-between p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 hover:border-slate-700 transition"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-lg bg-slate-800/90 text-amber-400 text-xs font-mono font-bold flex items-center justify-center border border-slate-700">
+                      {index + 1}
+                    </span>
+                    <span className="text-lg">{meta.iconEmoji}</span>
+                    <div>
+                      <div className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                        <span>{meta.label}</span>
+                        {isFirst && (
+                          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2 py-0.5 rounded-full">
+                            Onglet d'accueil par défaut
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        {meta.desc}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleMoveTabInConfig(index, 'up')}
+                      disabled={isFirst}
+                      title="Monter d'une position (plus à gauche)"
+                      className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-25 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleMoveTabInConfig(index, 'down')}
+                      disabled={isLast}
+                      title="Descendre d'une position (plus à droite)"
+                      className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-25 disabled:cursor-not-allowed transition cursor-pointer"
+                    >
+                      <ArrowDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3.5 text-xs text-slate-400 flex items-start gap-2.5">
+            <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <p>
+              <strong>Astuce :</strong> Vous pouvez également réorganiser les onglets à tout moment directement depuis le Header de l'application par simple <em>glisser-déposer</em> (drag & drop) ou via le bouton de configuration situé à droite des onglets. Toutes les modifications sont automatiquement répercutées et synchronisées.
+            </p>
           </div>
         </div>
       )}
