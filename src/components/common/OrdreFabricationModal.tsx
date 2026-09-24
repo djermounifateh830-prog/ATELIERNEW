@@ -1289,7 +1289,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       size: A4 portrait;
       margin: 10mm 8mm 14mm 8mm;
       @top-right {
-        content: "${currentCodeOFAffiche} — PAGE " counter(page) " / " counter(pages);
+        content: "COMMANDE N° ${cmdAffichee} — PAGE " counter(page) " / " counter(pages);
         font-family: Consolas, "Courier New", monospace;
         font-size: 9pt;
         font-weight: 800;
@@ -1303,7 +1303,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         color: #000000;
       }
       @bottom-left {
-        content: "${currentCodeOFAffiche} (#${currentSequenceNum}) • COMMANDE N° ${cmdAffichee} • ${clientAffiche}";
+        content: "COMMANDE N° ${cmdAffichee} • ${clientAffiche} • 📦 ${totalPiecesToutesSections} PCS";
         font-family: Consolas, "Courier New", monospace;
         font-size: 8.5pt;
         font-weight: 700;
@@ -1392,10 +1392,9 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <div style="border:3px solid #000;padding:4px 14px;text-align:center;background:#fff;border-radius:6px;min-width:150px;">
-        <div style="font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:0.8px;color:#000;">SÉQUENCE ATELIER</div>
-        <div style="font-size:26px;font-weight:900;font-family:Consolas,monospace;color:#000;letter-spacing:1px;line-height:1.1;">${currentCodeOFAffiche}</div>
-        <div style="font-size:10px;font-weight:900;background:#000;color:#fff;padding:1px 4px;border-radius:2px;margin-top:2px;">ORDRE MACHINE N° ${currentSequenceNum}</div>
+      <div style="border:3px solid #000;padding:6px 14px;text-align:center;background:#fff;border-radius:6px;min-width:140px;">
+        <div style="font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.8px;color:#000;">VOLUME À PRODUIRE</div>
+        <div style="font-size:20px;font-weight:900;font-family:Consolas,monospace;color:#000;letter-spacing:0.5px;line-height:1.1;margin-top:2px;">📦 ${totalPiecesToutesSections} ${totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}</div>
       </div>
       <div style="text-align:right;">
         <div class="logo-m">TROIS M</div>
@@ -1412,8 +1411,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
   <div class="client-info-bar">
     <div>DONNEUR D'ORDRE : <span style="color:#000;font-weight:900;font-size:15px;">${agenceInfo.nom}</span></div>
     <div>CLIENT FINAL : <span style="font-weight:900;font-size:16px;color:#000;">${clientAffiche}</span></div>
-    <div>DATE : <span style="font-weight:900;font-size:15px;color:#000;font-family:Consolas,monospace;">${dateAffichee}</span></div>
-    <div style="background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};border:1.5px solid #000;padding:2px 8px;border-radius:3px;font-family:Consolas,monospace;font-size:12px;font-weight:900;">${dateLivraisonPrevisionnelleAffichee}</div>
+    <div>DATE ÉMISSION : <span style="font-weight:900;font-size:15px;color:#000;font-family:Consolas,monospace;">${dateAffichee}</span></div>
+    <div style="background:${estPrioritaire ? '#fee2e2' : '#fef3c7'};border:2px solid #000;padding:3px 10px;border-radius:4px;font-family:Consolas,monospace;font-size:13px;font-weight:900;">📅 ${dateLivraisonPrevisionnelleAffichee}</div>
   </div>
 
   ${(matieresNeuvesFiltrees.length > 0 || chutesADestoquer.length > 0 || accessoiresFiltres.length > 0 || toilePlisseeHTML) ? `
@@ -1485,12 +1484,12 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
         <div style="font-size:18px;font-weight:900;text-transform:uppercase;color:#000;letter-spacing:1px;">
           ✂️ ${hasAnyPreparation ? 'FICHE 2 : OPTIMISATION DE DÉCOUPE ATELIER' : 'FICHE 1 : OPTIMISATION DE DÉCOUPE ATELIER'}
         </div>
-        <span style="padding:2px 8px;background:#000;color:#fff;font-family:Consolas,monospace;font-weight:900;font-size:14px;border-radius:4px;">
-          ${currentCodeOFAffiche} (ORDRE N° ${currentSequenceNum})
+        <span style="padding:3px 12px;background:#000;color:#fff;font-family:Consolas,monospace;font-weight:900;font-size:14px;border-radius:4px;">
+          📦 ${totalPiecesToutesSections} ${totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}
         </span>
       </div>
       <div style="font-size:12px;color:#000;font-weight:bold;margin-top:4px;">
-        Plans de coupe et débits atelier — Commande N° : <span style="font-family:Consolas,monospace;font-size:15px;font-weight:900;border:1.5px solid #000;padding:1px 6px;border-radius:3px;">${cmdAffichee}</span>
+        Plans de coupe et débits atelier — Commande N° : <span style="font-family:Consolas,monospace;font-size:15px;font-weight:900;border:1.5px solid #000;padding:1px 6px;border-radius:3px;">${cmdAffichee}</span> — <span style="border:1.5px solid #000;padding:1px 6px;border-radius:3px;background:#fef3c7;">📅 ${dateLivraisonPrevisionnelleAffichee}</span>
       </div>
     </div>
 
@@ -1520,8 +1519,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
           </div>
           <div class="footer-line-2">
             <div style="display:flex;align-items:center;gap:8px;">
-              <span style="border:1.5px solid #000;padding:1px 6px;border-radius:3px;background:#000;color:#fff;font-family:Consolas,monospace;font-size:11px;font-weight:900;">
-                ${currentCodeOFAffiche} (#${currentSequenceNum})
+              <span style="border:1.5px solid #000;padding:2px 8px;border-radius:3px;background:#000;color:#fff;font-family:Consolas,monospace;font-size:11px;font-weight:900;">
+                📦 ${totalPiecesToutesSections} ${totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}
               </span>
               <span style="color:#222;font-size:11px;font-weight:bold;">
                 Ordre de Fabrication Atelier
@@ -1555,7 +1554,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   const handlePrint = () => {
     const prevTitle = document.title;
-    document.title = `${currentCodeOFAffiche} - Commande ${cmdAffichee} - ${clientAffiche}`;
+    document.title = `Commande ${cmdAffichee} - ${clientAffiche}`;
     window.print();
     setTimeout(() => {
       document.title = prevTitle;
@@ -2244,7 +2243,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
             size: A4 portrait;
             margin: 8mm 7mm 8mm 7mm;
             @top-right {
-              content: "${currentCodeOFAffiche} — PAGE " counter(page) " / " counter(pages);
+              content: "COMMANDE N° ${cmdAffichee} — PAGE " counter(page) " / " counter(pages);
               font-family: Consolas, "Courier New", monospace;
               font-size: 8.5pt;
               font-weight: 800;
@@ -2258,7 +2257,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               color: #000000;
             }
             @bottom-left {
-              content: "${currentCodeOFAffiche} (#${currentSequenceNum}) • COMMANDE N° ${cmdAffichee} • ${clientAffiche}";
+              content: "COMMANDE N° ${cmdAffichee} • ${clientAffiche} • 📦 ${totalPiecesToutesSections} PCS";
               font-family: Consolas, "Courier New", monospace;
               font-size: 8pt;
               font-weight: 700;
@@ -2573,7 +2572,7 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   <span className="text-[10px] px-2 py-0.5 rounded-full border-2 border-black font-mono font-bold bg-white text-black">{agenceInfo.nom}</span>
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono font-black text-xs border border-amber-500 shadow-xs">
-                  {currentCodeOFAffiche} (Ordre #{currentSequenceNum})
+                  📦 {totalPiecesToutesSections} {totalPiecesToutesSections > 1 ? 'pièces' : 'pièce'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-700 font-semibold">
@@ -2667,13 +2666,10 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="border-2 border-black px-3 py-1 text-center bg-white rounded-lg min-w-[130px] shadow-xs">
-                    <div className="text-[9px] font-black uppercase tracking-wider text-slate-800">Séquence Atelier</div>
-                    <div className="text-xl sm:text-2xl font-black font-mono text-black leading-tight tracking-tight">
-                      {currentCodeOFAffiche}
-                    </div>
-                    <div className="text-[10px] font-black bg-black text-white px-1.5 py-0.5 rounded mt-0.5">
-                      ORDRE N° {currentSequenceNum}
+                  <div className="border-2 border-black px-4 py-2 text-center bg-white rounded-lg min-w-[140px] shadow-xs">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-800">Volume à produire</div>
+                    <div className="text-lg sm:text-xl font-black font-mono text-black leading-tight tracking-tight mt-0.5">
+                      📦 {totalPiecesToutesSections} {totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}
                     </div>
                   </div>
                   <div className="text-right flex items-center gap-2.5">
@@ -2960,11 +2956,11 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                     ✂️ {hasAnyPreparation ? 'FICHE 2 : OPTIMISATION DE DÉCOUPE ATELIER' : 'FICHE 1 : OPTIMISATION DE DÉCOUPE ATELIER'}
                   </div>
                   <span className="px-3 py-0.5 bg-black text-white font-mono font-black text-sm rounded-md border border-black">
-                    {currentCodeOFAffiche} (ORDRE N° {currentSequenceNum})
+                    📦 {totalPiecesToutesSections} {totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}
                   </span>
                 </div>
                 <div className="text-xs text-black font-bold mt-1">
-                  Plans de coupe et débits atelier — Commande N° : <span className="font-mono text-sm sm:text-base font-black px-2 py-0.5 rounded border border-black">{cmdAffichee}</span>
+                  Plans de coupe et débits atelier — Commande N° : <span className="font-mono text-sm sm:text-base font-black px-2 py-0.5 rounded border border-black">{cmdAffichee}</span> — <span className="px-2 py-0.5 rounded border border-black bg-amber-100/90 font-mono text-xs font-bold">📅 {dateLivraisonPrevisionnelleAffichee}</span>
                 </div>
               </div>
 
@@ -3013,8 +3009,8 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
                       {/* Ligne 2 : Séquence OF, Débit profilés, Date prévisionnelle et Signature Atelier */}
                       <div className="footer-line-2 flex items-center justify-between gap-3 pt-1 text-[11px] font-bold">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono font-black text-xs px-2 py-0.5 border border-black rounded bg-black text-white shrink-0">
-                            {currentCodeOFAffiche} (#{currentSequenceNum})
+                          <span className="font-mono font-black text-xs px-2.5 py-0.5 border border-black rounded bg-black text-white shrink-0">
+                            📦 {totalPiecesToutesSections} {totalPiecesToutesSections > 1 ? 'PIÈCES' : 'PIÈCE'}
                           </span>
                           <span className="text-slate-700 print:text-black font-bold">
                             Ordre de Fabrication Atelier

@@ -1396,10 +1396,12 @@ export class DelaisProductionService {
       }
     });
 
-    // Ordonnancement de la file active :
+    // Ordonnancement de la file active selon la règle réelle de l'atelier :
     // 1. Commandes reprises récemment en tête de file (priorité absolue au démarrage)
-    // 2. Commandes prioritaires ordinaires
-    // 3. FIFO (date d'émission la plus ancienne en premier, puis numéro de séquence d'émission)
+    // 2. Commandes prioritaires ordinaires (⚡ Instantané / Urgent)
+    // 3. Date de livraison convenue la plus proche (Earliest Due Date)
+    // 4. Petites quantités d'abord (SPT - Shortest Processing Time : 1, 2, 3 pcs pour libérer rapidement les clients)
+    // 5. Date d'émission / Code OF
     actives.sort((a, b) => {
       const repA = (a as any).repriseTimestamp || 0;
       const repB = (b as any).repriseTimestamp || 0;
@@ -1409,15 +1411,29 @@ export class DelaisProductionService {
 
       if (a.estPrioritaire && !b.estPrioritaire) return -1;
       if (!a.estPrioritaire && b.estPrioritaire) return 1;
+
+      // 3. Date de livraison la plus proche
+      const isoA = a.dateLivraisonISO || (a.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(a.dateLivraisonPrevisionnelle)) : '');
+      const isoB = b.dateLivraisonISO || (b.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(b.dateLivraisonPrevisionnelle)) : '');
+      if (isoA && isoB && isoA !== isoB) {
+        return isoA.localeCompare(isoB);
+      }
+      if (isoA && !isoB) return -1;
+      if (!isoA && isoB) return 1;
+
+      // 4. Petites quantités d'abord (1, 2, 3 pcs avant les gros lots)
+      const piecesA = a.nbPieces || 1;
+      const piecesB = b.nbPieces || 1;
+      if (piecesA !== piecesB) {
+        return piecesA - piecesB;
+      }
+
+      // 5. Date d'émission
       const dateA = a.dateEmission ? this.parseDateString(a.dateEmission).getTime() : 0;
       const dateB = b.dateEmission ? this.parseDateString(b.dateEmission).getTime() : 0;
       if (dateA !== dateB) return dateA - dateB;
 
-      // Déterminer l'ordre par numéro de séquence d'émission ou code OF
-      const seqA = (a as any).numeroEmission || (a as any).sequence || 0;
-      const seqB = (b as any).numeroEmission || (b as any).sequence || 0;
-      if (seqA !== seqB) return seqA - seqB;
-
+      // Déterminer l'ordre par code OF ou référence
       const codeA = ((a as any).codeOF || a.refCommande || '').toString();
       const codeB = ((b as any).codeOF || b.refCommande || '').toString();
       return codeA.localeCompare(codeB, undefined, { numeric: true });
@@ -1586,6 +1602,8 @@ export interface PlanningItemSimulation {
   estEnPause?: boolean;
   motifPause?: string;
   dateEmission?: string;
+  dateLivraisonPrevisionnelle?: string;
+  dateLivraisonISO?: string;
   statutOF?: string;
   dossierId?: string;
   repriseTimestamp?: number;

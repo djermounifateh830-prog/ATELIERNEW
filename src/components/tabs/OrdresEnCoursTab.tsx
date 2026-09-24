@@ -453,7 +453,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
   };
 
   // Tri de la table
-  type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille' | 'dateLivraison';
+  type SortKey = 'numeroEmission' | 'dateEmission' | 'numCommande' | 'nomClient' | 'statut' | 'famille' | 'dateLivraison' | 'pieces';
   const [sortKey, setSortKey] = useState<SortKey>('statut');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -574,7 +574,32 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
           if (rankA !== rankB) {
             return sortDir === 'asc' ? rankA - rankB : rankB - rankA;
           }
-          // Si même statut : affichage par numéro d'émission le plus récent
+
+          // RÈGLE ATELIER : Pour les ordres en cours actifs (Pause, Émis, Attente) :
+          // 1. Date de livraison la plus proche (urgences et tournées du jour d'abord)
+          // 2. Petites quantités d'abord (1, 2, 3 pcs pour libérer rapidement les clients)
+          // 3. FIFO de secours
+          if (rankA <= 2) {
+            const isoA = a.dateLivraisonPrevisionnelleISO || (a.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(a.dateLivraisonPrevisionnelle)) : '') || '';
+            const isoB = b.dateLivraisonPrevisionnelleISO || (b.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(b.dateLivraisonPrevisionnelle)) : '') || '';
+            if (isoA && isoB && isoA !== isoB) {
+              return isoA.localeCompare(isoB);
+            }
+            if (isoA && !isoB) return -1;
+            if (!isoA && isoB) return 1;
+
+            const qA = DelaisProductionService.compterPiecesOF(a, dossiers);
+            const qB = DelaisProductionService.compterPiecesOF(b, dossiers);
+            if (qA !== qB) {
+              return qA - qB;
+            }
+
+            const na = a.numeroEmission || 0;
+            const nb = b.numeroEmission || 0;
+            return na - nb;
+          }
+
+          // Si statuts terminés (CLOTURE, LIVRE) : affichage du plus récent au plus ancien
           const na = a.numeroEmission || 0;
           const nb = b.numeroEmission || 0;
           return nb - na;
@@ -583,10 +608,27 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         if (sortKey === 'dateLivraison') {
           const isoA = a.dateLivraisonPrevisionnelleISO || (a.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(a.dateLivraisonPrevisionnelle)) : '') || '';
           const isoB = b.dateLivraisonPrevisionnelleISO || (b.dateLivraisonPrevisionnelle ? DelaisProductionService.toISODateString(DelaisProductionService.parseDateString(b.dateLivraisonPrevisionnelle)) : '') || '';
-          if (!isoA && !isoB) return 0;
-          if (!isoA) return 1;
-          if (!isoB) return -1;
-          return sortDir === 'asc' ? isoA.localeCompare(isoB) : isoB.localeCompare(isoA);
+          if (isoA !== isoB) {
+            if (!isoA) return 1;
+            if (!isoB) return -1;
+            return sortDir === 'asc' ? isoA.localeCompare(isoB) : isoB.localeCompare(isoA);
+          }
+          // Pour la même date de livraison : petites quantités d'abord !
+          const qA = DelaisProductionService.compterPiecesOF(a, dossiers);
+          const qB = DelaisProductionService.compterPiecesOF(b, dossiers);
+          if (qA !== qB) {
+            return sortDir === 'asc' ? qA - qB : qB - qA;
+          }
+          return 0;
+        }
+
+        if (sortKey === 'pieces') {
+          const qA = DelaisProductionService.compterPiecesOF(a, dossiers);
+          const qB = DelaisProductionService.compterPiecesOF(b, dossiers);
+          if (qA !== qB) {
+            return sortDir === 'asc' ? qA - qB : qB - qA;
+          }
+          return 0;
         }
 
         if (sortKey === 'numeroEmission') {
@@ -1146,6 +1188,21 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
         </div>
       )}
 
+      {/* ── Bandeau Règle de Priorité Atelier ── */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs text-slate-300 shadow-sm">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-[11px] uppercase tracking-wide">
+            📋 Règle Atelier
+          </span>
+          <span className="text-slate-300 text-xs">
+            Ordres organisés par : <strong className="text-amber-300">Date de livraison convenue</strong> ➔ <strong className="text-rose-300">Priorités ⚡</strong> ➔ <strong className="text-emerald-300">Petites quantités d'abord (1, 2, 3 pcs)</strong> pour libérer rapidement les clients.
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-400 font-mono hidden lg:block">
+          {stats.emis + stats.retourEnAttente} ordres actifs en atelier
+        </div>
+      </div>
+
       {/* ── Table Principale des Ordres de Fabrication ── */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
@@ -1175,7 +1232,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   />
                 </th>
                 {columnConfigService.isColumnVisible('of_encours', 'id_of') && (
-                  <SortHeader col="numeroEmission" label="Ordre" className="w-24 text-center px-2" />
+                  <SortHeader col="numeroEmission" label="N° OF" className="w-24 text-center px-2" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'dossier') && (
                   <SortHeader col="numCommande" label="N° Commande" className="w-32 px-2.5" />
@@ -1184,7 +1241,7 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                   <SortHeader col="nomClient" label="Client / Donneur d'Ordre" className="px-3 min-w-[150px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'produit') && (
-                  <SortHeader col="famille" label="Famille &amp; Nbr de Pièces (Pcs)" className="px-3 min-w-[170px]" />
+                  <SortHeader col="pieces" label="Famille & Nbr de Pièces (Pcs)" className="px-3 min-w-[170px]" />
                 )}
                 {columnConfigService.isColumnVisible('of_encours', 'date') && (
                   <SortHeader col="dateEmission" label="Date Émission" className="w-28 px-2 text-center" />
@@ -1280,8 +1337,8 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             <span className="px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 border border-amber-300 font-mono font-black text-xs shadow-xs tracking-wider">
                               {of.codeOF || (of.numeroEmission ? `OF-${String(of.numeroEmission).padStart(3, '0')}` : 'OF-???')}
                             </span>
-                            <span className="text-[10px] text-amber-400 font-bold mt-0.5 whitespace-nowrap">
-                              Ordre #{of.numeroEmission || '—'}
+                            <span className="text-[10px] text-slate-400 font-mono font-medium mt-0.5 whitespace-nowrap">
+                              #{String(of.numeroEmission || '').padStart(3, '0') || '—'}
                             </span>
                           </div>
                         </td>
@@ -1363,12 +1420,25 @@ export const OrdresEnCoursTab: React.FC<OrdresEnCoursTabProps> = ({
                             }`}>
                               {of.famille}
                             </span>
-                            <span className="font-bold text-slate-200 text-xs whitespace-nowrap bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700 shadow-xs">
-                              {(() => {
-                                const nb = DelaisProductionService.compterPiecesOF(of, dossiers);
-                                return `${nb} pc${nb > 1 ? 's' : ''}`;
-                              })()}
-                            </span>
+                            {(() => {
+                              const nb = DelaisProductionService.compterPiecesOF(of, dossiers);
+                              const isPetite = nb <= 2;
+                              const isMoyenne = nb > 2 && nb <= 5;
+                              return (
+                                <span
+                                  className={`font-bold text-xs whitespace-nowrap px-2 py-0.5 rounded border shadow-xs ${
+                                    isPetite
+                                      ? 'bg-emerald-950 text-emerald-300 border-emerald-700/80 font-mono'
+                                      : isMoyenne
+                                      ? 'bg-sky-950 text-sky-300 border-sky-700/60 font-mono'
+                                      : 'bg-slate-800/90 text-slate-200 border-slate-700 font-mono'
+                                  }`}
+                                  title={isPetite ? 'Petite commande (1-2 pièces) — Priorité atelier' : `${nb} pièces`}
+                                >
+                                  {nb} pc{nb > 1 ? 's' : ''}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </td>
                       )}

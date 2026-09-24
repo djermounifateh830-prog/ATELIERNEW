@@ -615,6 +615,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
+      dateLivraisonPrevisionnelle: l.dateLivraisonPrevisionnelle,
+      dateLivraisonISO: l.dateLivraisonPrevisionnelleISO,
       dossierId: l.dossierId,
       repriseTimestamp: l.repriseTimestamp
     }));
@@ -922,6 +924,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
+      dateLivraisonPrevisionnelle: l.dateLivraisonPrevisionnelle,
+      dateLivraisonISO: l.dateLivraisonPrevisionnelleISO,
       dossierId: l.dossierId,
       repriseTimestamp: l.repriseTimestamp
     }));
@@ -1214,6 +1218,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
+      dateLivraisonPrevisionnelle: l.dateLivraisonPrevisionnelle,
+      dateLivraisonISO: l.dateLivraisonPrevisionnelleISO,
       dossierId: l.dossierId,
       repriseTimestamp: l.repriseTimestamp
     }));
@@ -1505,6 +1511,8 @@ export class MonitoringService {
       estEnPause: l.estEnPause,
       motifPause: l.motifPause,
       dateEmission: l.dateEmission || l.dateCommande,
+      dateLivraisonPrevisionnelle: l.dateLivraisonPrevisionnelle,
+      dateLivraisonISO: l.dateLivraisonPrevisionnelleISO,
       dossierId: l.dossierId,
       repriseTimestamp: l.repriseTimestamp
     }));
@@ -1811,6 +1819,27 @@ export class MonitoringService {
 
       // Trier les familles par nombre de pièces décroissant
       detailsFamilles.sort((a, b) => b.totalPieces - a.totalPieces);
+
+      // Trier les commandes du client selon la règle atelier :
+      // 1. Prioritaires
+      // 2. Date de livraison la plus proche
+      // 3. Petites quantités d'abord (1, 2, 3 pcs pour libérer rapidement)
+      clientData.commandes.sort((a, b) => {
+        if (a.estPrioritaire && !b.estPrioritaire) return -1;
+        if (!a.estPrioritaire && b.estPrioritaire) return 1;
+
+        const isoA = a.dateLivraisonPrevisionnelleISO || '';
+        const isoB = b.dateLivraisonPrevisionnelleISO || '';
+        if (isoA && isoB && isoA !== isoB) return isoA.localeCompare(isoB);
+        if (isoA && !isoB) return -1;
+        if (!isoA && isoB) return 1;
+
+        const qA = a.quantiteTotalPieces || 1;
+        const qB = b.quantiteTotalPieces || 1;
+        if (qA !== qB) return qA - qB;
+
+        return (a.refCommande || '').localeCompare(b.refCommande || '');
+      });
 
       groupes.push({
         clientNom: clientData.nomClient,
