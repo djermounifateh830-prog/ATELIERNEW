@@ -21,19 +21,23 @@ import { StorageService } from '../../services/storage';
 interface ModifierMouvementModalProps {
   isOpen: boolean;
   mouvement: MouvementStock | null;
+  initialMode?: 'MODIFIER' | 'ANNULER';
   articles: Article[];
   suivisOF?: SuiviOF[];
   onClose: () => void;
   onMouvementUpdated: () => void;
+  onShowToast?: (title: string, message: string) => void;
 }
 
 export const ModifierMouvementModal: React.FC<ModifierMouvementModalProps> = ({
   isOpen,
   mouvement,
+  initialMode = 'MODIFIER',
   articles,
   suivisOF = [],
   onClose,
-  onMouvementUpdated
+  onMouvementUpdated,
+  onShowToast
 }) => {
   if (!isOpen || !mouvement) return null;
 
@@ -47,8 +51,23 @@ export const ModifierMouvementModal: React.FC<ModifierMouvementModalProps> = ({
   const [dateMvt, setDateMvt] = useState<string>(mouvement.date || '');
 
   // État Annulation
-  const [isConfirmingAnnulation, setIsConfirmingAnnulation] = useState<boolean>(false);
+  const [isConfirmingAnnulation, setIsConfirmingAnnulation] = useState<boolean>(initialMode === 'ANNULER');
   const [motifAnnulation, setMotifAnnulation] = useState<string>('Erreur de saisie / Doublon');
+
+  // Synchroniser à l'ouverture si le mode change
+  React.useEffect(() => {
+    if (isOpen) {
+      setIsConfirmingAnnulation(initialMode === 'ANNULER');
+      setQuantiteInput(String(mouvement.quantite || 1));
+      setNumBL(mouvement.numBL || '');
+      setFournisseur(mouvement.fournisseur || '');
+      setNumCommande(mouvement.numCommande || '');
+      setNomClient(mouvement.nomClient || '');
+      setRemarque(mouvement.remarque || '');
+      setDateMvt(mouvement.date || '');
+      setFeedback(null);
+    }
+  }, [isOpen, initialMode, mouvement]);
 
   // Retours
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' | 'warn' } | null>(null);
@@ -121,6 +140,10 @@ export const ModifierMouvementModal: React.FC<ModifierMouvementModalProps> = ({
       };
 
       await StorageService.updateMouvement(updatedMvt);
+      onShowToast?.(
+        '✏️ Mouvement de Stock Modifié avec Succès',
+        `Mouvement ${mouvement.id} (${mouvement.articleCode || ''}) mis à jour. Nouvelle qté : ${nouvelleQte} barre(s). Stock ajusté.`
+      );
       onMouvementUpdated();
       onClose();
     } catch (e: any) {
@@ -177,6 +200,10 @@ export const ModifierMouvementModal: React.FC<ModifierMouvementModalProps> = ({
       };
 
       await StorageService.updateMouvement(mvtAnnule);
+      onShowToast?.(
+        '↩️ Mouvement Annulé & Stock Rétabli',
+        `Le mouvement ${mouvement.id} a été annulé avec succès. Le stock de l'article ${mouvement.articleCode || ''} a été réintégré.`
+      );
       onMouvementUpdated();
       onClose();
     } catch (e: any) {
@@ -196,6 +223,10 @@ export const ModifierMouvementModal: React.FC<ModifierMouvementModalProps> = ({
     setIsSubmitting(true);
     try {
       await StorageService.deleteMouvement(mouvement.id);
+      onShowToast?.(
+        '🗑️ Mouvement Supprimé',
+        `Le mouvement ${mouvement.id} a été définitivement supprimé de la base de données.`
+      );
       onMouvementUpdated();
       onClose();
     } catch (e: any) {

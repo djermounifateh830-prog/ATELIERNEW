@@ -898,9 +898,9 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
 
             <button
               type="button"
-              onClick={() => handleAjouterChuteSupplementaire(1000)}
+              onClick={() => setIsAddChuteModalOpen(true)}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-              title="Ajouter une chute supplémentaire débitée pour refaire une pièce"
+              title="Ajouter une ou plusieurs chutes débitées (stock ou hors-stock)"
             >
               <Plus className="w-3.5 h-3.5 text-sky-400" />
               <span>➕ Chute Débitée</span>
@@ -1304,31 +1304,50 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                                 <span>🆕 Dimension Chute Non Inventoriée :</span>
                               </div>
                               <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  value={nonInventorieTempLg}
-                                  onChange={e => setNonInventorieTempLg(e.target.value)}
-                                  placeholder="ex: 2500"
-                                  autoFocus
-                                  className="w-full bg-slate-950 border border-amber-400 rounded-lg px-2 py-1 font-mono text-xs text-amber-200 font-bold focus:outline-none"
-                                />
+                                <div className="relative flex-1">
+                                  <input
+                                    type="number"
+                                    value={nonInventorieTempLg}
+                                    onChange={e => setNonInventorieTempLg(e.target.value)}
+                                    placeholder="ex: 2500"
+                                    autoFocus
+                                    className="w-full bg-slate-950 border border-amber-400 rounded-lg px-2 py-1 font-mono text-xs text-amber-200 font-bold focus:outline-none"
+                                  />
+                                  <span className="absolute right-2 top-1 text-[10px] text-slate-500 font-mono pointer-events-none">mm</span>
+                                </div>
+                                <div className="flex items-center gap-0.5 shrink-0 bg-slate-950 border border-slate-700 rounded-lg px-1.5 py-1">
+                                  <span className="text-[10px] text-slate-400">×</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    value={nonInventorieTempQte}
+                                    onChange={e => setNonInventorieTempQte(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                                    className="w-8 bg-transparent text-center font-mono text-xs font-bold text-amber-300 focus:outline-none"
+                                    title="Quantité de chutes de cette longueur"
+                                  />
+                                </div>
                                 <button
                                   type="button"
                                   onClick={() => {
                                     const val = parseInt(nonInventorieTempLg, 10);
                                     if (val > 0) {
-                                      setSubstitutionChuteNonInventoriee(originalIdx, val);
+                                      setSubstitutionChuteNonInventoriee(originalIdx, val, nonInventorieTempQte);
                                       setEditingNonInventorieIdx(null);
+                                      setNonInventorieTempQte(1);
                                     }
                                   }}
-                                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition"
+                                  className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition cursor-pointer"
                                 >
                                   OK
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setEditingNonInventorieIdx(null)}
-                                  className="px-2 py-1 bg-slate-800 text-slate-400 text-xs rounded-lg hover:bg-slate-700"
+                                  onClick={() => {
+                                    setEditingNonInventorieIdx(null);
+                                    setNonInventorieTempQte(1);
+                                  }}
+                                  className="px-2 py-1 bg-slate-800 text-slate-400 text-xs rounded-lg hover:bg-slate-700 cursor-pointer"
                                 >
                                   ✕
                                 </button>
@@ -1339,10 +1358,11 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
                                     key={quickLg}
                                     type="button"
                                     onClick={() => {
-                                      setSubstitutionChuteNonInventoriee(originalIdx, quickLg);
+                                      setSubstitutionChuteNonInventoriee(originalIdx, quickLg, nonInventorieTempQte);
                                       setEditingNonInventorieIdx(null);
+                                      setNonInventorieTempQte(1);
                                     }}
-                                    className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 text-amber-300/80 font-mono text-[10px] rounded border border-slate-700"
+                                    className="px-1.5 py-0.5 bg-slate-900 hover:bg-slate-800 text-amber-300/80 font-mono text-[10px] rounded border border-slate-700 cursor-pointer"
                                   >
                                     {quickLg}mm
                                   </button>
@@ -1942,6 +1962,90 @@ export const RetourOFModal: React.FC<RetourOFModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modale d'ajout rapide de chute additionnelle (avec quantité multiple) */}
+      {isAddChuteModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <span>➕ Ajouter Chute(s) Débitée(s)</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsAddChuteModalOpen(false)}
+                className="text-slate-400 hover:text-white text-xs p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Longueur de la chute (mm) :</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="50"
+                    max="6500"
+                    step="1"
+                    value={addChuteTempLg}
+                    onChange={e => setAddChuteTempLg(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-sky-300 focus:outline-none focus:border-sky-500"
+                    placeholder="ex: 1500"
+                  />
+                  <span className="absolute right-3 top-2.5 text-xs text-slate-500 font-mono">mm</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Nombre de chutes identiques (Quantité) :</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={addChuteTempQte}
+                  onChange={e => setAddChuteTempQte(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 pt-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={addChuteIsHorsStock}
+                    onChange={e => setAddChuteIsHorsStock(e.target.checked)}
+                    className="w-4 h-4 rounded text-purple-600 focus:ring-0 cursor-pointer"
+                  />
+                  <span>Chute hors-stock atelier (non inventoriée au stock)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAddChuteModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const lg = Math.max(10, parseInt(addChuteTempLg, 10) || 1000);
+                  handleAjouterChuteSupplementaire(lg, addChuteTempQte, addChuteIsHorsStock);
+                  setIsAddChuteModalOpen(false);
+                }}
+                className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow cursor-pointer"
+              >
+                Ajouter {addChuteTempQte > 1 ? `${addChuteTempQte} chutes` : 'la chute'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1165,6 +1165,21 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
   const [searchMvt, setSearchMvt] = useState<string>('');
   const [selectedMvtForEdit, setSelectedMvtForEdit] = useState<MouvementStock | null>(null);
   const [isEditMvtModalOpen, setIsEditMvtModalOpen] = useState<boolean>(false);
+  const [editMvtInitialMode, setEditMvtInitialMode] = useState<'MODIFIER' | 'ANNULER'>('MODIFIER');
+
+  // Notifications Toast Globales pour les Opérations de Stock (Réception, Sortie, Annulation)
+  const [globalStockToast, setGlobalStockToast] = useState<{
+    title: string;
+    message: string;
+    type: 'success' | 'info' | 'warn';
+  } | null>(null);
+
+  const triggerStockToast = (title: string, message: string, type: 'success' | 'info' | 'warn' = 'success') => {
+    setGlobalStockToast({ title, message, type });
+    setTimeout(() => {
+      setGlobalStockToast(null);
+    }, 7000);
+  };
 
   const handleMvtSort = (key: 'date' | 'type' | 'numCommande' | 'articleCode' | 'nomClient' | 'quantite') => {
     if (mvtSortKey === key) {
@@ -1274,6 +1289,37 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification Flottante Confirmation Opérations */}
+      {globalStockToast && (
+        <div className={`p-4 rounded-2xl border-2 flex items-center justify-between shadow-2xl animate-in fade-in slide-in-from-top-3 duration-300 ${
+          globalStockToast.type === 'warn'
+            ? 'bg-amber-950/90 border-amber-500/80 text-amber-200'
+            : 'bg-emerald-950/90 border-emerald-500/80 text-emerald-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+              globalStockToast.type === 'warn'
+                ? 'bg-amber-500/20 border-amber-400/50 text-amber-400'
+                : 'bg-emerald-500/20 border-emerald-400/50 text-emerald-400'
+            }`}>
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-black text-slate-100">{globalStockToast.title}</h4>
+              <p className="text-xs text-slate-300 font-medium mt-0.5">{globalStockToast.message}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setGlobalStockToast(null)}
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+            title="Fermer cette notification"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
       {/* Barre d'opérations directes matière (Réception, Sortie manuelle, Inventaire) */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center gap-3">
@@ -2783,6 +2829,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                               type="button"
                               onClick={() => {
                                 setSelectedMvtForEdit(m);
+                                setEditMvtInitialMode('MODIFIER');
                                 setIsEditMvtModalOpen(true);
                               }}
                               className="p-1.5 rounded-lg bg-slate-800 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 hover:border-purple-400 transition cursor-pointer"
@@ -2796,9 +2843,10 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
                                 type="button"
                                 onClick={() => {
                                   setSelectedMvtForEdit(m);
+                                  setEditMvtInitialMode('ANNULER');
                                   setIsEditMvtModalOpen(true);
                                 }}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 hover:border-amber-400 transition cursor-pointer"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 hover:border-rose-400 transition cursor-pointer"
                                 title="Annuler ce mouvement et restituer le stock"
                               >
                                 <RotateCcw className="w-3.5 h-3.5" />
@@ -2837,6 +2885,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
         initialType={operationModalType}
         initialArticle={operationModalArticle}
         articles={articles}
+        chutesBarres={chutesBarres}
         suivisOF={suivisOF}
         mouvements={mouvements}
         onClose={() => {
@@ -2844,12 +2893,14 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           setOperationModalArticle(null);
         }}
         onStockUpdated={onStockUpdated}
+        onShowToast={triggerStockToast}
       />
 
       {/* Modal Modification / Annulation de Mouvement de Stock */}
       <ModifierMouvementModal
         isOpen={isEditMvtModalOpen}
         mouvement={selectedMvtForEdit}
+        initialMode={editMvtInitialMode}
         articles={articles}
         suivisOF={suivisOF}
         onClose={() => {
@@ -2857,6 +2908,7 @@ export const GestionStockTab: React.FC<GestionStockTabProps> = ({
           setSelectedMvtForEdit(null);
         }}
         onMouvementUpdated={onStockUpdated}
+        onShowToast={triggerStockToast}
       />
 
       {/* Modal Dédiée : Gérer les Familles de Chutes */}

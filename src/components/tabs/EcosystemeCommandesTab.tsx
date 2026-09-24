@@ -1761,6 +1761,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   const listeCommandesFamilleActive = statsCommandesParFamille[familleArticle] || [];
 
+  // Délais de production & suivi des interruptions/pauses
+  const [localSuivisOF, setLocalSuivisOF] = useState<SuiviOF[]>([]);
+  const suivisOF = useMemo(() => {
+    if (localSuivisOF.length > 0 && (!suivisOFProp || localSuivisOF.length >= (suivisOFProp?.length || 0))) {
+      return localSuivisOF;
+    }
+    return (suivisOFProp && suivisOFProp.length > 0) ? suivisOFProp : localSuivisOF;
+  }, [suivisOFProp, localSuivisOF]);
+
   // Liste structurée de toutes les commandes distinctes enregistrées ou en cours dans le dossier
   const commandesDossierEnCours = useMemo(() => {
     const currentSavedDossier = editingDossierId ? (dossiers || []).find(d => d.id === editingDossierId) : null;
@@ -1861,7 +1870,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }
 
     return Array.from(map.values()).filter(c => c.ref && c.ref !== 'CMD');
-  }, [editingDossierId, dossiers, lignesCaissons, lignesTabliers, lignesMoustiquaires, lignesPrecadres, numCommandeCaisson, numCommandeSousFace, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre]);
+  }, [editingDossierId, dossiers, suivisOF, lignesCaissons, lignesTabliers, lignesMoustiquaires, lignesPrecadres, numCommandeCaisson, numCommandeSousFace, numCommandeTablier, numCommandeMoustiquaire, numCommandePrecadre]);
 
   // Champs de saisie rapide de la prochaine ligne et références de focus intelligent
   const inputClientRef = useRef<HTMLInputElement>(null);
@@ -1876,15 +1885,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
   const [inputH, setInputH] = useState<string>('');
   const [inputQte, setInputQte] = useState<string>('1');
   const [inputRepere, setInputRepere] = useState<string>('');
-
-  // Délais de production & suivi des interruptions/pauses
-  const [localSuivisOF, setLocalSuivisOF] = useState<SuiviOF[]>([]);
-  const suivisOF = useMemo(() => {
-    if (localSuivisOF.length > 0 && (!suivisOFProp || localSuivisOF.length >= (suivisOFProp?.length || 0))) {
-      return localSuivisOF;
-    }
-    return (suivisOFProp && suivisOFProp.length > 0) ? suivisOFProp : localSuivisOF;
-  }, [suivisOFProp, localSuivisOF]);
 
   const [dateLivraisonPrevisionnelle, setDateLivraisonPrevisionnelle] = useState<string>('');
   const [dateLivraisonPrevisionnelleISO, setDateLivraisonPrevisionnelleISO] = useState<string>('');

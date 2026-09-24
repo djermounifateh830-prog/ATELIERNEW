@@ -29,10 +29,12 @@ interface OperationsStockModalProps {
   initialType?: OperationStockType;
   initialArticle?: Article | null;
   articles: Article[];
+  chutesBarres?: Record<string, any[]>;
   suivisOF?: SuiviOF[];
   mouvements?: MouvementStock[];
   onClose: () => void;
   onStockUpdated: () => void;
+  onShowToast?: (title: string, message: string) => void;
 }
 
 interface SuccessConfirmationData {
@@ -54,10 +56,12 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
   initialType = 'RECEPTION',
   initialArticle = null,
   articles,
+  chutesBarres = {},
   suivisOF = [],
   mouvements = [],
   onClose,
-  onStockUpdated
+  onStockUpdated,
+  onShowToast
 }) => {
   const [activeType, setActiveType] = useState<OperationStockType>(initialType);
   const [selectedCodeArt, setSelectedCodeArt] = useState<string>(initialArticle?.code_art || (articles[0]?.code_art || ''));
@@ -68,6 +72,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
   const [qteReception, setQteReception] = useState<string>('10');
   const [fournisseur, setFournisseur] = useState<string>('SOMO');
   const [numBL, setNumBL] = useState<string>('');
+  const [emplacementStock, setEmplacementStock] = useState<string>('Rack A1');
   const [dateOperation, setDateOperation] = useState<string>(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -90,16 +95,40 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
 
   // Écran de confirmation explicite après validation
   const [successConfirmation, setSuccessConfirmation] = useState<SuccessConfirmationData | null>(null);
+  const [autoCloseCountdown, setAutoCloseCountdown] = useState<number | null>(null);
 
   // État retour utilisateur en cours de saisie
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error' | 'warn' } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Compte à rebours de fermeture automatique après confirmation
+  useEffect(() => {
+    if (!successConfirmation) {
+      setAutoCloseCountdown(null);
+      return;
+    }
+    setAutoCloseCountdown(5);
+    const interval = setInterval(() => {
+      setAutoCloseCountdown(prev => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleCloseWithSuccessToast();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [successConfirmation]);
 
   // Synchroniser à l'ouverture
   useEffect(() => {
     if (isOpen) {
       setActiveType(initialType);
       setSuccessConfirmation(null);
+      setAutoCloseCountdown(null);
       setFeedback(null);
       if (initialArticle) {
         setSelectedCodeArt(initialArticle.code_art);
@@ -123,6 +152,26 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
   const currentArticle = useMemo(() => {
     return articles.find(a => a.code_art === selectedCodeArt) || null;
   }, [articles, selectedCodeArt]);
+
+  // Chutes disponibles en stock pour l'article sélectionné (aide pour éviter de couper des barres neuves)
+  const chutesPourArticle = useMemo(() => {
+    if (!currentArticle || !chutesBarres) return [];
+    const list: Array<{ longueur: number; repere?: string; famille?: string }> = [];
+    Object.entries(chutesBarres).forEach(([famille, chutes]) => {
+      if (Array.isArray(chutes)) {
+        chutes.forEach(c => {
+          if (
+            (c.code_art && c.code_art.toUpperCase() === currentArticle.code_art.toUpperCase()) ||
+            (c.nom_court && c.nom_court.toUpperCase() === currentArticle.designation.toUpperCase()) ||
+            famille.toUpperCase().includes(currentArticle.code_art.toUpperCase())
+          ) {
+            list.push({ longueur: c.longueur, repere: c.repere, famille });
+          }
+        });
+      }
+    });
+    return list.sort((a, b) => b.longueur - a.longueur);
+  }, [currentArticle, chutesBarres]);
 
   // Synchroniser le prix et stock de l'article courant
   useEffect(() => {
@@ -167,6 +216,27 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
     return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
+  const handleCloseModal = () => {
+    setSuccessConfirmation(null);
+    setAutoCloseCountdown(null);
+    setFeedback(null);
+    onClose();
+  };
+
+  const handleCloseWithSuccessToast = () => {
+    if (successConfirmation) {
+      onShowToast?.(
+        successConfirmation.type === 'RECEPTION'
+          ? '📥 Réception Marchandise Enregistrée'
+          : successConfirmation.type === 'SORTIE'
+          ? '📤 Sortie Matière Validée'
+          : '📋 Inventaire Enregistré',
+        `[${successConfirmation.articleCode}] ${successConfirmation.articleDesignation} — Stock à jour : ${successConfirmation.nouveauStock} barres.`
+      );
+    }
+    handleCloseModal();
+  };
+
   // 1. Soumission Réception Marchandise
   const handleValiderReception = async (shouldCloseAfter: boolean) => {
     if (!currentArticle) {
@@ -208,14 +278,18 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
         quantite: qte,
         fournisseur: fournisseur.trim() || undefined,
         numBL: numBL.trim() || undefined,
-        remarque: `Réception Marchandise : +${qte} barres [Stock: ${ancienStock} ➔ ${nouveauStock}]. Fournisseur: ${fournisseur || 'N/A'}${numBL ? ` (BL: ${numBL})` : ''}${remarqueReception ? ` - ${remarqueReception}` : ''}`
+        remarque: `Réception Marchandise : +${qte} barres [Stock: ${ancienStock} ➔ ${nouveauStock}]. Fournisseur: ${fournisseur || 'N/A'}${numBL ? ` (BL: ${numBL})` : ''} | Emplacement: ${emplacementStock}${remarqueReception ? ` - ${remarqueReception}` : ''}`
       };
 
       await StorageService.addMouvement(mvt);
       onStockUpdated();
 
       if (shouldCloseAfter) {
-        onClose();
+        onShowToast?.(
+          '📥 Réception Marchandise Enregistrée',
+          `+${qte} barres [${currentArticle.code_art}] ${currentArticle.designation} (Stock: ${ancienStock} ➔ ${nouveauStock})`
+        );
+        handleCloseModal();
       } else {
         // Afficher l'écran de confirmation avec option de continuer
         setSuccessConfirmation({
@@ -280,7 +354,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
         designation: currentArticle.designation,
         longueurMm: currentArticle.longeur,
         quantite: qte,
-        nomClient: ofConcerne?.client || destinataireClient || undefined,
+        nomClient: ofConcerne?.nomClient || (ofConcerne as any)?.client || destinataireClient || undefined,
         remarque: `Sortie Manuelle : -${qte} barres [Stock: ${ancienStock} ➔ ${nouveauStock}]. Motif: ${motifSortie}${ofConcerne ? ` (OF: ${ofConcerne.numCommande})` : ''}${destinataireClient ? ` (Dest: ${destinataireClient})` : ''}${remarqueSortie ? ` - ${remarqueSortie}` : ''}`
       };
 
@@ -288,7 +362,11 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
       onStockUpdated();
 
       if (shouldCloseAfter) {
-        onClose();
+        onShowToast?.(
+          '📤 Sortie Matière Validée',
+          `-${qte} barres [${currentArticle.code_art}] ${currentArticle.designation} (Stock: ${ancienStock} ➔ ${nouveauStock})`
+        );
+        handleCloseModal();
       } else {
         setSuccessConfirmation({
           type: 'SORTIE',
@@ -298,7 +376,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
           ancienStock,
           nouveauStock,
           motif: motifSortie,
-          destinataire: ofConcerne ? `OF ${ofConcerne.numCommande} (${ofConcerne.client})` : destinataireClient,
+          destinataire: ofConcerne ? `OF ${ofConcerne.numCommande} (${ofConcerne.nomClient || ''})` : destinataireClient,
           date: nowFormatted()
         });
       }
@@ -354,7 +432,11 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
       onStockUpdated();
 
       if (shouldCloseAfter) {
-        onClose();
+        onShowToast?.(
+          '📋 Inventaire Physique Enregistré',
+          `[${currentArticle.code_art}] ${currentArticle.designation} — Stock ajusté : ${nouveauStock} barres (Écart: ${ecart > 0 ? `+${ecart}` : ecart})`
+        );
+        handleCloseModal();
       } else {
         setSuccessConfirmation({
           type: 'INVENTAIRE',
@@ -377,6 +459,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
   // Réinitialiser pour une nouvelle opération en gardant le N° BL & Fournisseur
   const handleResetForNextOperation = () => {
     setSuccessConfirmation(null);
+    setAutoCloseCountdown(null);
     setFeedback(null);
     setQteReception('10');
     setQteSortie('1');
@@ -439,7 +522,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleCloseModal}
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
             title="Fermer la fenêtre"
           >
@@ -573,11 +656,28 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
                   </div>
                 </div>
 
+                {/* Compte à rebours de fermeture automatique avec option d'arrêt */}
+                {autoCloseCountdown !== null && (
+                  <div className="flex items-center justify-center gap-2 text-xs text-emerald-300 font-semibold bg-emerald-950/80 border border-emerald-700/60 rounded-xl px-4 py-2 max-w-md mx-auto shadow">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      Fermeture automatique dans <strong className="font-mono text-emerald-200 text-sm">{autoCloseCountdown}s</strong>...
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAutoCloseCountdown(null)}
+                      className="ml-2 px-2 py-0.5 rounded bg-slate-900 border border-emerald-700 text-[11px] text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
+                    >
+                      Suspendre
+                    </button>
+                  </div>
+                )}
+
                 {/* Boutons d'action clairs post-validation */}
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={onClose}
+                    onClick={handleCloseWithSuccessToast}
                     className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer flex items-center gap-2 shadow"
                   >
                     <X className="w-4 h-4" />
@@ -787,42 +887,51 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Saisie quantité avec raccourcis rapides */}
+                  {/* Saisie quantité avec raccourcis rapides et aperçu réactif immédiat */}
                   <div>
                     <label className="block text-slate-300 font-bold mb-1">
                       Quantité de Barres Neuves Reçues *
                     </label>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        value={qteReception}
-                        onChange={e => setQteReception(e.target.value)}
-                        className="w-32 bg-slate-900 border-2 border-emerald-500 rounded-lg px-3 py-1.5 font-mono text-emerald-300 font-black text-base focus:outline-none shadow-inner"
-                        placeholder="10"
-                      />
-                      {/* Boutons d'ajout rapide */}
-                      <div className="flex flex-wrap items-center gap-1 text-[11px]">
-                        {[1, 5, 10, 20, 50, 100].map(n => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() => setQteReception(String(n))}
-                            className={`px-2.5 py-1 rounded font-mono font-bold transition cursor-pointer ${
-                              qteReception === String(n)
-                                ? 'bg-emerald-500 text-slate-950'
-                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                            }`}
-                          >
-                            {n}
-                          </button>
-                        ))}
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          value={qteReception}
+                          onChange={e => setQteReception(e.target.value)}
+                          className="w-32 bg-slate-900 border-2 border-emerald-500 rounded-lg px-3 py-1.5 font-mono text-emerald-300 font-black text-lg focus:outline-none shadow-inner"
+                          placeholder="10"
+                        />
+                        {/* Boutons d'ajout rapide */}
+                        <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                          {[1, 5, 10, 20, 50, 100].map(n => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setQteReception(String(n))}
+                              className={`px-2.5 py-1 rounded font-mono font-bold transition cursor-pointer ${
+                                qteReception === String(n)
+                                  ? 'bg-emerald-500 text-slate-950'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Aperçu immédiat Stock Actuel -> Stock Après Réception */}
+                      <div className="flex items-center gap-2 bg-slate-950/90 border border-emerald-500/50 rounded-xl px-3 py-1.5 text-xs text-emerald-300 font-semibold shadow">
+                        <span className="text-slate-400">Stock Actuel : <strong className="font-mono text-amber-300 text-sm">{stockActuel}</strong></span>
+                        <ArrowRight className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Après Réception : <strong className="font-mono text-emerald-200 text-base font-black">+{qteRecNum} = {stockApresReception} barres</strong></span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Fournisseur & N° BL */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Fournisseur, N° BL, Emplacement & Date */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-slate-300 font-semibold mb-1">
                         Fournisseur
@@ -868,6 +977,35 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
 
                     <div>
                       <label className="block text-slate-300 font-semibold mb-1">
+                        📍 Emplacement / Rack
+                      </label>
+                      <input
+                        type="text"
+                        value={emplacementStock}
+                        onChange={e => setEmplacementStock(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-slate-100 font-semibold focus:outline-none"
+                        placeholder="Rack A1, Casier..."
+                      />
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {['Rack A1', 'Rack B2', 'Casier Bas', 'Atelier Débit'].map(r => (
+                          <button
+                            key={r}
+                            type="button"
+                            onClick={() => setEmplacementStock(r)}
+                            className={`text-[10px] font-bold px-1.5 py-0.2 rounded border transition cursor-pointer ${
+                              emplacementStock === r
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                                : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">
                         Date de Réception
                       </label>
                       <input
@@ -878,6 +1016,21 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
                       />
                     </div>
                   </div>
+
+                  {/* Statistiques calculées pour cette réception */}
+                  {currentArticle && qteRecNum > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-2.5 bg-slate-950/80 rounded-xl border border-emerald-950 text-xs">
+                      <div className="text-slate-400">
+                        📏 Mètres linéaires reçus : <span className="font-mono font-bold text-slate-200">{((qteRecNum * currentArticle.longeur) / 1000).toFixed(1)} m</span>
+                      </div>
+                      <div className="text-slate-400">
+                        💰 Valeur approvisionnement : <span className="font-mono font-bold text-amber-300">{(qteRecNum * (currentArticle.prix_unitaire || 0)).toLocaleString()} DZD</span>
+                      </div>
+                      <div className="text-slate-400">
+                        🏢 Valeur stock final : <span className="font-mono font-bold text-emerald-400">{(stockApresReception * (currentArticle.prix_unitaire || 0)).toLocaleString()} DZD</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Option mise à jour prix article */}
                   <div className="p-2.5 bg-slate-900/80 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between gap-2">
@@ -948,39 +1101,73 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
                     </div>
                   )}
 
-                  {/* Saisie quantité sortie avec boutons rapides */}
+                  {/* Saisie quantité sortie avec boutons rapides et aperçu immédiat */}
                   <div>
                     <label className="block text-slate-300 font-bold mb-1">
                       Nombre de Barres à Sortir *
                     </label>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        value={qteSortie}
-                        onChange={e => setQteSortie(e.target.value)}
-                        className="w-32 bg-slate-900 border-2 border-rose-500 rounded-lg px-3 py-1.5 font-mono text-rose-300 font-black text-base focus:outline-none shadow-inner"
-                        placeholder="1"
-                      />
-                      {/* Boutons d'ajout rapide */}
-                      <div className="flex flex-wrap items-center gap-1 text-[11px]">
-                        {[1, 2, 3, 5, 10].map(n => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() => setQteSortie(String(n))}
-                            className={`px-2.5 py-1 rounded font-mono font-bold transition cursor-pointer ${
-                              qteSortie === String(n)
-                                ? 'bg-rose-500 text-slate-950'
-                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                            }`}
-                          >
-                            {n}
-                          </button>
-                        ))}
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          value={qteSortie}
+                          onChange={e => setQteSortie(e.target.value)}
+                          className="w-32 bg-slate-900 border-2 border-rose-500 rounded-lg px-3 py-1.5 font-mono text-rose-300 font-black text-lg focus:outline-none shadow-inner"
+                          placeholder="1"
+                        />
+                        {/* Boutons d'ajout rapide */}
+                        <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                          {[1, 2, 3, 5, 10].map(n => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setQteSortie(String(n))}
+                              className={`px-2.5 py-1 rounded font-mono font-bold transition cursor-pointer ${
+                                qteSortie === String(n)
+                                  ? 'bg-rose-500 text-slate-950'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Aperçu immédiat Stock Actuel -> Stock Après Sortie */}
+                      <div className={`flex items-center gap-2 bg-slate-950/90 border rounded-xl px-3 py-1.5 text-xs font-semibold shadow ${
+                        isSortieExcessive ? 'border-rose-500 text-rose-300' : 'border-rose-500/40 text-rose-300'
+                      }`}>
+                        <span className="text-slate-400">Stock Actuel : <strong className="font-mono text-amber-300 text-sm">{stockActuel}</strong></span>
+                        <ArrowRight className="w-4 h-4 text-rose-400 shrink-0" />
+                        <span>Après Sortie : <strong className={`font-mono text-base font-black ${isSortieExcessive ? 'text-rose-400 animate-pulse' : 'text-slate-200'}`}>-{qteSortieNum} = {stockApresSortie} barres</strong></span>
                       </div>
                     </div>
                   </div>
+
+                  {/* Suggestion intelligente des chutes réutilisables */}
+                  {chutesPourArticle.length > 0 && (
+                    <div className="p-3 bg-amber-950/40 border border-amber-500/40 rounded-xl space-y-1.5 text-xs">
+                      <div className="flex items-center gap-2 text-amber-300 font-bold">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>💡 {chutesPourArticle.length} chute(s) réutilisable(s) en stock pour ce profilé :</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pl-6">
+                        {chutesPourArticle.slice(0, 6).map((c, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-slate-900 border border-amber-600/50 text-amber-200 rounded font-mono font-bold text-[11px]">
+                            {c.longueur} mm {c.repere ? `(${c.repere})` : ''}
+                          </span>
+                        ))}
+                        {chutesPourArticle.length > 6 && (
+                          <span className="text-slate-400 text-[10px] self-center">+{chutesPourArticle.length - 6} autres</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-amber-200/80 pl-6">
+                        Conseil atelier : vérifiez si l'une de ces chutes convient à votre besoin avant d'entamer une barre neuve !
+                      </p>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
@@ -1014,7 +1201,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
                         <option value="">-- Aucun OF spécifique --</option>
                         {ofsDisponibles.map(o => (
                           <option key={o.id} value={o.id}>
-                            OF {o.numCommande} — {o.client}
+                            OF {o.numCommande} — {o.nomClient || ''}
                           </option>
                         ))}
                       </select>
@@ -1176,7 +1363,7 @@ export const OperationsStockModal: React.FC<OperationsStockModalProps> = ({
           <div className="bg-slate-950 px-5 py-3.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition cursor-pointer"
             >
               Annuler / Fermer
