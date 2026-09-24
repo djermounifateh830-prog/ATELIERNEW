@@ -8,13 +8,13 @@ import { Article } from '../types';
 // Couleurs normalisées usuelles en menuiserie aluminium / volets roulants
 export const COULEURS_CONNUES: { id: string; labels: string[]; codeRal?: string }[] = [
   { id: 'BL', labels: ['BL', 'BLANC', 'WHITE', '9010', '9016'], codeRal: '9010' },
-  { id: '7024', labels: ['7024', 'ANTHRACITE', 'GRIS ANTHRACITE', 'GRIS FONCE'], codeRal: '7024' },
-  { id: '7016', labels: ['7016', 'ANTHRACITE 7016'], codeRal: '7016' },
-  { id: '9005', labels: ['9005', 'NOIR', 'BLACK'], codeRal: '9005' },
-  { id: '9006', labels: ['9006', 'GRIS CLAIR', 'ALU GRIS', 'METAL'], codeRal: '9006' },
-  { id: '9007', labels: ['9007', 'GRIS METAL 9007'], codeRal: '9007' },
-  { id: '8014', labels: ['8014', 'BRUN', 'MARRON', 'CHOCOLAT'], codeRal: '8014' },
-  { id: '1013', labels: ['1013', 'BEIGE', 'IVOIRE'], codeRal: '1013' },
+  { id: '7024', labels: ['7024', 'G7024', 'RAL7024', 'GR', 'GRIS', 'ANTHRACITE', 'GRIS ANTHRACITE', 'GRIS FONCE'], codeRal: '7024' },
+  { id: '7016', labels: ['7016', 'G7016', 'RAL7016', 'ANTHRACITE 7016'], codeRal: '7016' },
+  { id: '9005', labels: ['9005', 'G9005', 'RAL9005', 'NOIR', 'BLACK', 'NR'], codeRal: '9005' },
+  { id: '9006', labels: ['9006', 'G9006', 'RAL9006', 'GRIS CLAIR', 'ALU GRIS', 'METAL'], codeRal: '9006' },
+  { id: '9007', labels: ['9007', 'G9007', 'RAL9007', 'GRIS METAL', 'GRIS METAL 9007'], codeRal: '9007' },
+  { id: '8014', labels: ['8014', 'G8014', 'RAL8014', 'BRUN', 'MARRON', 'CHOCOLAT'], codeRal: '8014' },
+  { id: '1013', labels: ['1013', 'G1013', 'RAL1013', 'BEIGE', 'IVOIRE'], codeRal: '1013' },
   { id: 'CHENE', labels: ['CHENE', 'FAUX BOIS', 'BOIS', 'GOLDEN OAK', 'CHENE DORE'], codeRal: 'CHENE' },
   { id: 'BRONZE', labels: ['BRONZE', 'ANODISE'], codeRal: 'BRONZE' },
 ];
@@ -25,22 +25,22 @@ export const COULEURS_CONNUES: { id: string; labels: string[]; codeRal?: string 
  */
 export function extraireCouleur(texte?: string): string | null {
   if (!texte) return null;
-  const upper = texte.toUpperCase();
+  const upper = texte.toUpperCase().trim();
 
-  // Recherche directe de codes RAL 4 chiffres (ex: 7024, 9010, 8014, 7016, etc.)
-  const ralMatch = upper.match(/\b(1013|7016|7024|8014|9005|9006|9007|9010|9016)\b/);
+  // Recherche directe de codes RAL 4 chiffres (ex: 7024, G7024, RAL7024, 9010, 8014, 7016, etc.)
+  const ralMatch = upper.match(/(?:RAL|G|R)?(1013|7016|7024|8014|9005|9006|9007|9010|9016)/);
   if (ralMatch) {
     const code = ralMatch[1];
-    const found = COULEURS_CONNUES.find(c => c.labels.includes(code));
+    const found = COULEURS_CONNUES.find(c => c.id === code || c.labels.includes(code));
     return found ? found.id : code;
   }
 
   // Recherche des labels de couleurs
   for (const c of COULEURS_CONNUES) {
     for (const label of c.labels) {
-      // Pour les labels courts comme 'BL', vérifier avec délimiteur de mot
+      // Pour les labels courts comme 'BL', 'NR', 'GR', vérifier avec délimiteur de mot
       if (label.length <= 2) {
-        const regex = new RegExp(`\\b${label}\\b`, 'i');
+        const regex = new RegExp(`(^|[^A-Z0-9])${label}([^A-Z0-9]|$)`, 'i');
         if (regex.test(upper)) return c.id;
       } else {
         if (upper.includes(label)) return c.id;
@@ -210,24 +210,29 @@ export function optimiserListeCoulissesMSTQ(cadre: Article | null, articlesCouli
 }
 
 /**
+ * Détermine si un profilé (Tablier, Lame Finale, Coulisse) correspond au standard 55mm (sinon 43mm/40mm).
+ */
+export function isHauteur55(art?: Article | { designation?: string; hauteur?: number } | null): boolean {
+  if (!art) return false;
+  if (art.hauteur === 55) return true;
+  if (art.hauteur === 43 || art.hauteur === 40) return false;
+  const d = (art.designation || '').toUpperCase();
+  return /\b55\b|TAB\s*55|TBL\s*55|LF\s*55|FINALE\s*55/i.test(d);
+}
+
+/**
  * Tablier : Trouve automatiquement la Lame Finale correspondant à la Lame de Tablier.
- * Règle demandée :
- * "dans le tablier barel si la43 bl la lame finale sera bl aussi"
+ * - Assortiment rigoureux de la hauteur (55mm avec 55mm, 43mm avec 43mm)
+ * - Assortiment automatique de la couleur (7024/G7024, BL, 9007, etc.)
  */
 export function trouverLameFinalePourTablier(tablier: Article | null, articlesLameFinale: Article[]): Article | null {
   if (!tablier || articlesLameFinale.length === 0) return articlesLameFinale[0] || null;
 
-  const desig = tablier.designation.toUpperCase();
-  const is55 = desig.includes('55') || tablier.code_art === 'ART0048';
+  const is55 = isHauteur55(tablier);
   const couleurTablier = extraireCouleur(tablier.designation);
 
   // 1. Filtrer les lames finales par hauteur (55 vs 43)
-  const lfParHauteur = articlesLameFinale.filter(lf => {
-    const lfDesig = lf.designation.toUpperCase();
-    const lfIs55 = lfDesig.includes('55') || lf.code_art === 'ART0046';
-    return is55 ? lfIs55 : !lfIs55;
-  });
-
+  const lfParHauteur = articlesLameFinale.filter(lf => isHauteur55(lf) === is55);
   const pool = lfParHauteur.length > 0 ? lfParHauteur : articlesLameFinale;
 
   // 2. Chercher avec la même couleur
@@ -237,11 +242,7 @@ export function trouverLameFinalePourTablier(tablier: Article | null, articlesLa
   }
 
   // 3. Fallback : standard / blanc ou premier
-  const matchBlanc = pool.find(lf => {
-    const c = extraireCouleur(lf.designation);
-    return !c || c === 'BL';
-  });
-
+  const matchBlanc = pool.find(lf => extraireCouleur(lf.designation) === 'BL');
   return matchBlanc || pool[0];
 }
 
@@ -251,16 +252,11 @@ export function trouverLameFinalePourTablier(tablier: Article | null, articlesLa
 export function trouverCoulissePourTablier(tablier: Article | null, articlesCoulisses: Article[]): Article | null {
   if (!tablier || articlesCoulisses.length === 0) return articlesCoulisses[0] || null;
 
-  const desig = tablier.designation.toUpperCase();
-  const is55 = desig.includes('55');
+  const is55 = isHauteur55(tablier);
   const couleurTablier = extraireCouleur(tablier.designation);
 
   // Filtrer par type / hauteur
-  const coulissesCompatibles = articlesCoulisses.filter(c => {
-    const cDesig = c.designation.toUpperCase();
-    return is55 ? (cDesig.includes('55') || !cDesig.includes('43')) : (cDesig.includes('43') || !cDesig.includes('55'));
-  });
-
+  const coulissesCompatibles = articlesCoulisses.filter(c => isHauteur55(c) === is55);
   const pool = coulissesCompatibles.length > 0 ? coulissesCompatibles : articlesCoulisses;
 
   if (couleurTablier) {
@@ -268,7 +264,8 @@ export function trouverCoulissePourTablier(tablier: Article | null, articlesCoul
     if (match) return match;
   }
 
-  return pool[0];
+  const matchBlanc = pool.find(c => extraireCouleur(c.designation) === 'BL');
+  return matchBlanc || pool[0];
 }
 
 /**
@@ -282,16 +279,14 @@ export function optimiserListeLamesFinales(tablier: Article | null, articlesLame
     return { recommandees: articlesLameFinale, autres: [] };
   }
 
-  const desig = tablier.designation.toUpperCase();
-  const is55 = desig.includes('55') || tablier.code_art === 'ART0048';
+  const is55 = isHauteur55(tablier);
   const couleurTablier = extraireCouleur(tablier.designation);
 
   const recommandees: Article[] = [];
   const autres: Article[] = [];
 
   for (const lf of articlesLameFinale) {
-    const lfDesig = lf.designation.toUpperCase();
-    const lfIs55 = lfDesig.includes('55') || lf.code_art === 'ART0046';
+    const lfIs55 = isHauteur55(lf);
     if (is55 === lfIs55) {
       recommandees.push(lf);
     } else {

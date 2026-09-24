@@ -290,15 +290,30 @@ export const TablierTab: React.FC<TablierTabProps> = ({
     majDate?: string;
     majAvecLF?: boolean;
     hauteurLameSuggeree?: number;
+    couleurDetectee?: string;
+    articleSuggere?: Article;
+    appliquerProfilEtCouleur?: boolean;
   }) => {
     if (!data.lignes || data.lignes.length === 0) return;
 
-    if (data.majNumCommande) setRefCommandeDefaut(data.majNumCommande);
-    if (data.majClient) setNomClientDefaut(data.majClient);
-    if (data.majDate) setDateCommandeDefaut(data.majDate);
+    // Mise à jour de l'en-tête UNIQUEMENT si explicitement demandée (par défaut protégée/conservée)
+    if (data.majNumCommande && data.majNumCommande.trim()) setRefCommandeDefaut(data.majNumCommande.trim());
+    if (data.majClient && data.majClient.trim()) setNomClientDefaut(data.majClient.trim());
+    if (data.majDate && data.majDate.trim()) setDateCommandeDefaut(data.majDate.trim());
 
-    const hLame = data.hauteurLameSuggeree || saisieHauteurLame;
+    // Application automatique du profilé & couleur détectés depuis le PDF
+    if (data.articleSuggere) {
+      setSelectedArticle(data.articleSuggere);
+    }
+    if (data.couleurDetectee) {
+      setColorisDefaut(data.couleurDetectee);
+    }
+
+    const hLame = data.hauteurLameSuggeree || (data.articleSuggere?.hauteur) || saisieHauteurLame;
     if (hLame) setSaisieHauteurLame(hLame);
+    if (data.majAvecLF !== undefined) {
+      setSaisieAvecLameFinale(data.majAvecLF);
+    }
 
     const isVolet = saisieTypeFabrication === 'VOLET_COMPLET';
     const numCmd = (data.majNumCommande || refCommandeDefaut || 'S-A26839').trim();
@@ -888,15 +903,18 @@ export const TablierTab: React.FC<TablierTabProps> = ({
       )}
 
       {/* Modal de chargement automatique de lignes depuis PDF */}
-      <ChargementLignesPdfModal
-        isOpen={isPdfModalOpen}
-        onClose={() => setIsPdfModalOpen(false)}
-        familleActive="TABLIER"
-        nomProfilActif={selectedArticle?.designation || `${saisieHauteurLame}mm`}
-        numCommandeActuel={refCommandeDefaut}
-        nomClientActuel={nomClientDefaut}
-        onValiderImportLignes={handleValiderImportLignes}
-      />
+      {isPdfModalOpen && (
+        <ChargementLignesPdfModal
+          isOpen={isPdfModalOpen}
+          onClose={() => setIsPdfModalOpen(false)}
+          familleActive="TABLIER"
+          nomProfilActif={selectedArticle?.designation || `${saisieHauteurLame}mm`}
+          numCommandeActuel={refCommandeDefaut}
+          nomClientActuel={nomClientDefaut}
+          articles={safeArticles}
+          onValiderImportLignes={handleValiderImportLignes}
+        />
+      )}
     </div>
   );
 };

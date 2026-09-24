@@ -43,7 +43,9 @@ import {
   optimiserListeCoulissesMSTQ,
   trouverLameFinalePourTablier,
   trouverCoulissePourTablier,
-  optimiserListeLamesFinales
+  optimiserListeLamesFinales,
+  extraireCouleur,
+  isHauteur55
 } from '../../utils/articlePairingService';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
@@ -622,10 +624,10 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
 
 const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: number): number => {
   const str = `${code || ''} ${desig || ''}`.toUpperCase();
-  if (str.includes('55') || code === 'ART0048' || code === 'ART0046') {
+  if (/\b55\b|TAB\s*55|TBL\s*55|LF\s*55|FINALE\s*55/i.test(str)) {
     return 55;
   }
-  if (str.includes('43') || str.includes('40') || code === 'ART0040' || code === 'ART0045' || code === 'ART0047') {
+  if (/\b(43|40)\b|TAB\s*43|TBL\s*43|LF\s*43|FINALE\s*43/i.test(str)) {
     return 43;
   }
   if (fallbackHauteur && fallbackHauteur > 0 && fallbackHauteur <= 60 && fallbackHauteur !== 45) {
@@ -1003,7 +1005,25 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     if (tablierConfig.glArticleCode && articlesCoulisses.length > 0 && !articlesCoulisses.some(a => a.code_art === tablierConfig.glArticleCode)) {
       setTablierConfig(prev => ({ ...prev, glArticleCode: '' }));
     }
-  }, [articlesTablier, articlesLameFinale, articlesCoulisses, tablierConfig.articleCode, tablierConfig.lfArticleCode, tablierConfig.glArticleCode]);
+
+    // Synchronisation automatique de la Lame Finale cohérente avec le Tablier actif
+    if (currentTBLArticle && articlesLameFinale.length > 0) {
+      const bestLF = trouverLameFinalePourTablier(currentTBLArticle, articlesLameFinale);
+      const isCurLFMatching = currentLFArticle && (isHauteur55(currentLFArticle) === isHauteur55(currentTBLArticle));
+      const h = getHauteurLameTablier(currentTBLArticle.code_art, currentTBLArticle.designation, currentTBLArticle.hauteur);
+      
+      setTablierConfig(prev => {
+        if (!prev.lfArticleCode || !isCurLFMatching) {
+          return {
+            ...prev,
+            hauteurLame: h,
+            lfArticleCode: bestLF ? bestLF.code_art : prev.lfArticleCode
+          };
+        }
+        return prev;
+      });
+    }
+  }, [articlesTablier, articlesLameFinale, articlesCoulisses, tablierConfig.articleCode, tablierConfig.lfArticleCode, tablierConfig.glArticleCode, currentTBLArticle, currentLFArticle]);
 
   useEffect(() => {
     if (precadreConfig.articleCode && articlesPrecadre.length > 0 && !articlesPrecadre.some(a => a.code_art === precadreConfig.articleCode)) {
@@ -2406,7 +2426,9 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
   const handleStartEditTablier = (t: CommandeTablier) => {
     const tblObj = articlesTablier.find(a => a.code_art === t.articleCode) || articlesTablier[0];
-    const lfObj = articlesLameFinale.find(a => a.code_art === t.lfArticleCode) || articlesLameFinale[0];
+    const bestMatchingLF = trouverLameFinalePourTablier(tblObj || null, articlesLameFinale);
+    const existingLF = articlesLameFinale.find(a => a.code_art === t.lfArticleCode);
+    const resolvedLF = existingLF || bestMatchingLF || articlesLameFinale[0];
     const glObj = articlesCoulisses.find(a => a.code_art === t.glArticleCode) || articlesCoulisses[0];
 
     setEditingTablierId(t.id);
@@ -2421,8 +2443,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       avecLameFinale: t.avecLameFinale,
       articleCode: t.articleCode || tblObj.code_art,
       articleDesignation: t.articleDesignation || tblObj.designation,
-      lfArticleCode: t.lfArticleCode || lfObj.code_art,
-      lfArticleDesignation: t.lfArticleDesignation || lfObj.designation,
+      lfArticleCode: resolvedLF?.code_art || '',
+      lfArticleDesignation: resolvedLF?.designation || '',
       glArticleCode: t.glArticleCode || glObj.code_art,
       glArticleDesignation: t.glArticleDesignation || glObj.designation
     });
@@ -2474,6 +2496,21 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setEditingTablierId(null);
     setEditTablierForm(null);
     showFlashNotification('✓ Ligne de tablier/volet mise à jour avec succès.', 'success');
+  };
+
+  // Modification directe et instantanée de la Lame Finale d'une ligne de tablier sans avoir à effacer la ligne
+  const handleChangeLameFinaleLigne = (ligneId: string, nouveauCodeLF: string) => {
+    const lfObj = articlesLameFinale.find(a => a.code_art === nouveauCodeLF);
+    setLignesTabliers(prev => prev.map(t => {
+      if (t.id !== ligneId) return t;
+      return {
+        ...t,
+        avecLameFinale: true,
+        lfArticleCode: nouveauCodeLF,
+        lfArticleDesignation: lfObj?.designation || t.lfArticleDesignation
+      };
+    }));
+    showFlashNotification(`✓ Lame Finale mise à jour : ${lfObj?.designation || nouveauCodeLF}`, 'success');
   };
 
   // --- ÉDITION DIRECTE DES MOUSTIQUAIRES ---
@@ -3933,13 +3970,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setDureePauseJours(0);
     setAfficherEditeurLivraison(false);
 
-    const premierTBL = articlesTablier[0]?.code_art || '';
-    const premierLF = articlesLameFinale[0]?.code_art || '';
-    const premierGL = articlesCoulisses[0]?.code_art || '';
+    const premierTBLArticle = articlesTablier[0] || null;
+    const matchingLF = trouverLameFinalePourTablier(premierTBLArticle, articlesLameFinale);
+    const matchingGL = trouverCoulissePourTablier(premierTBLArticle, articlesCoulisses);
+    const premierTBL = premierTBLArticle?.code_art || '';
+    const premierLF = matchingLF?.code_art || articlesLameFinale[0]?.code_art || '';
+    const premierGL = matchingGL?.code_art || articlesCoulisses[0]?.code_art || '';
+    const hLameInitial = getHauteurLameTablier(premierTBLArticle?.code_art, premierTBLArticle?.designation, premierTBLArticle?.hauteur);
     setTablierConfig({
       typeFabrication: 'TABLIER_SEUL',
       avecLameFinale: false,
-      hauteurLame: 43,
+      hauteurLame: hLameInitial,
       articleCode: premierTBL,
       lfArticleCode: premierLF,
       glArticleCode: premierGL
@@ -3977,6 +4018,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     });
 
     // 10. Nettoyer l'état parent pour éviter toute réinjection intempestive
+    setIsPdfModalOpen(false);
     if (onClearSelectedDossier) {
       onClearSelectedDossier();
     }
@@ -4057,6 +4099,7 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     setInputH('');
     setInputQte('1');
     setInputRepere('');
+    setIsPdfModalOpen(false);
     showFlashNotification(`➕ Nouvelle commande pour ${clientDeMonClient || 'ce dossier'}. Saisissez son N° de commande.`, 'info');
     editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setTimeout(() => {
@@ -4673,10 +4716,13 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     majDate?: string;
     majAvecLF?: boolean;
     hauteurLameSuggeree?: number;
+    couleurDetectee?: string;
+    articleSuggere?: Article;
+    appliquerProfilEtCouleur?: boolean;
   }) => {
     if (!data.lignes || data.lignes.length === 0) return;
 
-    // 1. Mise à jour de l'en-tête si souhaité par l'utilisateur
+    // 1. Mise à jour de l'en-tête UNIQUEMENT si expressément demandée par l'utilisateur
     if (data.majNumCommande && data.majNumCommande.trim()) {
       setActiveNumCommande(data.majNumCommande.trim());
     }
@@ -4687,14 +4733,41 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       setDateCommande(data.majDate.trim());
     }
 
-    // 2. Mise à jour des options tablier (Lame Finale)
+    // 2. Application automatique du profilé & couleur détectés pour les tabliers
+    let targetTBLArticle = (data.articleSuggere && (familleArticle === 'TABLIER' || !currentTBLArticle)) ? data.articleSuggere : currentTBLArticle;
+    let matchingLF = targetTBLArticle ? trouverLameFinalePourTablier(targetTBLArticle, articlesLameFinale) : null;
+    let targetLFArticle = matchingLF || currentLFArticle;
+    let targetGLArticle = currentGLArticle;
+
+    if (data.articleSuggere && (familleArticle === 'TABLIER' || !currentTBLArticle)) {
+      targetTBLArticle = data.articleSuggere;
+      matchingLF = trouverLameFinalePourTablier(data.articleSuggere, articlesLameFinale);
+      if (matchingLF) targetLFArticle = matchingLF;
+
+      const coul = extraireCouleur(data.articleSuggere.designation);
+      if (coul) {
+        const matchingGL = articlesCoulisses.find(c => extraireCouleur(c.designation) === coul);
+        if (matchingGL) targetGLArticle = matchingGL;
+      }
+
+      setTablierConfig(prev => ({
+        ...prev,
+        articleCode: data.articleSuggere!.code_art,
+        hauteurLame: data.hauteurLameSuggeree || data.articleSuggere!.hauteur || prev.hauteurLame,
+        lfArticleCode: matchingLF ? matchingLF.code_art : prev.lfArticleCode,
+        glArticleCode: (matchingLF && coul) ? (targetGLArticle?.code_art || prev.glArticleCode) : prev.glArticleCode
+      }));
+    }
+
+    // 3. Mise à jour des options tablier (Lame Finale)
+    const avecLFEffective = data.majAvecLF !== undefined ? data.majAvecLF : tablierConfig.avecLameFinale;
     if (data.majAvecLF !== undefined) {
       setTablierConfig(prev => ({ ...prev, avecLameFinale: data.majAvecLF! }));
     }
 
     const hLame = getHauteurLameTablier(
-      tablierConfig.articleCode,
-      currentTBLArticle?.designation,
+      targetTBLArticle?.code_art || tablierConfig.articleCode,
+      targetTBLArticle?.designation,
       data.hauteurLameSuggeree || tablierConfig.hauteurLame
     );
 
@@ -4718,14 +4791,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
         repere: ligne.repere || `SA-${idx + 1}`,
         nb_lame: nbLames,
         typeFabrication: tablierConfig.typeFabrication,
-        avecLameFinale: data.majAvecLF !== undefined ? data.majAvecLF : tablierConfig.avecLameFinale,
+        avecLameFinale: avecLFEffective,
         avecCoulisses: isVolet,
-        articleCode: currentTBLArticle?.code_art || tablierConfig.articleCode || undefined,
-        articleDesignation: currentTBLArticle?.designation || '',
-        lfArticleCode: tablierConfig.avecLameFinale ? (currentLFArticle?.code_art || tablierConfig.lfArticleCode) : undefined,
-        lfArticleDesignation: tablierConfig.avecLameFinale ? (currentLFArticle?.designation || '') : undefined,
-        glArticleCode: isVolet ? (currentGLArticle?.code_art || tablierConfig.glArticleCode) : undefined,
-        glArticleDesignation: isVolet ? (currentGLArticle?.designation || '') : undefined,
+        articleCode: targetTBLArticle?.code_art || tablierConfig.articleCode || undefined,
+        articleDesignation: targetTBLArticle?.designation || '',
+        lfArticleCode: avecLFEffective ? (targetLFArticle?.code_art || tablierConfig.lfArticleCode) : undefined,
+        lfArticleDesignation: avecLFEffective ? (targetLFArticle?.designation || '') : undefined,
+        glArticleCode: isVolet ? (targetGLArticle?.code_art || tablierConfig.glArticleCode) : undefined,
+        glArticleDesignation: isVolet ? (targetGLArticle?.designation || '') : undefined,
         typeOuvrant: ligne.typeOuvrant || undefined
       };
     });
@@ -4796,7 +4869,27 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
               avecCoulisses: nextType === 'VOLET_COMPLET'
             };
           }
-          if (optKey === 'lameFinale') return { ...t, avecLameFinale: !t.avecLameFinale };
+          if (optKey === 'lameFinale') {
+            const nextAvec = !t.avecLameFinale;
+            let targetLFCode = t.lfArticleCode;
+            let targetLFDesig = t.lfArticleDesignation;
+            if (nextAvec) {
+              const tblObj = articlesTablier.find(a => a.code_art === t.articleCode);
+              const matchingLF = trouverLameFinalePourTablier(tblObj || null, articlesLameFinale);
+              const currentLFObj = articlesLameFinale.find(a => a.code_art === targetLFCode);
+              const needsUpdate = !targetLFCode || !currentLFObj || (tblObj && isHauteur55(tblObj) !== isHauteur55(currentLFObj));
+              if (needsUpdate && matchingLF) {
+                targetLFCode = matchingLF.code_art;
+                targetLFDesig = matchingLF.designation;
+              }
+            }
+            return {
+              ...t,
+              avecLameFinale: nextAvec,
+              lfArticleCode: nextAvec ? targetLFCode : undefined,
+              lfArticleDesignation: nextAvec ? targetLFDesig : undefined
+            };
+          }
           return t;
         })
       );
@@ -6428,11 +6521,12 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       // Règle d'or : si LA43 BL -> Lame Finale automatiquement BL (même couleur & adéquation)
                       const bestLF = trouverLameFinalePourTablier(found || null, articlesLameFinale);
                       const bestGL = trouverCoulissePourTablier(found || null, articlesCoulisses);
+                      const h = getHauteurLameTablier(found?.code_art, found?.designation, found?.hauteur);
 
                       setTablierConfig(prev => ({
                         ...prev,
                         articleCode: code,
-                        hauteurLame: found?.hauteur || 43,
+                        hauteurLame: h,
                         lfArticleCode: bestLF ? bestLF.code_art : prev.lfArticleCode,
                         glArticleCode: bestGL ? bestGL.code_art : prev.glArticleCode
                       }));
@@ -6499,7 +6593,29 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setTablierConfig(prev => ({ ...prev, avecLameFinale: true }))}
+                      onClick={() => {
+                        const bestLF = trouverLameFinalePourTablier(currentTBLArticle, articlesLameFinale);
+                        setTablierConfig(prev => {
+                          const currentLF = articlesLameFinale.find(a => a.code_art === prev.lfArticleCode);
+                          const isMatch = currentLF && currentTBLArticle && (isHauteur55(currentLF) === isHauteur55(currentTBLArticle));
+                          const targetLFCode = (!prev.lfArticleCode || !isMatch) && bestLF ? bestLF.code_art : prev.lfArticleCode;
+                          return {
+                            ...prev,
+                            avecLameFinale: true,
+                            lfArticleCode: targetLFCode
+                          };
+                        });
+                        if (bestLF) {
+                          setLfTechParams({
+                            longeur: bestLF.longeur || 6000,
+                            lame: (bestLF.lame && bestLF.lame <= 6) ? bestLF.lame : 4.0,
+                            debordement: bestLF.debordement || 0,
+                            refus_min: bestLF.refus_min || 250,
+                            refus_max: bestLF.refus_max || 1000,
+                            isDirty: false
+                          });
+                        }
+                      }}
                       className={`py-1.5 rounded-lg text-xs font-bold transition text-center cursor-pointer ${
                         tablierConfig.avecLameFinale ? 'bg-emerald-500 text-slate-950 font-black shadow' : 'bg-slate-900 text-slate-400 border border-slate-800'
                       }`}
@@ -8760,7 +8876,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                       value={editTablierForm.articleCode || ''}
                                       onChange={e => {
                                         const a = articlesTablier.find(x => x.code_art === e.target.value);
-                                        setEditTablierForm({ ...editTablierForm, articleCode: e.target.value, articleDesignation: a?.designation || '' });
+                                        const matchingLF = trouverLameFinalePourTablier(a || null, articlesLameFinale);
+                                        setEditTablierForm({
+                                          ...editTablierForm,
+                                          articleCode: e.target.value,
+                                          articleDesignation: a?.designation || '',
+                                          lfArticleCode: matchingLF ? matchingLF.code_art : editTablierForm.lfArticleCode,
+                                          lfArticleDesignation: matchingLF ? matchingLF.designation : editTablierForm.lfArticleDesignation
+                                        });
                                       }}
                                       className="ml-1 bg-slate-900 border border-sky-500/50 rounded px-1 py-0.5 text-[10px] text-sky-200"
                                     >
@@ -8770,7 +8893,17 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                   <div className="flex items-center gap-1.5">
                                     <button
                                       type="button"
-                                      onClick={() => setEditTablierForm({ ...editTablierForm, avecLameFinale: !editTablierForm.avecLameFinale })}
+                                      onClick={() => {
+                                        const nextAvec = !editTablierForm.avecLameFinale;
+                                        const currentTbl = articlesTablier.find(x => x.code_art === editTablierForm.articleCode);
+                                        const matchingLF = trouverLameFinalePourTablier(currentTbl || null, articlesLameFinale);
+                                        setEditTablierForm({
+                                          ...editTablierForm,
+                                          avecLameFinale: nextAvec,
+                                          lfArticleCode: nextAvec ? (editTablierForm.lfArticleCode || matchingLF?.code_art) : editTablierForm.lfArticleCode,
+                                          lfArticleDesignation: nextAvec ? (editTablierForm.lfArticleDesignation || matchingLF?.designation) : editTablierForm.lfArticleDesignation
+                                        });
+                                      }}
                                       className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold border transition ${editTablierForm.avecLameFinale ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
                                     >
                                       {editTablierForm.avecLameFinale ? '✓ Avec LF' : '✕ Sans LF'}
@@ -8783,6 +8916,30 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                       {editTablierForm.typeFabrication === 'VOLET_COMPLET' ? 'Volet (+Coulisses)' : 'Tablier Seul'}
                                     </button>
                                   </div>
+                                  {editTablierForm.avecLameFinale && (
+                                    <div className="flex items-center gap-1 mt-1 bg-emerald-950/40 p-1 rounded border border-emerald-500/40">
+                                      <span className="text-[9px] text-emerald-300 font-bold whitespace-nowrap">Lame Finale :</span>
+                                      <select
+                                        value={editTablierForm.lfArticleCode || ''}
+                                        onChange={e => {
+                                          const lf = articlesLameFinale.find(x => x.code_art === e.target.value);
+                                          setEditTablierForm({
+                                            ...editTablierForm,
+                                            lfArticleCode: e.target.value,
+                                            lfArticleDesignation: lf?.designation || ''
+                                          });
+                                        }}
+                                        className="bg-slate-900 border border-emerald-500/50 rounded px-1 py-0.5 text-[10px] text-emerald-200 font-semibold max-w-[210px]"
+                                      >
+                                        <option value="">-- Choisir la Lame Finale * --</option>
+                                        {articlesLameFinale.map(lf => (
+                                          <option key={lf.code_art} value={lf.code_art}>
+                                            {lf.designation}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                               <td className="py-2 px-2 font-sans text-[10px] text-slate-400 italic">Édition en cours…</td>
@@ -8881,6 +9038,26 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                                   {t.avecLameFinale ? '✓ Avec Lame Finale' : '✕ Sans Lame Finale'}
                                 </button>
                               </div>
+
+                              {/* Sélecteur interactif rapide pour changer la Lame Finale directement sans devoir effacer la ligne */}
+                              {t.avecLameFinale && (
+                                <div className="mt-1.5 flex items-center gap-1">
+                                  <span className="text-[9px] text-emerald-400 font-bold whitespace-nowrap">LF :</span>
+                                  <select
+                                    value={t.lfArticleCode || ''}
+                                    onChange={(e) => handleChangeLameFinaleLigne(t.id, e.target.value)}
+                                    className="bg-slate-900/90 border border-emerald-500/40 hover:border-emerald-400 text-emerald-300 text-[10px] font-semibold rounded px-1.5 py-0.5 focus:ring-1 focus:ring-emerald-400 focus:outline-none cursor-pointer max-w-[210px] truncate"
+                                    title="Changer directement la Lame Finale de cette ligne"
+                                  >
+                                    <option value="">-- Choisir la Lame Finale --</option>
+                                    {articlesLameFinale.map(lf => (
+                                      <option key={lf.code_art} value={lf.code_art}>
+                                        {lf.designation}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-right">
                               <div className="flex justify-end gap-1">
@@ -10506,15 +10683,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       {/* ========================================================================= */}
       {/* 13. MODAL DE CHARGEMENT DIRECT DES LIGNES DEPUIS BORDEREAU PDF (100% OK)   */}
       {/* ========================================================================= */}
-      <ChargementLignesPdfModal
-        isOpen={isPdfModalOpen}
-        onClose={() => setIsPdfModalOpen(false)}
-        familleActive={familleArticle}
-        nomProfilActif={currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43'}
-        numCommandeActuel={getActiveNumCommande()}
-        nomClientActuel={clientDeMonClient}
-        onValiderImportLignes={handleValiderImportLignes}
-      />
+      {isPdfModalOpen && (
+        <ChargementLignesPdfModal
+          isOpen={isPdfModalOpen}
+          onClose={() => setIsPdfModalOpen(false)}
+          familleActive={familleArticle}
+          nomProfilActif={currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43'}
+          numCommandeActuel={getActiveNumCommande()}
+          nomClientActuel={clientDeMonClient}
+          articles={articles}
+          onValiderImportLignes={handleValiderImportLignes}
+        />
+      )}
     </div>
   );
 };

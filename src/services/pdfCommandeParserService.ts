@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import { Article } from '../types';
 
 // Configuration du worker PDF.js pour environnement Vite
 if (typeof window !== 'undefined' && 'Worker' in window) {
@@ -40,6 +41,11 @@ export interface ResultatExtractionPDF {
   totalPieces: number;
   lignes: LigneCommandeExtraite[];
   avertissements: string[];
+  hauteurLameDetectee?: number;
+  couleurDetectee?: string;
+  couleurNormalisee?: string;
+  avecLameFinaleDetectee?: boolean;
+  indicationLameFinale?: string;
 }
 
 /**
@@ -163,26 +169,51 @@ export class PdfCommandeParserService {
     let clientDetecte = '';
     const headerLines = lignesTexteParPage[0]?.lignes || [];
     let foundMegrine = false;
-    for (const rawLine of headerLines) {
-      const line = rawLine.trim();
-      if (!line) continue;
-      if (line.toUpperCase().includes('MEGRINE') || line.toUpperCase().includes('TROIS M')) {
-        foundMegrine = true;
-        continue;
+
+    // Extraction précise si le nom du client est présent sur la même ligne d'en-tête (ex: "MEGRINE, LE 19/07/2026 MAHMOUD BORDEREAU DE LIVRAISON")
+    const megrineInlineMatch = texteComplet.match(/MEGRINE,\s*LE\s*\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}\s+([A-Za-zÀ-ÿ0-9\s\-]+?)\s+(?:BORDEREAU|BL\b|R[ée]f[ée]rence|$)/i);
+    if (megrineInlineMatch) {
+      const candidate = megrineInlineMatch[1].trim();
+      if (candidate && !/^(?:BORDEREAU|LIVRAISON|COMMANDE|BL|FACTURE|DEVIS)$/i.test(candidate) && candidate.length >= 2) {
+        clientDetecte = candidate;
       }
-      if (line.toUpperCase().includes('BORDEREAU') || line.toUpperCase().includes('RÉFÉRENCE') || line.toUpperCase().includes('REFERENCE')) {
-        if (clientDetecte) break;
-      }
-      if (foundMegrine && !clientDetecte) {
+    }
+
+    if (!clientDetecte) {
+      for (const rawLine of headerLines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const upper = line.toUpperCase();
+        if (upper.includes('MEGRINE') || upper.includes('TROIS M')) {
+          foundMegrine = true;
+          continue;
+        }
         if (
-          !line.toUpperCase().includes('CHÂSSIS') &&
-          !line.toUpperCase().includes('CHASSIS') &&
-          !line.toUpperCase().includes('LOT') &&
-          !line.toUpperCase().includes('QTÉ') &&
-          !line.toUpperCase().includes('DESCRIPTIF') &&
-          !line.match(/^\d+$/)
+          upper.includes('BORDEREAU') ||
+          upper.includes('LIVRAISON') ||
+          upper.includes('COMMANDE') ||
+          upper.includes('RÉFÉRENCE') ||
+          upper.includes('REFERENCE') ||
+          upper.includes('FACTURE') ||
+          upper.includes('DEVIS')
         ) {
-          clientDetecte = line;
+          if (clientDetecte) break;
+          continue; // Empêche formellement qu'une ligne d'en-tête technique soit attribuée au nom de client
+        }
+        if (foundMegrine && !clientDetecte) {
+          if (
+            !upper.includes('CHÂSSIS') &&
+            !upper.includes('CHASSIS') &&
+            !upper.includes('LOT') &&
+            !upper.includes('QTÉ') &&
+            !upper.includes('DESCRIPTIF') &&
+            !upper.includes('PAGE') &&
+            !upper.includes('REPERE') &&
+            !line.match(/^\d+$/) &&
+            line.length >= 2
+          ) {
+            clientDetecte = line;
+          }
         }
       }
     }
@@ -205,8 +236,24 @@ export class PdfCommandeParserService {
     const lignes: LigneCommandeExtraite[] = [];
     let pendingRepere = '';
 
-    // Détection globale si Lame Finale est mentionnée dans la référence de commande
-    const globalAvecLF = upperTexte.includes('+LAME FINAL') || upperTexte.includes('LAME FINALE') || upperTexte.includes('+LF');
+    // Détection globale si Lame Finale est mentionnée (Avec vs Sans)
+    let avecLameFinaleDetectee: boolean | undefined = undefined;
+    let indicationLameFinale: string | undefined = undefined;
+
+    // 1. Recherche de mention explicite "SANS LAME FINALE"
+    if (
+      /\b(?:SANS\s+LAME\s*FINAL[E]?|SANS\s+LF\b|SS\s+LF\b|SANS\s+FINALE\b|PAS\s+DE\s+LF\b|PAS\s+DE\s+LAME\s*FINAL[E]?|S\/LF\b)/i.test(upperTexte)
+    ) {
+      avecLameFinaleDetectee = false;
+      indicationLameFinale = 'Mention "Sans Lame Finale" détectée';
+    }
+    // 2. Recherche de mention explicite "AVEC LAME FINALE" ou présence de profil finale dans le récapitulatif
+    else if (
+      /\b(?:AVEC\s+LAME\s*FINAL[E]?|AVEC\s+LF\b|\+\s*LF\b|\+\s*LAME\s*FINAL[E]?|FINALE\s*(?:43|55)\b|LAME\s+FINALE\b|LAME\s+FINAL\b)/i.test(upperTexte)
+    ) {
+      avecLameFinaleDetectee = true;
+      indicationLameFinale = 'Mention "Avec Lame Finale" détectée';
+    }
 
     for (const pageObj of lignesTexteParPage) {
       const pageNum = pageObj.pageNumber;
@@ -323,6 +370,13 @@ export class PdfCommandeParserService {
               hauteurLameDetectee = 55;
             }
 
+            let ligneAvecLF = avecLameFinaleDetectee !== undefined ? avecLameFinaleDetectee : true;
+            if (/\b(?:SANS\s+LF|SS\s+LF|SANS\s+FINALE|SANS\s+LAME\s*FINAL)/i.test(designation)) {
+              ligneAvecLF = false;
+            } else if (/\b(?:AVEC\s+LF|\+\s*LF|LAME\s*FINAL|FINALE)/i.test(designation)) {
+              ligneAvecLF = true;
+            }
+
             lignes.push({
               id: `pdf-line-${Date.now()}-${lignes.length + 1}`,
               repere: finalRepere,
@@ -334,7 +388,7 @@ export class PdfCommandeParserService {
               typeOuvrant,
               pageNumber: pageNum,
               hauteurLameDetectee,
-              avecLameFinaleDetectee: globalAvecLF
+              avecLameFinaleDetectee: ligneAvecLF
             });
             continue;
           }
@@ -369,6 +423,44 @@ export class PdfCommandeParserService {
       avertissements.push('Aucune ligne de dimensions conforme n\'a été détectée dans le PDF.');
     }
 
+    // Détection globale profilé (hauteur de lame) et couleur (particulièrement utile pour les tabliers)
+    let globalHauteurLame = 55;
+    if (
+      upperTexte.includes('43') &&
+      (upperTexte.includes('TAB 43') || upperTexte.includes('TBL 43') || upperTexte.includes('LAME 43') || upperTexte.includes('43MM') || upperTexte.includes('43 MM') || upperTexte.includes('TABLIER 43'))
+    ) {
+      globalHauteurLame = 43;
+    } else if (
+      upperTexte.includes('55') &&
+      (upperTexte.includes('TAB 55') || upperTexte.includes('TBL 55') || upperTexte.includes('LAME 55') || upperTexte.includes('55MM') || upperTexte.includes('55 MM') || upperTexte.includes('TABLIER 55') || upperTexte.includes('AGRAVEE 55'))
+    ) {
+      globalHauteurLame = 55;
+    }
+
+    // Détection du coloris :
+    let couleurTrouvee = '';
+    const lineWithColor = lignes.find(l => l.coloris && l.coloris.trim());
+    if (lineWithColor && lineWithColor.coloris) {
+      couleurTrouvee = lineWithColor.coloris.trim();
+    } else {
+      const colorisLineMatch = texteComplet.match(/Coloris\s*:\s*([A-Za-z0-9\-_]+)/i);
+      if (colorisLineMatch) {
+        couleurTrouvee = colorisLineMatch[1].trim();
+      } else {
+        const refColorMatch = referenceComplete.match(/(?:\/|\s|-)(G7024|7024|G7016|7016|G9007|9007|9005|9010|9016|BLANC|BL|NOIR|NR|CHENE|BRONZE|8014|1013)\b/i);
+        if (refColorMatch) {
+          couleurTrouvee = refColorMatch[1].trim();
+        } else {
+          const generalColorMatch = upperTexte.match(/\b(G7024|7024|G9007|9007|7016|9005|8014|1013|BLANC)\b/i);
+          if (generalColorMatch) {
+            couleurTrouvee = generalColorMatch[1].trim();
+          }
+        }
+      }
+    }
+
+    const couleurNormalisee = PdfCommandeParserService.normaliserCouleur(couleurTrouvee) || undefined;
+
     return {
       succes: lignes.length > 0,
       clientDetecte,
@@ -379,7 +471,69 @@ export class PdfCommandeParserService {
       familleDetectee,
       totalPieces,
       lignes,
-      avertissements
+      avertissements,
+      hauteurLameDetectee: globalHauteurLame,
+      couleurDetectee: couleurTrouvee || undefined,
+      couleurNormalisee,
+      avecLameFinaleDetectee,
+      indicationLameFinale
     };
+  }
+
+  /**
+   * Normalise un identifiant ou code couleur (ex: 'G7024' -> '7024', 'BLANC' -> 'BL', 'NOIR' -> 'NR')
+   */
+  public static normaliserCouleur(couleurRaw?: string): string | null {
+    if (!couleurRaw) return null;
+    const upper = couleurRaw.trim().toUpperCase();
+    if (upper.includes('7024') || upper === 'G7024') return '7024';
+    if (upper.includes('9007') || upper === 'G9007') return '9007';
+    if (upper === 'BL' || upper.includes('BLANC') || upper === '9010' || upper === '9016') return 'BL';
+    if (upper === 'NR' || upper.includes('NOIR') || upper === '9005') return 'NR';
+    if (upper.includes('7016') || upper === 'G7016') return '7016';
+    if (upper.includes('8014') || upper.includes('BRUN')) return '8014';
+    if (upper.includes('1013') || upper.includes('BEIGE')) return '1013';
+    return upper;
+  }
+
+  /**
+   * Trouve l'article de tablier exact correspondant à la hauteur et couleur détectées dans le PDF
+   */
+  public static trouverArticleTablierPourPdf(
+    hauteurLame: number,
+    couleurNorm: string | null | undefined,
+    articles: Article[]
+  ): Article | null {
+    const tabArticles = articles.filter(a => {
+      const d = a.designation.toUpperCase();
+      return (d.includes('TAB') || d.includes('TBL')) && !d.includes('FINAL') && !d.includes('COULISSE') && !d.includes('MOUST');
+    });
+    if (tabArticles.length === 0) return null;
+
+    // 1. Filtrer par hauteur de lame (55 vs 43)
+    const parHauteur = tabArticles.filter(a => {
+      const d = a.designation.toUpperCase();
+      return hauteurLame === 43 ? (d.includes('43') || a.hauteur === 43) : (d.includes('55') || a.hauteur === 55);
+    });
+
+    const pool = parHauteur.length > 0 ? parHauteur : tabArticles;
+
+    // 2. Recherche par couleur si renseignée
+    if (couleurNorm) {
+      const match = pool.find(a => {
+        const d = a.designation.toUpperCase();
+        if (couleurNorm === '7024' && d.includes('7024')) return true;
+        if (couleurNorm === 'BL' && (d.includes(' BL') || d.endsWith('BL') || d.includes('BLANC'))) return true;
+        if (couleurNorm === '9007' && d.includes('9007')) return true;
+        if (couleurNorm === 'NR' && (d.includes(' NR') || d.endsWith('NR') || d.includes('NOIR'))) return true;
+        return false;
+      });
+      if (match) return match;
+    }
+
+    // 3. Fallback standard
+    const fallback7024 = pool.find(a => a.designation.includes('7024'));
+    const fallbackBL = pool.find(a => a.designation.includes('BL'));
+    return fallback7024 || fallbackBL || pool[0];
   }
 }

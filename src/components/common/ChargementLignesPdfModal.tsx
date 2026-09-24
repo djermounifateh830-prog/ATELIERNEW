@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   FileText,
   Upload,
@@ -12,13 +12,17 @@ import {
   Sparkles,
   Info,
   Check,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Palette,
+  Lock,
+  MinusCircle
 } from 'lucide-react';
 import {
   PdfCommandeParserService,
   LigneCommandeExtraite,
   ResultatExtractionPDF
 } from '../../services/pdfCommandeParserService';
+import { Article } from '../../types';
 
 interface ChargementLignesPdfModalProps {
   isOpen: boolean;
@@ -27,6 +31,7 @@ interface ChargementLignesPdfModalProps {
   nomProfilActif?: string;
   numCommandeActuel?: string;
   nomClientActuel?: string;
+  articles?: Article[];
   onValiderImportLignes: (data: {
     lignes: LigneCommandeExtraite[];
     modeAjout: 'REMPLACER' | 'AJOUTER';
@@ -35,6 +40,9 @@ interface ChargementLignesPdfModalProps {
     majDate?: string;
     majAvecLF?: boolean;
     hauteurLameSuggeree?: number;
+    couleurDetectee?: string;
+    articleSuggere?: Article;
+    appliquerProfilEtCouleur?: boolean;
   }) => void;
 }
 
@@ -45,6 +53,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
   nomProfilActif,
   numCommandeActuel,
   nomClientActuel,
+  articles = [],
   onValiderImportLignes
 }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -54,12 +63,55 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
   const [lignesSelectionnees, setLignesSelectionnees] = useState<Set<string>>(new Set());
   const [lignesModifiables, setLignesModifiables] = useState<LigneCommandeExtraite[]>([]);
   
-  // Options d'injection
+  // Options d'injection : En-tête PROTÉGÉ PAR DÉFAUT (ne pas écraser les données client / N° commande de l'utilisateur)
   const [modeAjout, setModeAjout] = useState<'REMPLACER' | 'AJOUTER'>('REMPLACER');
-  const [appliquerNumCmd, setAppliquerNumCmd] = useState(true);
-  const [appliquerClient, setAppliquerClient] = useState(true);
+  const [modifierEnTete, setModifierEnTete] = useState(false); // DEFAULT FALSE : Sécurité anti-écrasement
+  const [appliquerNumCmd, setAppliquerNumCmd] = useState(false); // DEFAULT FALSE
+  const [appliquerClient, setAppliquerClient] = useState(false); // DEFAULT FALSE
+  const [appliquerProfilCouleur, setAppliquerProfilCouleur] = useState(true); // DEFAULT TRUE : Appliquer profilé et couleur détectés
+  const [optionAvecLF, setOptionAvecLF] = useState<boolean>(true); // Option Lame Finale : Détectée ou au choix
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fonction de réinitialisation complète de la modale
+  const resetAllState = () => {
+    setResultat(null);
+    setNomFichier('');
+    setLignesModifiables([]);
+    setLignesSelectionnees(new Set());
+    setIsDragging(false);
+    setIsProcessing(false);
+    setModifierEnTete(false);
+    setAppliquerNumCmd(false);
+    setAppliquerClient(false);
+    setAppliquerProfilCouleur(true);
+    setOptionAvecLF(true);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Réinitialisation automatique lorsque la modale est fermée ou ré-ouverte
+  useEffect(() => {
+    if (!isOpen) {
+      resetAllState();
+    }
+  }, [isOpen]);
+
+  const handleClose = () => {
+    resetAllState();
+    onClose();
+  };
+
+  // Recherche de l'article exact correspondant au profil et à la couleur détectés
+  const articleTablierTrouve = useMemo(() => {
+    if (!resultat || articles.length === 0) return null;
+    return PdfCommandeParserService.trouverArticleTablierPourPdf(
+      resultat.hauteurLameDetectee || 55,
+      resultat.couleurNormalisee,
+      articles
+    );
+  }, [resultat, articles]);
 
   if (!isOpen) return null;
 
@@ -77,6 +129,11 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
       setResultat(res);
       setLignesModifiables(res.lignes);
       setLignesSelectionnees(new Set(res.lignes.map(l => l.id)));
+      if (res.avecLameFinaleDetectee !== undefined) {
+        setOptionAvecLF(res.avecLameFinaleDetectee);
+      } else {
+        setOptionAvecLF(true);
+      }
     } catch (err: any) {
       alert(`Erreur d'analyse : ${err?.message || 'Fichier PDF non lisible'}`);
     } finally {
@@ -141,14 +198,17 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     onValiderImportLignes({
       lignes: selection,
       modeAjout,
-      majNumCommande: appliquerNumCmd && resultat?.numCommandeDetecte ? resultat.numCommandeDetecte : undefined,
-      majClient: appliquerClient && resultat?.clientDetecte ? resultat.clientDetecte : undefined,
-      majDate: resultat?.dateISODetectee,
-      majAvecLF: selection.some(s => s.avecLameFinaleDetectee),
-      hauteurLameSuggeree: selection[0]?.hauteurLameDetectee
+      majNumCommande: (modifierEnTete && appliquerNumCmd && resultat?.numCommandeDetecte) ? resultat.numCommandeDetecte : undefined,
+      majClient: (modifierEnTete && appliquerClient && resultat?.clientDetecte) ? resultat.clientDetecte : undefined,
+      majDate: (modifierEnTete && resultat?.dateISODetectee) ? resultat.dateISODetectee : undefined,
+      majAvecLF: optionAvecLF,
+      hauteurLameSuggeree: resultat?.hauteurLameDetectee || selection[0]?.hauteurLameDetectee,
+      couleurDetectee: resultat?.couleurNormalisee || resultat?.couleurDetectee,
+      articleSuggere: (appliquerProfilCouleur && articleTablierTrouve) ? articleTablierTrouve : undefined,
+      appliquerProfilEtCouleur: appliquerProfilCouleur
     });
 
-    onClose();
+    handleClose();
   };
 
   const totalSelectionnePieces = lignesModifiables
@@ -184,7 +244,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -243,87 +303,207 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
           {resultat && (
             <div className="space-y-4 animate-fadeIn">
               
-              {/* Carte Récapitulative Détectée */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* Cartes Récapitulatives Détectées */}
+              <div className="space-y-3">
                 
-                {/* N° Commande / BL */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                    N° Commande / BL
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-mono font-black text-amber-300 text-sm bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-md">
-                      {resultat.numCommandeDetecte || 'Non spécifié'}
-                    </span>
-                    {resultat.numCommandeDetecte && (
-                      <label className="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer ml-1">
+                {/* 1. Sécurité En-tête Commande : PROTÉGÉE CONTRE L'ÉCRASEMENT INVOLONTAIRE */}
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-inner">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-slate-200 uppercase tracking-wide">
+                          En-tête de Commande
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {modifierEnTete ? 'Modification manuelle activée' : 'Protégé / Conservé'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {modifierEnTete
+                          ? 'Les données détectées du PDF seront appliquées à l\'en-tête de la commande.'
+                          : 'Vos informations actuelles (N° Commande & Nom du Client) restent intactes et ne sont pas écrasées.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-900 text-xs text-slate-300 cursor-pointer select-none transition self-start md:self-auto">
+                    <input
+                      type="checkbox"
+                      checked={modifierEnTete}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        setModifierEnTete(checked);
+                        setAppliquerNumCmd(checked);
+                        setAppliquerClient(checked);
+                      }}
+                      className="rounded border-slate-600 bg-slate-950 text-amber-500 focus:ring-amber-500"
+                    />
+                    <span className="font-semibold text-[11px]">Remplir aussi l'en-tête depuis le PDF</span>
+                  </label>
+                </div>
+
+                {/* Détails optionnels si l'utilisateur choisit explicitement de modifier l'en-tête */}
+                {modifierEnTete && (
+                  <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs animate-fadeIn">
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          N° Commande / BL détecté
+                        </span>
+                        <span className="font-mono font-black text-amber-300">
+                          {resultat.numCommandeDetecte || 'Non détecté'}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={appliquerNumCmd}
                           onChange={e => setAppliquerNumCmd(e.target.checked)}
-                          className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
+                          className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500"
                         />
                         <span>Appliquer</span>
                       </label>
-                    )}
-                  </div>
-                  {numCommandeActuel && (
-                    <span className="text-[10px] text-slate-400 block">
-                      Actuel : <strong className="text-slate-300 font-mono">{numCommandeActuel}</strong>
-                    </span>
-                  )}
-                </div>
+                    </div>
 
-                {/* Client Détecté */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                    Client Détecté
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-slate-200 text-xs truncate max-w-[170px]" title={resultat.clientDetecte}>
-                      {resultat.clientDetecte || 'Non identifié'}
-                    </span>
-                    {resultat.clientDetecte && (
-                      <label className="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer ml-1">
+                    <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                          Client détecté
+                        </span>
+                        <span className="font-bold text-slate-200 truncate max-w-[180px] block" title={resultat.clientDetecte}>
+                          {resultat.clientDetecte || 'Non détecté'}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={appliquerClient}
                           onChange={e => setAppliquerClient(e.target.checked)}
-                          className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500"
+                          className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500"
                         />
                         <span>Appliquer</span>
                       </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. Profilé, Couleur, Lame Finale et Contrôle */}
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  
+                  {/* 1. Profilé & Hauteur */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
+                      <Layers className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Lame & Profilé Détectés</span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-sky-300 text-xs bg-sky-500/10 border border-sky-500/30 px-2.5 py-1 rounded-md">
+                        Lame {resultat.hauteurLameDetectee || 55} mm
+                      </span>
+                      {familleActive === 'TABLIER' && (
+                        <span className="text-[10px] text-slate-400">
+                          {resultat.hauteurLameDetectee === 43 ? 'Type 43mm' : 'Type 55mm'}
+                        </span>
+                      )}
+                    </div>
+                    {articleTablierTrouve && (
+                      <div className="text-[11px] font-bold text-slate-200 mt-1 truncate" title={articleTablierTrouve.designation}>
+                        📦 <span className="text-amber-300">{articleTablierTrouve.designation}</span>
+                      </div>
                     )}
                   </div>
-                  {nomClientActuel && (
-                    <span className="text-[10px] text-slate-400 block truncate">
-                      Actuel : <strong className="text-slate-300">{nomClientActuel}</strong>
+
+                  {/* 2. Coloris Détecté */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
+                      <Palette className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Coloris Détecté</span>
                     </span>
-                  )}
-                </div>
-
-                {/* Profilé Actif dans le système */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                    Profilé Assigné
-                  </span>
-                  <span className="font-bold text-sky-300 text-xs truncate block bg-sky-500/10 border border-sky-500/30 px-2 py-1 rounded-md" title={nomProfilActif}>
-                    📦 {nomProfilActif || 'Profilé courant'}
-                  </span>
-                  <span className="text-[10px] text-slate-400 block">
-                    Toutes les lignes hériteront de ce profilé.
-                  </span>
-                </div>
-
-                {/* Bilan du Contrôle */}
-                <div className="space-y-1 bg-emerald-950/30 border border-emerald-500/40 rounded-lg p-2.5 flex flex-col justify-center">
-                  <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Contrôle Intégrité 100%</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-amber-300 text-xs bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-md">
+                        {resultat.couleurDetectee || resultat.couleurNormalisee || 'Standard'}
+                      </span>
+                      {resultat.couleurNormalisee && (
+                        <span className="text-[10px] text-slate-400">
+                          ({resultat.couleurNormalisee})
+                        </span>
+                      )}
+                    </div>
+                    {articleTablierTrouve && (
+                      <label className="flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer pt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={appliquerProfilCouleur}
+                          onChange={e => setAppliquerProfilCouleur(e.target.checked)}
+                          className="rounded border-slate-700 bg-slate-900 text-sky-500 focus:ring-sky-500"
+                        />
+                        <span className="text-sky-300 font-semibold">Appliquer en stock</span>
+                      </label>
+                    )}
                   </div>
-                  <div className="text-xs font-mono text-emerald-200 mt-0.5">
-                    <strong>{totalSelectionnePieces}</strong> pièces / <strong>{lignesModifiables.length}</strong> lignes
+
+                  {/* 3. Lame Finale (Avec ou Sans Lame Finale) - Détectée ou Sélectionnable */}
+                  <div className="space-y-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                        <CheckCircle2 className={`w-3.5 h-3.5 ${optionAvecLF ? 'text-emerald-400' : 'text-slate-500'}`} />
+                        <span>Lame Finale</span>
+                      </span>
+                      {resultat.avecLameFinaleDetectee !== undefined ? (
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-black ${
+                          resultat.avecLameFinaleDetectee
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}>
+                          {resultat.avecLameFinaleDetectee ? 'PDF : Avec LF' : 'PDF : Sans LF'}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono bg-slate-800 text-slate-400 border border-slate-700">
+                          Non spécifié
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="pt-0.5">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={optionAvecLF}
+                          onChange={e => setOptionAvecLF(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <span className={`text-xs font-black transition ${
+                          optionAvecLF ? 'text-emerald-300' : 'text-slate-400'
+                        }`}>
+                          {optionAvecLF ? '✓ Avec Lame Finale' : '✕ Sans Lame Finale'}
+                        </span>
+                      </label>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      {optionAvecLF
+                        ? 'Lame finale extrudée intégrée à la fabrication.'
+                        : 'Débit sans profilé de lame finale.'}
+                    </p>
                   </div>
+
+                  {/* 4. Bilan du Contrôle */}
+                  <div className="space-y-1 bg-emerald-950/30 border border-emerald-500/40 rounded-lg p-2.5 flex flex-col justify-center">
+                    <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Contrôle Intégrité 100%</span>
+                    </div>
+                    <div className="text-xs font-mono text-emerald-200 mt-0.5">
+                      <strong>{totalSelectionnePieces}</strong> pièces / <strong>{lignesModifiables.length}</strong> lignes
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Import direct dans la table de débit
+                    </div>
+                  </div>
+
                 </div>
 
               </div>
@@ -397,6 +577,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                         <th className="py-2.5 px-3 w-28">Hauteur (mm)</th>
                         <th className="py-2.5 px-3">Désignation / Détails</th>
                         <th className="py-2.5 px-3 w-20 text-center">Coloris</th>
+                        <th className="py-2.5 px-2 w-20 text-center">Lame Finale</th>
                         <th className="py-2.5 px-3 w-12 text-center">Action</th>
                       </tr>
                     </thead>
@@ -460,6 +641,15 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                             <td className="py-2 px-3 text-center text-slate-400 text-xs">
                               {ligne.coloris || '—'}
                             </td>
+                            <td className="py-2 px-2 text-center font-sans">
+                              <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black ${
+                                optionAvecLF
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-slate-800 text-slate-400 border border-slate-700'
+                              }`}>
+                                {optionAvecLF ? 'Avec LF' : 'Sans LF'}
+                              </span>
+                            </td>
                             <td className="py-2 px-3 text-center">
                               <button
                                 type="button"
@@ -482,12 +672,8 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
               <div className="flex justify-between items-center text-xs text-slate-400 pt-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    setResultat(null);
-                    setLignesModifiables([]);
-                    setLignesSelectionnees(new Set());
-                  }}
-                  className="text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                  onClick={resetAllState}
+                  className="text-slate-400 hover:text-slate-200 underline cursor-pointer font-medium"
                 >
                   Choisir un autre fichier PDF
                 </button>
@@ -505,7 +691,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
         <div className="px-6 py-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
             className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 transition cursor-pointer"
           >
             Annuler
