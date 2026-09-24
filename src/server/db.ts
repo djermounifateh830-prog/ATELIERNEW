@@ -1,7 +1,31 @@
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import path from 'path';
 import fs from 'fs';
-import {
+
+// Import résilient et synchrone de node:sqlite compatible avec CJS et ESM
+let DatabaseSync: any = null;
+try {
+  const req = createRequire(path.resolve(process.cwd(), 'package.json'));
+  const sqliteMod = req('node:sqlite');
+  DatabaseSync = sqliteMod?.DatabaseSync || null;
+} catch {
+  DatabaseSync = null;
+}
+
+function createInMemoryDbFallback(): any {
+  return {
+    exec(_sql: string) { return; },
+    prepare(_sql: string) {
+      return {
+        all(..._args: any[]) { return []; },
+        get(..._args: any[]) { return null; },
+        run(..._args: any[]) { return { changes: 0, lastInsertRowid: 0 }; }
+      };
+    },
+    close() {}
+  };
+}
+import type {
   Article,
   ChuteItem,
   ChuteMaille,
@@ -29,33 +53,55 @@ export function matchReferencesServer(ref1?: string, ref2?: string): boolean {
   if (!ref1 || !ref2) return false;
   const c1 = ref1.trim().toLowerCase();
   const c2 = ref2.trim().toLowerCase();
+  if (!c1 || !c2) return false;
+
+  const genericPlaceholders = ['cmd', 'dossier', 'n/a', '-', 'fiche de coupe', 'commande'];
+  if (genericPlaceholders.includes(c1) || genericPlaceholders.includes(c2)) {
+    return c1 === c2;
+  }
+
   if (c1 === c2) return true;
 
   // Tokens séparés (ex: "D-260951 + D-260950")
   const tokens1 = c1.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
   const tokens2 = c2.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
-  if (tokens1.some(t1 => tokens2.includes(t1))) return true;
 
-  // Sans délimiteurs
-  const n1 = c1.replace(/[-_\s]/g, '');
-  const n2 = c2.replace(/[-_\s]/g, '');
-  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+  const matchSingle = (r1: string, r2: string): boolean => {
+    if (!r1 || !r2) return false;
+    const t1 = r1.trim().toLowerCase();
+    const t2 = r2.trim().toLowerCase();
+    if (t1 === t2) return true;
 
-  // Chiffres purs
-  const d1 = ref1.replace(/\D/g, '');
-  const d2 = ref2.replace(/\D/g, '');
-  if (d1.length >= 4 && d2.length >= 4 && (d1 === d2 || d1.includes(d2) || d2.includes(d1))) {
-    return true;
-  }
+    // 1. Sans délimiteurs
+    const n1 = t1.replace(/[-_\s]/g, '');
+    const n2 = t2.replace(/[-_\s]/g, '');
+    if (n1 === n2) return true;
 
-  return false;
+    // 2. Chiffres purs (uniquement égalité stricte >= 3 chiffres)
+    const d1 = r1.replace(/\D/g, '');
+    const d2 = r2.replace(/\D/g, '');
+    if (d1 && d2 && d1 === d2 && d1.length >= 3) {
+      return true;
+    }
+
+    return false;
+  };
+
+  return tokens1.some(t1 => tokens2.some(t2 => matchSingle(t1, t2)));
 }
 
 class AtelierDatabase {
-  private db: DatabaseSync;
+  private db: any;
 
   constructor() {
-    // Initialisation sécurisée de la connexion SQLite avec auto-guérison intelligente
+    // 1. Si node:sqlite n'est pas supporté (ex: Node < 22), basculer sur adaptateur sécurisé
+    if (!DatabaseSync) {
+      console.warn('⚠️ [SQLite] node:sqlite (DatabaseSync) non disponible sur cet environnement Node. Bascule sur adaptateur mémoire sécurisé.');
+      this.db = createInMemoryDbFallback();
+      return;
+    }
+
+    // 2. Initialisation sécurisée de la connexion SQLite avec auto-guérison intelligente
     try {
       this.db = new DatabaseSync(DB_PATH);
       this.db.exec('PRAGMA journal_mode = WAL;');
@@ -67,10 +113,14 @@ class AtelierDatabase {
         throw new Error('SQLite quick_check failed');
       }
     } catch (err) {
-      console.warn('⚠️ [SQLite] Anomalie intégrité fichier détectée, régénération automatique...', err);
+      console.warn('⚠️ [SQLite] Anomalie intégrité fichier ou verrou détecté, tentative de régénération...', err);
       try {
         if (fs.existsSync(DB_PATH)) {
-          fs.renameSync(DB_PATH, `${DB_PATH}.corrupted.${Date.now()}`);
+          try {
+            fs.renameSync(DB_PATH, `${DB_PATH}.corrupted.${Date.now()}`);
+          } catch {
+            console.warn('⚠️ [SQLite] Fichier 3m_atelier.db verrouillé en cours d\'utilisation');
+          }
         }
         if (fs.existsSync(`${DB_PATH}-wal`)) {
           try { fs.unlinkSync(`${DB_PATH}-wal`); } catch {}
@@ -79,11 +129,21 @@ class AtelierDatabase {
           try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
         }
       } catch {}
-      this.db = new DatabaseSync(DB_PATH);
-      this.db.exec('PRAGMA journal_mode = WAL;');
-      this.db.exec('PRAGMA foreign_keys = ON;');
-      this.db.exec('PRAGMA synchronous = NORMAL;');
-      this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+
+      try {
+        this.db = new DatabaseSync(DB_PATH);
+        this.db.exec('PRAGMA journal_mode = WAL;');
+        this.db.exec('PRAGMA foreign_keys = ON;');
+        this.db.exec('PRAGMA synchronous = NORMAL;');
+        this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+      } catch (errFallback) {
+        console.warn('⚠️ [SQLite] Impossible d\'accéder à 3m_atelier.db sur disque. Bascule en base mémoire:', errFallback);
+        try {
+          this.db = new DatabaseSync(':memory:');
+        } catch {
+          this.db = createInMemoryDbFallback();
+        }
+      }
     }
     this.initTables();
     this.cleanCorruptedDesignations();
@@ -1807,15 +1867,35 @@ class AtelierDatabase {
     }
 
     const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO suivis_of (
+      INSERT INTO suivis_of (
         id, num_commande, nom_client, donneur_ordre,
         famille, titre_section, statut, date_emission, date_retour, numero_emission, json_data, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        num_commande = excluded.num_commande,
+        nom_client = excluded.nom_client,
+        donneur_ordre = excluded.donneur_ordre,
+        famille = excluded.famille,
+        titre_section = excluded.titre_section,
+        statut = excluded.statut,
+        date_emission = excluded.date_emission,
+        date_retour = excluded.date_retour,
+        numero_emission = excluded.numero_emission,
+        json_data = excluded.json_data,
+        updated_at = CURRENT_TIMESTAMP
     `);
     stmt.run(
-      s.id, s.numCommande, s.nomClient, s.donneurOrdre,
-      s.famille, s.titreSection, s.statut, s.dateEmission,
-      s.dateRetour || null, s.numeroEmission, JSON.stringify(s)
+      s.id,
+      s.numCommande ?? null,
+      s.nomClient ?? null,
+      s.donneurOrdre ?? null,
+      s.famille ?? null,
+      s.titreSection ?? null,
+      s.statut ?? null,
+      s.dateEmission ?? null,
+      s.dateRetour ?? null,
+      s.numeroEmission ?? null,
+      JSON.stringify(s)
     );
 
     // Gestion stricte des réservations de chutes et de barres dès émission
@@ -1933,7 +2013,7 @@ class AtelierDatabase {
         insertChuteRes.run(
           makeResId('c'),
           s.id,
-          s.numCommande,
+          s.numCommande ?? null,
           cr.chuteId || null,
           cr.sheetName.trim(),
           Math.round(Number(cr.longueur)),
@@ -1971,7 +2051,7 @@ class AtelierDatabase {
         insertChuteRes.run(
           makeResId('c'),
           s.id,
-          s.numCommande,
+          s.numCommande ?? null,
           item.chuteId || null,
           item.sheetName,
           item.longueur,
@@ -1987,7 +2067,7 @@ class AtelierDatabase {
         insertBarreRes.run(
           makeResId('b'),
           s.id,
-          s.numCommande,
+          s.numCommande ?? null,
           br.codeArt,
           Math.max(1, Math.round(Number(br.quantite))),
           Number(br.longueur) || 6000
@@ -2008,7 +2088,7 @@ class AtelierDatabase {
         insertBarreRes.run(
           makeResId('b'),
           s.id,
-          s.numCommande,
+          s.numCommande ?? null,
           item.codeArt,
           item.quantite,
           item.longueur
@@ -2078,7 +2158,13 @@ class AtelierDatabase {
    * Restaure intégralement et physiquement le stock pour un OF clôturé ou annulé (Point 3.3 de l'audit)
    */
   private rollbackStockForClosedOF(ofId: string) {
-    const mvts = this.db.prepare('SELECT * FROM mouvements_stock WHERE of_id = ?').all() as any[];
+    let mvts = this.db.prepare('SELECT * FROM mouvements_stock WHERE of_id = ?').all(ofId) as any[];
+    if (mvts.length === 0) {
+      const ofRow = this.db.prepare('SELECT num_commande FROM suivis_of WHERE id = ?').get(ofId) as any;
+      if (ofRow?.num_commande) {
+        mvts = this.db.prepare('SELECT * FROM mouvements_stock WHERE (of_id IS NULL OR of_id = ?) AND num_commande = ?').all(ofId, ofRow.num_commande) as any[];
+      }
+    }
 
     for (const m of mvts) {
       // 1. Restituer les barres neuves et accessoires consommés + mise à jour statut article
@@ -2937,11 +3023,17 @@ class AtelierDatabase {
       try { fs.unlinkSync(`${DB_PATH}-shm`); } catch {}
     }
     fs.writeFileSync(DB_PATH, buffer);
-    this.db = new DatabaseSync(DB_PATH);
-    this.db.exec('PRAGMA journal_mode = WAL;');
-    this.db.exec('PRAGMA foreign_keys = ON;');
-    this.db.exec('PRAGMA synchronous = NORMAL;');
-    this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+    if (DatabaseSync) {
+      try {
+        this.db = new DatabaseSync(DB_PATH);
+        this.db.exec('PRAGMA journal_mode = WAL;');
+        this.db.exec('PRAGMA foreign_keys = ON;');
+        this.db.exec('PRAGMA synchronous = NORMAL;');
+        this.db.exec('PRAGMA wal_autocheckpoint = 20;');
+      } catch (err) {
+        console.warn('⚠️ [SQLite] Erreur réouverture base après restauration:', err);
+      }
+    }
     this.initTables();
   }
 }

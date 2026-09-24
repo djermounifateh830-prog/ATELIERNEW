@@ -8,8 +8,12 @@ export default defineConfig(async ({ command }) => {
 
   // Charger le plugin serveur SQLite uniquement pour les serveurs dev & preview, pas pour le build statique
   if (command !== 'build') {
-    const { sqlitePlugin } = await import('./src/server/viteSqlitePlugin');
-    plugins.push(sqlitePlugin());
+    try {
+      const { sqlitePlugin } = await import('./src/server/viteSqlitePlugin');
+      plugins.push(sqlitePlugin());
+    } catch (pluginErr) {
+      console.error('⚠️ [Vite Plugin SQLite] Avertissement au chargement du plugin SQLite:', pluginErr);
+    }
   }
 
   return {

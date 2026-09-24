@@ -594,14 +594,34 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
       const dateConfiguredText = dateLivraisonPrevisionnelle || customFamDate?.dateLivraisonPrevisionnelle || customFamDate?.dateLivraison || matchedDossier?.dateLivraisonPrevisionnelle;
       const dateConfiguredISO = dateLivraisonPrevisionnelleISO || customFamDate?.dateLivraisonISO || matchedDossier?.dateLivraisonPrevisionnelleISO;
 
-      const match = ofs.find(o =>
-        o.statut !== 'ANNULE' &&
-        (
-          (dossierId && o.dossierId === dossierId) ||
-          matchReferences(o.numCommande, refCommande)
-        ) &&
-        (o.titreSection === (titreProduit || 'Fiche de Coupe') || o.famille === familleRecherche || o.famille === famille)
-      );
+      // Recherche stricte et précise de l'OF pour cette commande et cette famille
+      const cleanRef = (refCommande || '').trim();
+      const isGenericRef = !cleanRef || ['cmd', 'dossier', 'n/a', '-', '', 'fiche de coupe', 'commande'].includes(cleanRef.toLowerCase());
+
+      const match = ofs.find(o => {
+        if (o.statut === 'ANNULE') return false;
+
+        // 1. Concordance sur la référence de commande
+        if (!isGenericRef) {
+          // La référence de commande de l'OF doit correspondre strictement à refCommande
+          if (!matchReferences(o.numCommande, cleanRef)) return false;
+        } else {
+          // Si la référence actuelle est générique (ex: "DOSSIER"), on exige le même dossierId ET que l'OF soit aussi générique
+          if (!dossierId || o.dossierId !== dossierId) return false;
+          const oRef = (o.numCommande || '').trim().toLowerCase();
+          if (oRef && !['cmd', 'dossier', 'n/a', '-', '', 'fiche de coupe', 'commande'].includes(oRef)) {
+            return false;
+          }
+        }
+
+        // 2. Concordance sur la famille / section de fabrication
+        const famMatches = (
+          (famille && o.famille === famille) ||
+          (familleRecherche && o.famille === familleRecherche) ||
+          (titreProduit && o.titreSection === titreProduit)
+        );
+        return famMatches;
+      });
 
       const isDossierOrOfEnPause = !!(matchedDossier?.estEnPause || matchedDossier?.statut === 'EN_PAUSE' || match?.estEnPause || match?.statut === 'EN_PAUSE');
 
@@ -1832,12 +1852,14 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
 
   /** Annule directement l'émission de l'OF depuis la modale */
   const handleAnnulerEmissionDirecte = async () => {
-    // 1. Trouver TOUS les OFs actifs correspondant à cette commande / ce dossier
+    // 1. Trouver l'OF actif correspondant spécifiquement à cette commande et cette famille
     const ofsToCancel = allOfsState.filter(o => {
       if (o.statut === 'ANNULE') return false;
-      if (dossierId && o.dossierId === dossierId) return true;
       if (matchedOf && o.id === matchedOf.id) return true;
-      return matchReferences(o.numCommande, refCommande);
+      if (refCommande && matchReferences(o.numCommande, refCommande)) {
+        return (o.famille === famille || o.titreSection === titreProduit);
+      }
+      return false;
     });
 
     const numAff = matchedOf?.codeOF || (matchedOf?.numeroEmission ? `OF-${String(matchedOf.numeroEmission).padStart(3, '0')}` : (refCommande || 'cet OF'));
@@ -2596,27 +2618,16 @@ export const OrdreFabricationModal: React.FC<OrdreFabricationModalProps> = ({
               <span>{ofEmis ? 'OF Émis ✓' : isEmitting ? 'Émission en cours...' : 'Émettre l\'OF'}</span>
             </button>
             {ofEmis && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleMettreAJourOF}
-                  disabled={isEmitting}
-                  className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 border-2 border-black rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
-                  title="Met à jour cet OF avec la nouvelle optimisation : recalcule le plan de coupe, libère les anciennes réservations et enregistre les nouvelles quantités réservées"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
-                  <span>{isEmitting ? 'Mise à jour...' : '🔄 Mettre à jour l\'OF'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAnnulerEmissionDirecte}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border-2 border-rose-500 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
-                  title="Annuler l'émission de cet OF : libère immédiatement les réservations de barres et chutes et remet la commande en attente pour modification"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                  <span>Annuler l'émission</span>
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={handleMettreAJourOF}
+                disabled={isEmitting}
+                className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 border-2 border-black rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer shadow-sm active:scale-95"
+                title="Met à jour cet OF avec la nouvelle optimisation : recalcule le plan de coupe, libère les anciennes réservations et enregistre les nouvelles quantités réservées"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
+                <span>{isEmitting ? 'Mise à jour...' : '🔄 Mettre à jour l\'OF'}</span>
+              </button>
             )}
             <button onClick={onClose} className="p-1.5 text-black hover:bg-slate-200 rounded-lg transition ml-1 cursor-pointer">
               <X className="w-5 h-5" />

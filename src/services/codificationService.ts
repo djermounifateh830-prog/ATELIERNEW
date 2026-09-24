@@ -331,8 +331,9 @@ export function formaterRefCommandeAvecPrefixe(
 }
 
 /**
- * Vérifie si deux références de commande correspondent, en tenant compte des préfixes,
+ * Vérifie si deux références de commande correspondent exactement, en tenant compte des préfixes d'agence,
  * tirets, espaces ou combinaisons multi-commandes ("A-260577" == "A260577" == "260577").
+ * STRICT : Ne fait JAMAIS de correspondance par inclusion partielle de chiffres (ex: 2608 ne correspond PAS à 260875).
  */
 export function matchReferences(
   ref1?: string,
@@ -342,30 +343,47 @@ export function matchReferences(
   if (!ref1 || !ref2) return false;
   const c1 = ref1.trim().toLowerCase();
   const c2 = ref2.trim().toLowerCase();
-  if (c1 === c2) return true;
+  if (!c1 || !c2) return false;
 
-  // Multi-références (ex: "D-260951 + D-260950")
-  const tokens1 = c1.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
-  const tokens2 = c2.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
-  if (tokens1.some(t1 => tokens2.includes(t1))) return true;
-
-  // Sans délimiteurs
-  const n1 = c1.replace(/[-_\s]/g, '');
-  const n2 = c2.replace(/[-_\s]/g, '');
-  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
-
-  // Sans préfixe d'agence
-  const s1 = extraireNumeroSansPrefixe(ref1, codifications).trim().toLowerCase();
-  const s2 = extraireNumeroSansPrefixe(ref2, codifications).trim().toLowerCase();
-  if (s1 && s2 && (s1 === s2 || s1.includes(s2) || s2.includes(s1))) return true;
-
-  // Comparaison des chiffres purs
-  const d1 = ref1.replace(/\D/g, '');
-  const d2 = ref2.replace(/\D/g, '');
-  if (d1.length >= 4 && d2.length >= 4 && (d1 === d2 || d1.includes(d2) || d2.includes(d1))) {
-    return true;
+  // Si l'une des références est un placeholder générique, égalité textuelle stricte uniquement
+  const genericPlaceholders = ['cmd', 'dossier', 'n/a', '-', 'fiche de coupe', 'commande'];
+  if (genericPlaceholders.includes(c1) || genericPlaceholders.includes(c2)) {
+    return c1 === c2;
   }
 
-  return false;
+  if (c1 === c2) return true;
+
+  // Décomposition multi-références (ex: "D-260951 + D-260950")
+  const tokens1 = c1.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
+  const tokens2 = c2.split(/[\s,+/]+/).map(t => t.trim()).filter(Boolean);
+
+  const matchSingle = (r1: string, r2: string): boolean => {
+    if (!r1 || !r2) return false;
+    const t1 = r1.trim().toLowerCase();
+    const t2 = r2.trim().toLowerCase();
+    if (t1 === t2) return true;
+
+    // 1. Sans délimiteurs (tirets, underscores, espaces)
+    const n1 = t1.replace(/[-_\s]/g, '');
+    const n2 = t2.replace(/[-_\s]/g, '');
+    if (n1 === n2) return true;
+
+    // 2. Sans préfixe d'agence (ex: "SA26817" == "26817", "A-260577" == "260577")
+    const s1 = extraireNumeroSansPrefixe(r1, codifications).trim().toLowerCase();
+    const s2 = extraireNumeroSansPrefixe(r2, codifications).trim().toLowerCase();
+    if (s1 && s2 && s1 === s2) return true;
+
+    // 3. Chiffres purs (uniquement si égalité stricte et longueur >= 3 chiffres)
+    const d1 = r1.replace(/\D/g, '');
+    const d2 = r2.replace(/\D/g, '');
+    if (d1 && d2 && d1 === d2 && d1.length >= 3) {
+      return true;
+    }
+
+    return false;
+  };
+
+  // Si l'un des deux est une liste multi-commandes, vérifier si un token correspond
+  return tokens1.some(t1 => tokens2.some(t2 => matchSingle(t1, t2)));
 }
 

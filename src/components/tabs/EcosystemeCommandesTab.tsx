@@ -1788,15 +1788,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
     const getOrCreate = (refRaw?: string) => {
       const ref = (refRaw || 'CMD').trim();
+      const isGeneric = ['cmd', 'dossier', 'n/a', '-', '', 'fiche de coupe', 'commande'].includes(ref.toLowerCase());
       if (!map.has(ref)) {
-        const isConfirmed = Array.from(commandesConfirmeesSet).some(c => matchReferences(c, ref)) ||
+        const isConfirmed = !isGeneric && (
+          Array.from(commandesConfirmeesSet).some(c => matchReferences(c, ref)) ||
           (suivisOF || []).some(o => {
             if (o.statut === 'ANNULE') return false;
-            if (editingDossierId && o.dossierId === editingDossierId) {
-              return matchReferences(o.numCommande, ref);
-            }
             return matchReferences(o.numCommande, ref);
-          });
+          })
+        );
 
         map.set(ref, {
           ref,
@@ -9740,16 +9740,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                           >
                             <RotateCcw className="w-3.5 h-3.5 text-slate-950" />
                             <span>🔄 Mettre à jour l'OF</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleAnnulerConfirmationCommandeIndividuelle(cmd.ref)}
-                            className="px-3 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-700/60 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow transition active:scale-95 cursor-pointer"
-                            title={`Annuler l'émission et déconfirmer la commande N° ${cmd.ref} : libère les réservations et permet de modifier à nouveau la commande`}
-                          >
-                            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                            <span>↩️ Annuler l'émission</span>
                           </button>
 
                           {(() => {
