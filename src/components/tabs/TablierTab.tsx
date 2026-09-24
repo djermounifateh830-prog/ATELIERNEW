@@ -23,8 +23,11 @@ import {
   Calendar,
   Palette,
   Sparkles,
-  Tag
+  Tag,
+  FileUp
 } from 'lucide-react';
+import { ChargementLignesPdfModal } from '../common/ChargementLignesPdfModal';
+import { LigneCommandeExtraite } from '../../services/pdfCommandeParserService';
 
 interface TablierTabProps {
   articles: Article[];
@@ -60,6 +63,9 @@ export const TablierTab: React.FC<TablierTabProps> = ({
   const [nomClientDefaut, setNomClientDefaut] = useState<string>('SARL MCB ALUMINIUM');
   const [dateCommandeDefaut, setDateCommandeDefaut] = useState<string>('09/08/2026');
   const [colorisDefaut, setColorisDefaut] = useState<string>('G7024');
+
+  // Modal de chargement automatique des lignes depuis un bordereau PDF
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
 
   // Détection agence
   const agenceInfo = useMemo(() => detecterAgence(refCommandeDefaut), [refCommandeDefaut]);
@@ -276,6 +282,51 @@ export const TablierTab: React.FC<TablierTabProps> = ({
     setEditForm(null);
   };
 
+  const handleValiderImportLignes = (data: {
+    lignes: LigneCommandeExtraite[];
+    modeAjout: 'REMPLACER' | 'AJOUTER';
+    majNumCommande?: string;
+    majClient?: string;
+    majDate?: string;
+    majAvecLF?: boolean;
+    hauteurLameSuggeree?: number;
+  }) => {
+    if (!data.lignes || data.lignes.length === 0) return;
+
+    if (data.majNumCommande) setRefCommandeDefaut(data.majNumCommande);
+    if (data.majClient) setNomClientDefaut(data.majClient);
+    if (data.majDate) setDateCommandeDefaut(data.majDate);
+
+    const hLame = data.hauteurLameSuggeree || saisieHauteurLame;
+    if (hLame) setSaisieHauteurLame(hLame);
+
+    const isVolet = saisieTypeFabrication === 'VOLET_COMPLET';
+    const numCmd = (data.majNumCommande || refCommandeDefaut || 'S-A26839').trim();
+    const client = (data.majClient || nomClientDefaut || 'Client').trim();
+    const date = data.majDate || dateCommandeDefaut;
+
+    const nouvellesLignes: CommandeTablier[] = data.lignes.map((l, idx) => ({
+      id: `t-pdf-${Date.now()}-${idx + 1}`,
+      refCommande: numCmd,
+      nomClient: client,
+      dateCommande: date,
+      largeur: l.largeur,
+      hauteur: l.hauteur,
+      hauteur_lame_tablier: hLame,
+      quantite: Math.max(1, l.quantite || 1),
+      repere: l.repere || `SA-${idx + 1}`,
+      nb_lame: Math.ceil(l.hauteur / hLame) + (isVolet ? 2 : 0),
+      typeFabrication: saisieTypeFabrication,
+      avecLameFinale: data.majAvecLF !== undefined ? data.majAvecLF : true
+    }));
+
+    if (data.modeAjout === 'REMPLACER') {
+      setTabliers(nouvellesLignes);
+    } else {
+      setTabliers(prev => [...prev, ...nouvellesLignes]);
+    }
+  };
+
   const handleCalculerOptimisation = () => {
     if (!selectedArticle) {
       alert('Veuillez d\'abord sélectionner l\'article de lame de tablier.');
@@ -462,15 +513,25 @@ export const TablierTab: React.FC<TablierTabProps> = ({
               </button>
             </div>
           </div>
-          <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={saisieAvecLameFinale}
-              onChange={e => setSaisieAvecLameFinale(e.target.checked)}
-              className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
-            />
-            <span>Inclure 1 Lame Finale (LF)</span>
-          </label>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={saisieAvecLameFinale}
+                onChange={e => setSaisieAvecLameFinale(e.target.checked)}
+                className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
+              />
+              <span>Inclure 1 Lame Finale (LF)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setIsPdfModalOpen(true)}
+              className="px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs ml-auto"
+            >
+              <FileUp className="w-3.5 h-3.5 text-amber-400" />
+              <span>📄 Charger lignes depuis PDF</span>
+            </button>
+          </div>
         </div>
 
         {/* Formulaire ajout rapide tablier */}
@@ -825,6 +886,17 @@ export const TablierTab: React.FC<TablierTabProps> = ({
           onOFEmis={onStockUpdated}
         />
       )}
+
+      {/* Modal de chargement automatique de lignes depuis PDF */}
+      <ChargementLignesPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        familleActive="TABLIER"
+        nomProfilActif={selectedArticle?.designation || `${saisieHauteurLame}mm`}
+        numCommandeActuel={refCommandeDefaut}
+        nomClientActuel={nomClientDefaut}
+        onValiderImportLignes={handleValiderImportLignes}
+      />
     </div>
   );
 };

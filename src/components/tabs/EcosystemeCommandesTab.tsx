@@ -51,6 +51,9 @@ import { SelecteurMode } from '../common/SelecteurMode';
 import { ClientCodificationModal } from '../common/ClientCodificationModal';
 import { ParametresMailleModal } from '../common/ParametresMailleModal';
 import { ValidationDelaiCommandeModal } from '../common/ValidationDelaiCommandeModal';
+import { ChargementLignesPdfModal } from '../common/ChargementLignesPdfModal';
+import { LigneCommandeExtraite } from '../../services/pdfCommandeParserService';
+import confetti from 'canvas-confetti';
 import {
   Building2,
   Building,
@@ -71,6 +74,7 @@ import {
   Filter,
   Eye,
   FileText,
+  FileUp,
   Boxes,
   Package,
   Check,
@@ -466,6 +470,9 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
 
   // Mode saisie actif
   const [modeSaisieActif, setModeSaisieActif] = useState<boolean>(true);
+
+  // Modal de chargement automatique des lignes depuis un bordereau PDF
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
 
   // =========================================================================
   // ÉTAT DE LA COMMANDE EN COURS DE SAISIE (UN NUMÉRO DISTINCT PAR FAMILLE)
@@ -4655,6 +4662,103 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     }, 50);
   };
 
+  // =========================================================================
+  // CHARGEMENT DIRECT DES LIGNES DEPUIS UN BORDEREAU PDF (FIABILITÉ 100%)
+  // =========================================================================
+  const handleValiderImportLignes = (data: {
+    lignes: LigneCommandeExtraite[];
+    modeAjout: 'REMPLACER' | 'AJOUTER';
+    majNumCommande?: string;
+    majClient?: string;
+    majDate?: string;
+    majAvecLF?: boolean;
+    hauteurLameSuggeree?: number;
+  }) => {
+    if (!data.lignes || data.lignes.length === 0) return;
+
+    // 1. Mise à jour de l'en-tête si souhaité par l'utilisateur
+    if (data.majNumCommande && data.majNumCommande.trim()) {
+      setActiveNumCommande(data.majNumCommande.trim());
+    }
+    if (data.majClient && data.majClient.trim()) {
+      setClientDeMonClient(data.majClient.trim());
+    }
+    if (data.majDate && data.majDate.trim()) {
+      setDateCommande(data.majDate.trim());
+    }
+
+    // 2. Mise à jour des options tablier (Lame Finale)
+    if (data.majAvecLF !== undefined) {
+      setTablierConfig(prev => ({ ...prev, avecLameFinale: data.majAvecLF! }));
+    }
+
+    const hLame = getHauteurLameTablier(
+      tablierConfig.articleCode,
+      currentTBLArticle?.designation,
+      data.hauteurLameSuggeree || tablierConfig.hauteurLame
+    );
+
+    const isVolet = tablierConfig.typeFabrication === 'VOLET_COMPLET';
+    const numCmdCible = (data.majNumCommande ? formaterRefCommandeAvecPrefixe(data.majNumCommande, monClient, clientCodifications) : (getActiveNumCommande() || 'CMD-TABLIER')).trim();
+    const clientCible = (data.majClient || clientDeMonClient || 'Client').trim();
+    const dateCible = data.majDate || dateCommande;
+
+    const nouvellesLignes: CommandeTablier[] = data.lignes.map((ligne, idx) => {
+      const nbLames = Math.ceil(ligne.hauteur / hLame) + (isVolet ? 2 : 0);
+      return {
+        id: `TAB-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
+        refCommande: numCmdCible,
+        nomClient: clientCible,
+        donneurOrdre: monClient,
+        dateCommande: dateCible,
+        largeur: ligne.largeur,
+        hauteur: ligne.hauteur,
+        hauteur_lame_tablier: hLame,
+        quantite: Math.max(1, ligne.quantite || 1),
+        repere: ligne.repere || `SA-${idx + 1}`,
+        nb_lame: nbLames,
+        typeFabrication: tablierConfig.typeFabrication,
+        avecLameFinale: data.majAvecLF !== undefined ? data.majAvecLF : tablierConfig.avecLameFinale,
+        avecCoulisses: isVolet,
+        articleCode: currentTBLArticle?.code_art || tablierConfig.articleCode || undefined,
+        articleDesignation: currentTBLArticle?.designation || '',
+        lfArticleCode: tablierConfig.avecLameFinale ? (currentLFArticle?.code_art || tablierConfig.lfArticleCode) : undefined,
+        lfArticleDesignation: tablierConfig.avecLameFinale ? (currentLFArticle?.designation || '') : undefined,
+        glArticleCode: isVolet ? (currentGLArticle?.code_art || tablierConfig.glArticleCode) : undefined,
+        glArticleDesignation: isVolet ? (currentGLArticle?.designation || '') : undefined,
+        typeOuvrant: ligne.typeOuvrant || undefined
+      };
+    });
+
+    const totalPiecesAjoutees = nouvellesLignes.reduce((sum, l) => sum + l.quantite, 0);
+
+    if (data.modeAjout === 'REMPLACER') {
+      if (numCmdCible) {
+        setLignesTabliers(prev => [
+          ...prev.filter(t => (t.refCommande || '').trim() !== numCmdCible),
+          ...nouvellesLignes
+        ]);
+      } else {
+        setLignesTabliers(nouvellesLignes);
+      }
+    } else {
+      setLignesTabliers(prev => [...prev, ...nouvellesLignes]);
+    }
+
+    try {
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.7 }
+      });
+    } catch (e) {}
+
+    showFlashNotification(
+      `⚡ ${nouvellesLignes.length} lignes de tablier chargées depuis le bordereau PDF (${totalPiecesAjoutees} pièces au total) !`,
+      'success'
+    );
+  };
+
   // Suppression d'une ligne
   const handleSupprimerLigne = (famille: FamilleProduit, id: string) => {
     if (famille === 'CAISSON') setLignesCaissons(lignesCaissons.filter(l => l.id !== id));
@@ -7729,6 +7833,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   >
                     {tablierConfig.typeFabrication === 'VOLET_COMPLET' ? 'Volet Complet' : 'Tablier Seul'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPdfModalOpen(true)}
+                    className="text-[11px] font-black px-3 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 hover:border-amber-400 shadow-xs active:scale-95"
+                    title="Charger automatiquement les lignes depuis un bordereau PDF"
+                  >
+                    <FileUp className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Charger lignes PDF</span>
+                  </button>
                 </>
               )}
 
@@ -8539,6 +8652,23 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           {/* TABLEAU TABLIERS */}
           {familleArticle === 'TABLIER' && (
             <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <div className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                  <span>Lignes de Tabliers enregistrées</span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 font-mono text-[10px] font-black">
+                    {lignesTabliers.length} ligne(s) • {lignesTabliers.reduce((s, t) => s + (Number(t.quantite) || 1), 0)} pièces
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPdfModalOpen(true)}
+                  className="text-xs font-black px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                >
+                  <FileUp className="w-4 h-4 text-amber-400" />
+                  <span>📄 Charger lignes depuis PDF</span>
+                </button>
+              </div>
+
               <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
                 <table className="w-full text-xs text-left">
                   <thead className="bg-slate-900/90 text-slate-400 text-[11px] font-semibold border-b border-slate-800">
@@ -8561,8 +8691,20 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       if (tabliersFiltres.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={6} className="py-6 text-center text-slate-500 font-sans italic text-xs">
-                              Aucun tablier/volet dans cette commande N° {activeRef || 'en cours'}. Saisissez L × H ci-dessus puis validez.
+                            <td colSpan={6} className="py-8 text-center text-slate-400 font-sans text-xs">
+                              <div className="flex flex-col items-center justify-center gap-3">
+                                <p className="italic text-slate-400">
+                                  Aucun tablier/volet dans cette commande N° {activeRef || 'en cours'}. Saisissez L × H ci-dessus ou chargez directement votre bordereau PDF.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => setIsPdfModalOpen(true)}
+                                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg cursor-pointer transition active:scale-95"
+                                >
+                                  <FileUp className="w-4 h-4" />
+                                  <span>📄 Charger les lignes depuis un bordereau PDF</span>
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -10360,6 +10502,19 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           initialDateLivraisonISO={delaiFixeManuellement ? (dateLivraisonPrevisionnelleISO || estimationLivraisonLive.dateLivraisonISO) : ''}
         />
       )}
+
+      {/* ========================================================================= */}
+      {/* 13. MODAL DE CHARGEMENT DIRECT DES LIGNES DEPUIS BORDEREAU PDF (100% OK)   */}
+      {/* ========================================================================= */}
+      <ChargementLignesPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        familleActive={familleArticle}
+        nomProfilActif={currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43'}
+        numCommandeActuel={getActiveNumCommande()}
+        nomClientActuel={clientDeMonClient}
+        onValiderImportLignes={handleValiderImportLignes}
+      />
     </div>
   );
 };
