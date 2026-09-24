@@ -1,8 +1,48 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Thèmes d'Atelier (Sombre / Clair / Auto)
+   Inversion harmonieuse de la palette Tailwind Slate en mode clair
+   ========================================================================== */
+
+:root,
+html.dark {
+  --color-slate-50: oklch(98.4% 0.003 247.858);
+  --color-slate-100: oklch(96.8% 0.007 247.896);
+  --color-slate-200: oklch(92.9% 0.013 255.508);
+  --color-slate-300: oklch(86.9% 0.022 252.894);
+  --color-slate-400: oklch(70.4% 0.04 256.788);
+  --color-slate-500: oklch(55.4% 0.046 257.417);
+  --color-slate-600: oklch(44.6% 0.043 257.281);
+  --color-slate-700: oklch(37.2% 0.044 257.287);
+  --color-slate-800: oklch(27.9% 0.041 260.031);
+  --color-slate-900: oklch(20.8% 0.042 265.755);
+  --color-slate-950: oklch(12.9% 0.042 264.695);
+  color-scheme: dark;
+}
+
+html.light {
+  /* Palette inversée pour le mode clair (haute lisibilité en atelier et bureau) */
+  --color-slate-950: #f8fafc; /* Fond de page principal (slate-50) */
+  --color-slate-900: #ffffff; /* Cartes, containers, header (blanc pur) */
+  --color-slate-850: #f1f5f9; /* Cartes imbriquées */
+  --color-slate-800: #f1f5f9; /* Inputs, fonds secondaires (slate-100) */
+  --color-slate-700: #e2e8f0; /* Bordures nettes (slate-200) */
+  --color-slate-600: #cbd5e1; /* Bordures secondaires (slate-300) */
+  --color-slate-500: #64748b; /* Textes d'aide et labels (slate-500) */
+  --color-slate-400: #475569; /* Sous-titres et icônes (slate-600) */
+  --color-slate-300: #334155; /* Texte courant très lisible (slate-700) */
+  --color-slate-200: #1e293b; /* Textes principaux (slate-800) */
+  --color-slate-100: #0f172a; /* Titres & contrastes forts (slate-900) */
+  --color-slate-50: #020617;  /* Contraste maximum (slate-950) */
+  color-scheme: light;
+}
+
+/* Ajustements typographiques et contrôles de formulaire */
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
   
   code, kbd, samp, pre {
@@ -29,6 +69,42 @@
   ::placeholder {
     text-transform: none;
   }
+}
+
+/* Finitions spécifiques au mode clair */
+html.light input,
+html.light select,
+html.light textarea {
+  color: #0f172a;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #94a3b8;
+}
+
+html.light .hover\:text-white:hover {
+  color: #0f172a;
+}
+
+/* Contraste renforcé des indicateurs colorés sur fond clair */
+html.light .text-amber-300,
+html.light .text-amber-400 {
+  color: #b45309;
+}
+
+html.light .text-emerald-400 {
+  color: #047857;
+}
+
+html.light .text-sky-400,
+html.light .text-blue-400 {
+  color: #0369a1;
+}
+
+/* Arrière-plan des modales en mode clair avec flou soigné */
+html.light .fixed.inset-0.bg-black\/80 {
+  background-color: rgba(15, 23, 42, 0.45);
 }
 
 @media print {

@@ -3,6 +3,10 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { logger } from './services/logger';
+import { themeService } from './services/themeService';
+
+// Initialisation du gestionnaire de thème (Sombre / Clair / Auto)
+themeService.init();
 
 // Capture globale des erreurs non gérées et promesses rejetées
 window.addEventListener('error', (event) => {

@@ -23,6 +23,7 @@ import { StorageService } from '../services/storage';
 import { OperatorBadge } from './common/OperatorBadge';
 import { OperatorModal } from './common/OperatorModal';
 import { RealtimeIndicator } from './common/RealtimeIndicator';
+import { ThemeToggle } from './common/ThemeToggle';
 import { Article, ChuteItem, ChuteMaille, SuiviOF, DossierCommandeGlobal, UserProfile } from '../types';
 
 interface HeaderProps {
@@ -235,7 +236,7 @@ export const Header: React.FC<HeaderProps> = ({
   const tabsToRender = authorizedTabs.length > 0 ? authorizedTabs : allTabs;
 
   return (
-    <header className="bg-slate-900 text-white shadow-xl border-b border-slate-800">
+    <header className="bg-slate-900 text-slate-100 shadow-xl border-b border-slate-800">
       {/* Top Banner (Full Screen Width) */}
       <div className="w-full px-2 sm:px-3 lg:px-4 py-3 sm:py-3.5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -267,6 +268,9 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center flex-wrap gap-2">
           {/* Indicateur et Contrôle Temps Réel (SSE / Polling) */}
           <RealtimeIndicator onRefreshTriggered={onRefreshData} />
+
+          {/* Sélecteur de Thème (Sombre / Clair / Auto) */}
+          <ThemeToggle showLabel={true} />
 
           {/* Badge de l'Opérateur Connecté (Rôle & Profil) */}
           <OperatorBadge onClick={() => setIsOperatorModalOpen(true)} />

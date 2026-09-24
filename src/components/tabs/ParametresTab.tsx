@@ -33,8 +33,13 @@ import {
   MapPin,
   ArrowUp,
   ArrowDown,
-  GripVertical
+  GripVertical,
+  Palette,
+  Sun,
+  Moon,
+  Monitor
 } from 'lucide-react';
+import { useTheme, ThemeMode } from '../../services/themeService';
 import { SystemLogsViewer } from '../common/SystemLogsViewer';
 import {
   Article,
@@ -78,6 +83,7 @@ type ParamSubTab =
   | 'mappage'
   | 'colonnes'
   | 'onglets'
+  | 'theme'
   | 'sauvegarde'
   | 'restauration'
   | 'logs'
@@ -114,6 +120,7 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
   onRefreshData
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<ParamSubTab>('sauvegarde');
+  const { themeMode, resolvedTheme, setThemeMode, systemTheme } = useTheme();
 
   // État de l'ordre des onglets (Persistance SQLite)
   const [tabsOrderConfig, setTabsOrderConfig] = useState<string[]>(DEFAULT_TABS_LIST);
@@ -684,6 +691,18 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
           </button>
 
           <button
+            onClick={() => setActiveSubTab('theme')}
+            className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
+              activeSubTab === 'theme'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                : 'bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700'
+            }`}
+          >
+            <Palette className="w-3.5 h-3.5" />
+            <span>🎨 Thème & Affichage</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('colonnes')}
             className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
               activeSubTab === 'colonnes'
@@ -1085,6 +1104,319 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* SECTION THÈME ET AFFICHAGE (SOMBRE / CLAIR / AUTO)                   */}
+      {/* =================================================================== */}
+      {activeSubTab === 'theme' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div>
+              <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <Palette className="w-4 h-4 text-amber-400" />
+                <span>Thème d'affichage &amp; Ergonomie Atelier</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Choisissez l'apparence visuelle la plus adaptée à vos conditions de travail : atelier, bureau ou tablette mobile.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Mode configuré :</span>
+              <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1.5">
+                {themeMode === 'auto' ? <Monitor className="w-3.5 h-3.5" /> : themeMode === 'light' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+                <span>{themeMode === 'auto' ? 'Automatique' : themeMode === 'light' ? 'Mode Clair' : 'Mode Sombre'}</span>
+              </span>
+              <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-semibold bg-slate-950 text-slate-300 border border-slate-800">
+                Rendu actif : <strong className="text-amber-400">{resolvedTheme === 'dark' ? 'Sombre' : 'Clair'}</strong>
+              </span>
+            </div>
+          </div>
+
+          {/* Grille de sélection des 3 thèmes */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 1. Mode Sombre */}
+            <div
+              onClick={() => setThemeMode('dark')}
+              className={`rounded-2xl p-4 border transition cursor-pointer flex flex-col justify-between relative overflow-hidden ${
+                themeMode === 'dark'
+                  ? 'bg-slate-950/90 border-amber-500 ring-2 ring-amber-500/40 shadow-xl'
+                  : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 hover:bg-slate-950/60'
+              }`}
+            >
+              {themeMode === 'dark' && (
+                <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center gap-1">
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>ACTIF</span>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Mockup miniature Sombre */}
+                <div className="w-full h-24 rounded-xl bg-slate-950 border border-slate-800 p-2.5 flex flex-col justify-between shadow-inner">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-full bg-rose-500/80" />
+                      <div className="w-3 h-3 rounded-full bg-amber-500/80" />
+                      <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
+                    </div>
+                    <div className="h-2 w-16 bg-slate-800 rounded" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="h-3 w-3/4 bg-amber-500/40 rounded border border-amber-500/60" />
+                    <div className="h-2 w-1/2 bg-slate-800 rounded" />
+                  </div>
+                  <div className="flex gap-1">
+                    <div className="h-2 flex-1 bg-slate-800 rounded" />
+                    <div className="h-2 flex-1 bg-slate-800 rounded" />
+                    <div className="h-2 flex-1 bg-amber-500/50 rounded" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-slate-800 text-amber-400">
+                    <Moon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100">Mode Sombre</h3>
+                    <span className="text-[10px] font-semibold text-emerald-400">Recommandé en atelier</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Fond anthracite à contraste optimal. Élimine l'éblouissement sur les écrans tactiles d'atelier et réduit la fatigue oculaire lors des longues sessions.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setThemeMode('dark');
+                }}
+                className={`mt-4 w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  themeMode === 'dark'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {themeMode === 'dark' ? <Check className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                <span>{themeMode === 'dark' ? 'Thème Sombre Actif' : 'Activer Mode Sombre'}</span>
+              </button>
+            </div>
+
+            {/* 2. Mode Clair */}
+            <div
+              onClick={() => setThemeMode('light')}
+              className={`rounded-2xl p-4 border transition cursor-pointer flex flex-col justify-between relative overflow-hidden ${
+                themeMode === 'light'
+                  ? 'bg-slate-950/90 border-amber-500 ring-2 ring-amber-500/40 shadow-xl'
+                  : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 hover:bg-slate-950/60'
+              }`}
+            >
+              {themeMode === 'light' && (
+                <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center gap-1">
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>ACTIF</span>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Mockup miniature Clair */}
+                <div className="w-full h-24 rounded-xl bg-slate-100 border border-slate-300 p-2.5 flex flex-col justify-between shadow-inner">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded-full bg-rose-400" />
+                      <div className="w-3 h-3 rounded-full bg-amber-400" />
+                      <div className="w-3 h-3 rounded-full bg-emerald-400" />
+                    </div>
+                    <div className="h-2 w-16 bg-slate-300 rounded" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="h-3 w-3/4 bg-amber-500/80 rounded" />
+                    <div className="h-2 w-1/2 bg-slate-400 rounded" />
+                  </div>
+                  <div className="flex gap-1">
+                    <div className="h-2 flex-1 bg-slate-300 rounded" />
+                    <div className="h-2 flex-1 bg-slate-300 rounded" />
+                    <div className="h-2 flex-1 bg-amber-500/80 rounded" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                    <Sun className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100">Mode Clair</h3>
+                    <span className="text-[10px] font-semibold text-sky-400">Idéal Bureau & Plein Jour</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Fond blanc épuré et contrastes ardoise nets. Idéal dans les pièces très éclairées, sous la lumière du jour ou pour l'édition de devis et impressions.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setThemeMode('light');
+                }}
+                className={`mt-4 w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  themeMode === 'light'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {themeMode === 'light' ? <Check className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+                <span>{themeMode === 'light' ? 'Thème Clair Actif' : 'Activer Mode Clair'}</span>
+              </button>
+            </div>
+
+            {/* 3. Mode Automatique */}
+            <div
+              onClick={() => setThemeMode('auto')}
+              className={`rounded-2xl p-4 border transition cursor-pointer flex flex-col justify-between relative overflow-hidden ${
+                themeMode === 'auto'
+                  ? 'bg-slate-950/90 border-amber-500 ring-2 ring-amber-500/40 shadow-xl'
+                  : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 hover:bg-slate-950/60'
+              }`}
+            >
+              {themeMode === 'auto' && (
+                <div className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center gap-1">
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>ACTIF</span>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {/* Mockup miniature Split Auto */}
+                <div className="w-full h-24 rounded-xl border border-slate-700 overflow-hidden flex shadow-inner">
+                  <div className="w-1/2 bg-slate-950 p-2 flex flex-col justify-between border-r border-slate-800">
+                    <div className="h-2 w-8 bg-slate-800 rounded" />
+                    <div className="h-3 w-12 bg-amber-500/40 rounded" />
+                    <Moon className="w-3.5 h-3.5 text-amber-400" />
+                  </div>
+                  <div className="w-1/2 bg-slate-100 p-2 flex flex-col justify-between">
+                    <div className="h-2 w-8 bg-slate-300 rounded" />
+                    <div className="h-3 w-12 bg-amber-500/80 rounded" />
+                    <Sun className="w-3.5 h-3.5 text-amber-600" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                    <Monitor className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100">Automatique</h3>
+                    <span className="text-[10px] font-semibold text-indigo-400">Synchronisé Système</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Bascule instantanément selon le réglage de votre système d'exploitation Windows, Mac ou Android (actuellement : <strong className="text-amber-400">{systemTheme === 'dark' ? 'Sombre' : 'Clair'}</strong>).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setThemeMode('auto');
+                }}
+                className={`mt-4 w-full py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                  themeMode === 'auto'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {themeMode === 'auto' ? <Check className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+                <span>{themeMode === 'auto' ? 'Thème Auto Actif' : 'Activer Mode Auto'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Aperçu en direct des composants */}
+          <div className="rounded-xl p-4 bg-slate-950/60 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                <span>Aperçu en Direct des Éléments d'Atelier</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-amber-400">
+                  {resolvedTheme === 'dark' ? 'Palette Sombre active' : 'Palette Claire active'}
+                </span>
+              </h4>
+              <span className="text-[11px] text-slate-400">
+                Basculez entre les boutons ci-dessus pour observer le rendu en temps réel.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 shadow">
+                <div className="text-[10px] uppercase font-bold text-slate-500">Exemple Badge OF</div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-1 rounded-md font-mono text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    OF-2026-0042
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                    EMIS
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 shadow">
+                <div className="text-[10px] uppercase font-bold text-slate-500">Boutons d'Action</div>
+                <div className="flex items-center gap-2">
+                  <button type="button" className="px-3 py-1 bg-amber-500 text-slate-950 text-xs font-bold rounded-lg shadow">
+                    Valider
+                  </button>
+                  <button type="button" className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg">
+                    Détail
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 shadow">
+                <div className="text-[10px] uppercase font-bold text-slate-500">Champ de Saisie</div>
+                <input
+                  type="text"
+                  readOnly
+                  value="SARL MENUISERIE DU CENTRE"
+                  className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 font-medium"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 shadow">
+                <div className="text-[10px] uppercase font-bold text-slate-500">Jauge &amp; Métrique</div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Rendement coupe</span>
+                  <span className="font-bold text-emerald-400">96.4 %</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: '96.4%' }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Astuce de navigation */}
+          <div className="flex items-start gap-3 p-3.5 rounded-xl bg-slate-950/40 border border-slate-800/80 text-xs text-slate-400">
+            <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="font-bold text-slate-200">
+                Accès Rapide Permanent :
+              </p>
+              <p className="mt-0.5">
+                Vous pouvez changer de thème en 1 clic à tout moment depuis n'importe quel onglet grâce au bouton <strong>☀️ / 🌙 / 💻</strong> situé dans la barre supérieure de navigation, à côté du badge opérateur.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
