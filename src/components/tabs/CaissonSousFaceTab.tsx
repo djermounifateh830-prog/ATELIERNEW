@@ -4,6 +4,8 @@ import { SelecteurArticle } from '../common/SelecteurArticle';
 import { SelecteurMode } from '../common/SelecteurMode';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
+import { ChargementLignesPdfModal } from '../common/ChargementLignesPdfModal';
+import { LigneCommandeExtraite, PdfCommandeParserService } from '../../services/pdfCommandeParserService';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
@@ -22,7 +24,9 @@ import {
   Calendar,
   Palette,
   Scissors,
-  Package
+  Package,
+  FileText,
+  Sparkles
 } from 'lucide-react';
 
 interface CaissonSousFaceTabProps {
@@ -109,6 +113,77 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
   const [resultat, setResultat] = useState<ResultatOptimisation | null>(null);
   const [isCalculating, setIsCalculating] = useState<boolean>(false);
   const [isOFOpen, setIsOFOpen] = useState<boolean>(false);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
+
+  const handleValiderImportLignes = (data: {
+    lignes: LigneCommandeExtraite[];
+    modeAjout: 'REMPLACER' | 'AJOUTER';
+    majNumCommande?: string;
+    majClient?: string;
+    majDate?: string;
+    typeCaissonSuggere?: string;
+    articleCaissonSuggere?: Article;
+    avecSousFaceSuggeree?: boolean;
+    colorisSousFaceSuggere?: string;
+  }) => {
+    if (!data.lignes || data.lignes.length === 0) return;
+
+    if (data.majNumCommande && data.majNumCommande.trim()) {
+      setRefCommandeDefaut(data.majNumCommande.trim());
+    }
+    if (data.majClient && data.majClient.trim()) {
+      setNomClientDefaut(data.majClient.trim());
+    }
+    if (data.majDate && data.majDate.trim()) {
+      setDateCommandeDefaut(data.majDate.trim());
+    }
+    if (data.colorisSousFaceSuggere) {
+      setColorisDefaut(data.colorisSousFaceSuggere);
+    }
+
+    // Sélectionner automatiquement l'article caisson correspondant (25, 30, 35, 40, FIBRAGLO)
+    if (data.articleCaissonSuggere) {
+      setSelectedArticle(data.articleCaissonSuggere);
+      if (data.articleCaissonSuggere.designation.toUpperCase().startsWith('SF')) {
+        setFamilleFiltre('SF');
+      } else {
+        setFamilleFiltre('CT');
+      }
+    } else if (data.typeCaissonSuggere) {
+      const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(data.typeCaissonSuggere, safeArticles);
+      if (art) {
+        setSelectedArticle(art);
+        setFamilleFiltre('CT');
+      }
+    }
+
+    const ref = (data.majNumCommande || refCommandeDefaut || 'CMD-CT').trim();
+    const client = (data.majClient || nomClientDefaut || 'CLIENT').trim();
+    const date = (data.majDate || dateCommandeDefaut).trim();
+    const debord = selectedArticle?.debordement || 0;
+
+    const nouvellesPieces: PieceACouper[] = data.lignes.map((l, idx) => {
+      const lg = l.largeur; // Dans les bordereaux caisson, la largeur est la longueur de coupe du caisson
+      const rep = l.repere || `C-${idx + 1}`;
+      return {
+        id: `ct-pdf-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
+        refCommande: ref,
+        nomClient: client,
+        dateCommande: date,
+        longueur: lg,
+        longueurAvecDebord: lg + debord,
+        quantite: Math.max(1, l.quantite || 1),
+        label: `${rep} (${l.typeCaissonLabel || ('CT ' + (l.typeCaissonDetecte || '30'))} — L=${lg}mm)`,
+        repere: rep
+      };
+    });
+
+    if (data.modeAjout === 'REMPLACER') {
+      setPieces(nouvellesPieces);
+    } else {
+      setPieces(prev => [...prev, ...nouvellesPieces]);
+    }
+  };
 
   const mappedSheetName = selectedArticle ? mapping[selectedArticle.code_art] || null : null;
   const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
@@ -370,20 +445,32 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-500 font-medium">Exemple :</span>
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
-              onClick={() => {
-                setRefCommandeDefaut('A260498');
-                setNomClientDefaut('MAZARI PROM KOUBA');
-                setDateCommandeDefaut('30/07/2026');
-                setColorisDefaut('BL');
-              }}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-amber-300 font-mono text-[11px] transition"
+              onClick={() => setIsPdfModalOpen(true)}
+              className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition cursor-pointer"
+              title="Importer un bordereau PDF de caissons tunnel (25, 30, 35, 40, FIBRAGLO)"
             >
-              A260498 — Mazari Prom
+              <FileText className="w-4 h-4" />
+              <span>Charger Bordereau PDF</span>
             </button>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 font-medium">Exemple :</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setRefCommandeDefaut('A260498');
+                  setNomClientDefaut('MAZARI PROM KOUBA');
+                  setDateCommandeDefaut('30/07/2026');
+                  setColorisDefaut('BL');
+                }}
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 rounded text-amber-300 font-mono text-[11px] transition"
+              >
+                A260498 — Mazari Prom
+              </button>
+            </div>
           </div>
         </div>
 
@@ -788,6 +875,18 @@ export const CaissonSousFaceTab: React.FC<CaissonSousFaceTabProps> = ({
           onOFEmis={onStockUpdated}
         />
       )}
+
+      {/* Modal d'importation PDF dédiée Caissons Tunnel & Sous-Faces */}
+      <ChargementLignesPdfModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        familleActive="CAISSON"
+        nomProfilActif={selectedArticle?.designation}
+        numCommandeActuel={refCommandeDefaut}
+        nomClientActuel={nomClientDefaut}
+        articles={safeArticles}
+        onValiderImportLignes={handleValiderImportLignes}
+      />
     </div>
   );
 };

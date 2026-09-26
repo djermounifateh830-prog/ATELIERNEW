@@ -4799,6 +4799,73 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       return;
     }
 
+    // 2b. Traitement Spécifique : CAISSON TUNNEL & SOUS-FACE
+    if (familleArticle === 'CAISSON') {
+      const artCaisson = data.articleCaissonSuggere || (data.typeCaissonSuggere ? PdfCommandeParserService.trouverArticleCaissonPourPdf(data.typeCaissonSuggere, safeArticles) : null) || currentCTArticle;
+      if (artCaisson) {
+        setCaissonConfig(prev => ({
+          ...prev,
+          ctArticleCode: artCaisson.code_art,
+          avecSousFace: data.avecSousFaceSuggeree !== undefined ? data.avecSousFaceSuggeree : prev.avecSousFace
+        }));
+      }
+
+      const nouvellesLignesCaisson: CommandeCaisson[] = data.lignes.map((ligne, idx) => {
+        const typeC = (ligne.typeCaissonDetecte || data.typeCaissonSuggere || '30') as string;
+        const artLigne = ligne.articleCaissonCode
+          ? safeArticles.find(a => a.code_art === ligne.articleCaissonCode)
+          : (typeC ? PdfCommandeParserService.trouverArticleCaissonPourPdf(typeC, safeArticles) : artCaisson);
+
+        return {
+          id: `CAISSON-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
+          refCommande: numCmdCible,
+          nomClient: clientCible,
+          donneurOrdre: monClient,
+          dateCommande: dateCible,
+          longueur: ligne.largeur, // En caisson, la largeur indiquée est la longueur de coupe du caisson
+          hauteur: ligne.hauteur,
+          quantite: Math.max(1, ligne.quantite || 1),
+          repere: ligne.repere || `C-${idx + 1}`,
+          typeCaisson: 'TUNNEL_SIMPLE',
+          typePrestation: 'CAISSON_ET_SOUS_FACE',
+          isSousFaceSeule: false,
+          articleCode: artLigne?.code_art || ligne.articleCaissonCode || caissonConfig.ctArticleCode,
+          articleDesignation: artLigne?.designation || ligne.articleCaissonDesignation || currentCTArticle?.designation || 'CT SOMO 30 ARRONDI',
+          avecSousFace: ligne.avecSousFaceDetectee !== undefined ? ligne.avecSousFaceDetectee : (data.avecSousFaceSuggeree ?? true),
+          sfArticleCode: ligne.sfArticleCode || caissonConfig.sfArticleCode,
+          sfArticleDesignation: ligne.sfArticleDesignation || currentSFArticle?.designation || 'SF 300 ALU',
+          colorisSousFace: ligne.colorisSousFace || data.colorisSousFaceSuggere || 'BRUT',
+          montageSousFace: 'MONTEE_ATELIER',
+          avecPeinture: false
+        };
+      });
+
+      const totalPcs = nouvellesLignesCaisson.reduce((sum, l) => sum + l.quantite, 0);
+
+      if (data.modeAjout === 'REMPLACER') {
+        if (numCmdCible) {
+          setLignesCaissons(prev => [
+            ...prev.filter(c => (c.refCommande || '').trim() !== numCmdCible),
+            ...nouvellesLignesCaisson
+          ]);
+        } else {
+          setLignesCaissons(nouvellesLignesCaisson);
+        }
+      } else {
+        setLignesCaissons(prev => [...prev, ...nouvellesLignesCaisson]);
+      }
+
+      try {
+        confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
+      } catch (e) {}
+
+      showFlashNotification(
+        `⚡ ${nouvellesLignesCaisson.length} lignes de caisson chargées depuis le PDF (${totalPcs} caissons au total) !`,
+        'success'
+      );
+      return;
+    }
+
     // 3. Application automatique du profilé & couleur détectés pour les tabliers
     let targetTBLArticle = (data.articleSuggere && (familleArticle === 'TABLIER' || !currentTBLArticle)) ? data.articleSuggere : currentTBLArticle;
     let matchingLF = targetTBLArticle ? trouverLameFinalePourTablier(targetTBLArticle, articlesLameFinale) : null;

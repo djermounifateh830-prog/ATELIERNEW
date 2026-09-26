@@ -39,6 +39,15 @@ export interface LigneCommandeExtraite {
   detailsDebordement?: string;
   chassisImageCropDataUrl?: string;
   chassisImageAnnotatedDataUrl?: string;
+  // Détection spécifique pour Caisson
+  typeCaissonDetecte?: '25' | '30' | '35' | '40' | 'FIBRAGLO' | string;
+  typeCaissonLabel?: string;
+  articleCaissonCode?: string;
+  articleCaissonDesignation?: string;
+  avecSousFaceDetectee?: boolean;
+  sfArticleCode?: string;
+  sfArticleDesignation?: string;
+  colorisSousFace?: string;
 }
 
 export interface ResultatExtractionPDF {
@@ -62,6 +71,11 @@ export interface ResultatExtractionPDF {
   typePrecadreDetecte?: string;
   figurePrecadreDetectee?: FigurePrecadre;
   modeDebordementDetecte?: ModeDebordementPrecadre;
+  // Détections globales pour Caisson
+  typesCaissonsDetectes?: string[];
+  typeCaissonPrincipalDetecte?: string;
+  avecSousFaceDetectee?: boolean;
+  colorisSousFaceDetecte?: string;
 }
 
 /**
@@ -283,9 +297,19 @@ export class PdfCommandeParserService {
     if (upperRef.includes('MOUSTIQUAIRE') || upperRef.includes('MSTQ')) scoreMoustiquaire += 15;
 
     // Détection Caisson
-    if (upperTexte.includes('SOMOBOX') || upperTexte.includes('CAISSON TUNNEL') || upperTexte.includes('CAISSON')) scoreCaisson += 15;
-    if (upperTexte.includes('SOUS-FACE') || upperTexte.includes('SOUS FACE')) scoreCaisson += 8;
-    if (upperRef.includes('CAISSON') || upperRef.includes('SOMOBOX')) scoreCaisson += 15;
+    if (upperTexte.includes('SOMOBOX') || upperTexte.includes('CAISSON TUNNEL') || upperTexte.includes('CAISSON')) scoreCaisson += 20;
+    if (upperTexte.includes('SOUS-FACE') || upperTexte.includes('SOUS FACE') || upperTexte.includes('SF GR') || upperTexte.includes('SF BL')) scoreCaisson += 10;
+    if (upperRef.includes('CAISSON') || upperRef.includes('SOMOBOX') || upperRef.includes('CT30') || upperRef.includes('CT25') || upperRef.includes('CT35') || upperRef.includes('CT40')) scoreCaisson += 20;
+    if (upperTexte.includes('25X25') || upperTexte.includes('30X30') || upperTexte.includes('35X35') || upperTexte.includes('40X40')) scoreCaisson += 15;
+    if (upperTexte.includes('FIBRAGLO') || upperTexte.includes('FIBRA')) scoreCaisson += 15;
+
+    // Détection de client complémentaire depuis la référence (ex: "DEVIS CT30 KARTOUT RAFIK SF GR" -> "KARTOUT RAFIK")
+    if (!clientDetecte && referenceComplete) {
+      const refDevisMatch = referenceComplete.match(/(?:DEVIS\s+[A-Za-z0-9]+\s+)([A-Za-zÀ-ÿ0-9\s\-]+?)(?:\s+SF|\s+TAB|\s+PRC|$)/i);
+      if (refDevisMatch && refDevisMatch[1].trim().length >= 2) {
+        clientDetecte = refDevisMatch[1].trim();
+      }
+    }
 
     let familleDetectee: 'TABLIER' | 'CAISSON' | 'MOUSTIQUAIRE' | 'PRECADRE' | 'INCONNUE' = 'INCONNUE';
     const maxScore = Math.max(scorePrecadre, scoreTablier, scoreMoustiquaire, scoreCaisson);
@@ -332,20 +356,77 @@ export class PdfCommandeParserService {
         if (!line) continue;
 
         // Éliminer les en-têtes et pieds répétés
+        const upperLine = line.toUpperCase();
         if (
-          line.toUpperCase().includes('LOT QTÉ LARGEUR HAUTEUR') ||
-          line.toUpperCase().includes('LOT QTE LARGEUR HAUTEUR') ||
-          line.toUpperCase().includes('CHÂSSIS') ||
-          line.toUpperCase().includes('CHASSIS') ||
-          line.toUpperCase() === 'REPÈRE' ||
-          line.toUpperCase() === 'REPERE' ||
-          line.toUpperCase().startsWith('PAGE N°') ||
-          line.toUpperCase().includes('NOMBRE DE COLIS') ||
-          line.toUpperCase() === 'DESCRIPTIF' ||
-          line.toUpperCase().startsWith('MEGRINE, LE') ||
-          line.toUpperCase().startsWith('BORDEREAU DE LIVRAISON')
+          upperLine.includes('LOT QTÉ LARGEUR HAUTEUR') ||
+          upperLine.includes('LOT QTE LARGEUR HAUTEUR') ||
+          upperLine.includes('CHÂSSIS') ||
+          upperLine.includes('CHASSIS') ||
+          upperLine === 'REPÈRE' ||
+          upperLine === 'REPERE' ||
+          upperLine.startsWith('PAGE N°') ||
+          upperLine.includes('NOMBRE DE COLIS') ||
+          upperLine === 'DESCRIPTIF' ||
+          (upperLine.includes('DESCRIPTIF') && upperLine.length <= 15) ||
+          upperLine.startsWith('QTÉ DÉSIGNATION') ||
+          upperLine.startsWith('QTE DESIGNATION') ||
+          (upperLine.includes('QTÉ') && upperLine.includes('DÉSIGNATION')) ||
+          (upperLine.includes('QTE') && upperLine.includes('DESIGNATION')) ||
+          upperLine.startsWith('MEGRINE, LE') ||
+          upperLine.startsWith('BORDEREAU DE LIVRAISON')
         ) {
           continue;
+        }
+
+        // Cas 0 : Détection Dédiée Ligne Caisson Tunnel (Format "Qté Désignation L H", ex: "3 SOMOBOX Caisson tunnel 25X25 1480 250")
+        const caissonLineMatch = line.match(/^(\d{1,3})\s+(.+?)\s+(\d{3,5}(?:[.,]\d+)?)\s+(\d{2,4}(?:[.,]\d+)?)$/i);
+        if (caissonLineMatch) {
+          const qte = parseInt(caissonLineMatch[1], 10);
+          const desig = caissonLineMatch[2].trim();
+          const larg = Math.round(parseFloat(caissonLineMatch[3].replace(',', '.')));
+          const haut = Math.round(parseFloat(caissonLineMatch[4].replace(',', '.')));
+
+          const isCaissonLine = (
+            larg >= 200 && larg <= 7000 &&
+            haut >= 100 && haut <= 1200 &&
+            qte > 0 && qte < 500 &&
+            (
+              /SOMOBOX|CAISSON|TUNNEL|FIBRAGLO|FIBRA|25X25|30X30|35X35|40X40|\bCT\s*\d+|\bSF\b/i.test(desig) ||
+              familleDetectee === 'CAISSON' ||
+              scoreCaisson >= 10
+            )
+          );
+
+          if (isCaissonLine) {
+            const rep = pendingRepere || `C-${lignes.length + 1}`;
+            pendingRepere = '';
+
+            const caissonProps = PdfCommandeParserService.analyserLigneCaisson(
+              desig,
+              larg,
+              haut,
+              referenceComplete
+            );
+
+            lignes.push({
+              id: `pdf-line-${Date.now()}-${lignes.length + 1}`,
+              repere: rep,
+              quantite: qte,
+              largeur: larg,
+              hauteur: haut,
+              designation: desig,
+              pageNumber: pageNum,
+              typeCaissonDetecte: caissonProps.typeCaisson,
+              typeCaissonLabel: caissonProps.typeCaissonLabel,
+              articleCaissonCode: caissonProps.articleCaissonCode,
+              articleCaissonDesignation: caissonProps.articleCaissonDesignation,
+              avecSousFaceDetectee: caissonProps.avecSousFace,
+              sfArticleCode: caissonProps.sfArticleCode,
+              sfArticleDesignation: caissonProps.sfArticleDesignation,
+              colorisSousFace: caissonProps.colorisSousFace
+            });
+            continue;
+          }
         }
 
         // Cas 1 : Repère isolé sur sa propre ligne (ex: "A3A1", "A3A2", "1", "A-P", "A-P2", etc.)
@@ -481,6 +562,13 @@ export class PdfCommandeParserService {
               visualHintForLine
             );
 
+            const caissonProps = PdfCommandeParserService.analyserLigneCaisson(
+              texteLigneComplet,
+              largeur,
+              hauteur,
+              referenceComplete
+            );
+
             lignes.push({
               id: `pdf-line-${Date.now()}-${lignes.length + 1}`,
               repere: finalRepere,
@@ -502,31 +590,18 @@ export class PdfCommandeParserService {
               sourceDetectionDebordement: precadreProps.sourceDetectionDebordement,
               detailsDebordement: precadreProps.detailsDebordement,
               chassisImageCropDataUrl: visualHintForLine?.cropDataUrl,
-              chassisImageAnnotatedDataUrl: visualHintForLine?.dataUrlAnnote
+              chassisImageAnnotatedDataUrl: visualHintForLine?.dataUrlAnnote,
+              typeCaissonDetecte: caissonProps.typeCaisson,
+              typeCaissonLabel: caissonProps.typeCaissonLabel,
+              articleCaissonCode: caissonProps.articleCaissonCode,
+              articleCaissonDesignation: caissonProps.articleCaissonDesignation,
+              avecSousFaceDetectee: caissonProps.avecSousFace,
+              sfArticleCode: caissonProps.sfArticleCode,
+              sfArticleDesignation: caissonProps.sfArticleDesignation,
+              colorisSousFace: caissonProps.colorisSousFace
             });
             continue;
           }
-        }
-
-        // Cas 3 : Format Descriptif Caissons (ex: "18 SOMOBOX Caisson tunnel 30X30 1250 300")
-        const caissonMatch = line.match(/^(\d{1,3})\s+(SOMOBOX[^\d]+(?:\d+X\d+)?)\s+([0-9]+(?:[.,][0-9]+)?)\s+([0-9]+(?:[.,][0-9]+)?)$/i);
-        if (caissonMatch) {
-          const qte = parseInt(caissonMatch[1], 10) || 1;
-          const designation = caissonMatch[2].trim();
-          const largeur = Math.round(parseFloat(caissonMatch[3].replace(',', '.')));
-          const hauteur = Math.round(parseFloat(caissonMatch[4].replace(',', '.')));
-
-          lignes.push({
-            id: `pdf-line-${Date.now()}-${lignes.length + 1}`,
-            repere: pendingRepere || `C-${lignes.length + 1}`,
-            quantite: qte,
-            largeur,
-            hauteur,
-            designation,
-            pageNumber: pageNum
-          });
-          pendingRepere = '';
-          continue;
         }
       }
     }
@@ -581,6 +656,12 @@ export class PdfCommandeParserService {
     const figurePrecadreDetectee = premiereLignePrc?.figurePrecadre;
     const modeDebordementDetecte = premiereLignePrc?.modeDebordementPrecadre;
 
+    // Détections globales pour Caissons
+    const typesCaissonsDetectes = Array.from(new Set(lignes.map(l => l.typeCaissonDetecte).filter(Boolean))) as string[];
+    const typeCaissonPrincipalDetecte = typesCaissonsDetectes[0] || (referenceComplete.includes('CT30') ? '30' : referenceComplete.includes('CT25') ? '25' : '30');
+    const avecSousFaceDetectee = lignes.some(l => l.avecSousFaceDetectee) || referenceComplete.includes('SF');
+    const colorisSousFaceDetecte = lignes.find(l => l.colorisSousFace)?.colorisSousFace || (referenceComplete.includes('SF GR') || referenceComplete.includes('7024') ? 'GRIS 7024' : 'BRUT');
+
     return {
       succes: lignes.length > 0,
       clientDetecte,
@@ -599,7 +680,129 @@ export class PdfCommandeParserService {
       indicationLameFinale,
       typePrecadreDetecte,
       figurePrecadreDetectee,
-      modeDebordementDetecte
+      modeDebordementDetecte,
+      typesCaissonsDetectes,
+      typeCaissonPrincipalDetecte,
+      avecSousFaceDetectee,
+      colorisSousFaceDetecte
+    };
+  }
+
+  /**
+   * Analyse déterministe d'une ligne de Caisson Tunnel à partir de sa désignation, ses dimensions
+   * et de la référence du bordereau.
+   * Détecte le type (25, 30, 35, 40, FIBRAGLO), l'article de stock associé et la présence de sous-face.
+   */
+  public static analyserLigneCaisson(
+    designation: string = '',
+    largeur: number = 0,
+    hauteur: number = 0,
+    referenceComplete: string = ''
+  ): {
+    typeCaisson: '25' | '30' | '35' | '40' | 'FIBRAGLO' | string;
+    typeCaissonLabel: string;
+    articleCaissonCode?: string;
+    articleCaissonDesignation?: string;
+    sfArticleCode?: string;
+    sfArticleDesignation?: string;
+    avecSousFace: boolean;
+    colorisSousFace?: string;
+  } {
+    const upperDesig = (designation || '').toUpperCase();
+    const upperRef = (referenceComplete || '').toUpperCase();
+
+    // Détection Sous-Face (SF GR / Gris 7024 / Blanc / Brut)
+    let avecSousFace = true;
+    let colorisSousFace = 'BRUT';
+    let isGris = false;
+
+    if (upperRef.includes('SF GR') || upperRef.includes('7024') || upperDesig.includes('7024') || upperRef.includes('GRIS')) {
+      colorisSousFace = 'GRIS 7024';
+      isGris = true;
+    } else if (upperRef.includes('SF BL') || upperRef.includes('BLANC') || upperDesig.includes('BL')) {
+      colorisSousFace = 'BL (Blanc)';
+    } else if (upperRef.includes('SF') || upperRef.includes('SOUS-FACE') || upperRef.includes('SOUS FACE')) {
+      colorisSousFace = 'BRUT';
+    }
+
+    // 1. FIBRAGLO
+    if (upperDesig.includes('FIBRAGLO') || upperDesig.includes('FIBRA') || upperRef.includes('FIBRAGLO')) {
+      const is25 = upperDesig.includes('25') || hauteur === 250;
+      return {
+        typeCaisson: 'FIBRAGLO',
+        typeCaissonLabel: is25 ? 'Caisson 25 Fibraglo' : 'Caisson 30 Fibraglo',
+        articleCaissonCode: is25 ? 'ART0012' : 'ART0013',
+        articleCaissonDesignation: is25 ? 'CT SOMO 25 FIBRAGLO' : 'CT SOMO 30 FIBRAGLO',
+        sfArticleCode: is25 ? (isGris ? 'ART0024' : 'ART0021') : (isGris ? 'ART0025' : 'ART0022'),
+        sfArticleDesignation: is25 ? (isGris ? 'SF 250 7024' : 'SF 250') : (isGris ? 'SF 300 7024' : 'SF 300'),
+        avecSousFace,
+        colorisSousFace
+      };
+    }
+
+    // 2. Caisson 40 (40x40)
+    if (upperDesig.includes('40X40') || upperDesig.includes('400') || hauteur === 400 || /\b40\b/.test(upperDesig)) {
+      return {
+        typeCaisson: '40',
+        typeCaissonLabel: 'Caisson 40 (40X40)',
+        articleCaissonCode: 'ART0018',
+        articleCaissonDesignation: 'CT SOMO 40',
+        avecSousFace,
+        colorisSousFace
+      };
+    }
+
+    // 3. Caisson 35 (35x35)
+    if (upperDesig.includes('35X35') || upperDesig.includes('350') || hauteur === 350 || /\b35\b/.test(upperDesig)) {
+      return {
+        typeCaisson: '35',
+        typeCaissonLabel: 'Caisson 35 (35X35)',
+        articleCaissonCode: 'ART0019',
+        articleCaissonDesignation: 'CT SOMO 35',
+        avecSousFace,
+        colorisSousFace
+      };
+    }
+
+    // 4. Caisson 30 (30x30)
+    if (upperDesig.includes('30X30') || upperDesig.includes('300') || hauteur === 300 || /\b30\b/.test(upperDesig) || (upperRef.includes('CT30') && !upperDesig.includes('25'))) {
+      return {
+        typeCaisson: '30',
+        typeCaissonLabel: 'Caisson 30 (30X30)',
+        articleCaissonCode: 'ART0011',
+        articleCaissonDesignation: 'CT SOMO 30 ARRONDI',
+        sfArticleCode: isGris ? 'ART0025' : 'ART0022',
+        sfArticleDesignation: isGris ? 'SF 300 7024' : 'SF 300',
+        avecSousFace,
+        colorisSousFace
+      };
+    }
+
+    // 5. Caisson 25 (25x25)
+    if (upperDesig.includes('25X25') || upperDesig.includes('250') || hauteur === 250 || /\b25\b/.test(upperDesig)) {
+      return {
+        typeCaisson: '25',
+        typeCaissonLabel: 'Caisson 25 (25X25)',
+        articleCaissonCode: 'ART0010',
+        articleCaissonDesignation: 'CT SOMO 25 ARRONDI',
+        sfArticleCode: isGris ? 'ART0024' : 'ART0021',
+        sfArticleDesignation: isGris ? 'SF 250 7024' : 'SF 250',
+        avecSousFace,
+        colorisSousFace
+      };
+    }
+
+    // Fallback par défaut selon la hauteur
+    const fallbackType = hauteur >= 280 ? '30' : '25';
+    return {
+      typeCaisson: fallbackType,
+      typeCaissonLabel: fallbackType === '30' ? 'Caisson 30 (30X30)' : 'Caisson 25 (25X25)',
+      articleCaissonCode: fallbackType === '30' ? 'ART0011' : 'ART0010',
+      articleCaissonDesignation: fallbackType === '30' ? 'CT SOMO 30 ARRONDI' : 'CT SOMO 25 ARRONDI',
+      sfArticleCode: fallbackType === '30' ? (isGris ? 'ART0025' : 'ART0022') : (isGris ? 'ART0024' : 'ART0021'),
+      sfArticleDesignation: fallbackType === '30' ? (isGris ? 'SF 300 7024' : 'SF 300') : (isGris ? 'SF 250 7024' : 'SF 250'),
+      avecSousFace,
+      colorisSousFace
     };
   }
 
@@ -870,6 +1073,55 @@ export class PdfCommandeParserService {
     });
 
     return matched || prcArticles[0];
+  }
+
+  /**
+   * Trouve l'article de caisson tunnel exact correspondant au type détecté dans le PDF
+   * (ex: 25, 30, 35, 40, FIBRAGLO)
+   */
+  public static trouverArticleCaissonPourPdf(
+    typeCaisson: string = '30',
+    articles: Article[] = []
+  ): Article | null {
+    const ctArticles = articles.filter(a => {
+      const d = (a.designation || '').toUpperCase();
+      return (d.startsWith('CT') || d.includes('CAISSON')) && !d.includes('PRECADRE') && !d.includes('SF') && !d.includes('SOUS-FACE');
+    });
+    if (ctArticles.length === 0) return null;
+
+    const upper = (typeCaisson || '30').toUpperCase();
+
+    // 1. FIBRAGLO
+    if (upper === 'FIBRAGLO' || upper.includes('FIBRA')) {
+      const matchFibra = ctArticles.find(a => a.designation.toUpperCase().includes('FIBRAGLO') || a.designation.toUpperCase().includes('FIBRA'));
+      if (matchFibra) return matchFibra;
+    }
+
+    // 2. 40 (40x40)
+    if (upper === '40' || upper.includes('40')) {
+      const match40 = ctArticles.find(a => a.designation.toUpperCase().includes('40') || a.hauteur === 40 || a.hauteur === 400);
+      if (match40) return match40;
+    }
+
+    // 3. 35 (35x35)
+    if (upper === '35' || upper.includes('35')) {
+      const match35 = ctArticles.find(a => a.designation.toUpperCase().includes('35') || a.hauteur === 35 || a.hauteur === 350);
+      if (match35) return match35;
+    }
+
+    // 4. 25 (25x25)
+    if (upper === '25' || upper.includes('25')) {
+      const match25 = ctArticles.find(a => (a.designation.toUpperCase().includes('25') || a.hauteur === 25 || a.hauteur === 250) && !a.designation.toUpperCase().includes('FIBRAGLO'));
+      if (match25) return match25;
+    }
+
+    // 5. 30 (30x30)
+    if (upper === '30' || upper.includes('30')) {
+      const match30 = ctArticles.find(a => (a.designation.toUpperCase().includes('30') || a.hauteur === 30 || a.hauteur === 300) && !a.designation.toUpperCase().includes('FIBRAGLO'));
+      if (match30) return match30;
+    }
+
+    return ctArticles.find(a => a.designation.toUpperCase().includes('30')) || ctArticles[0] || null;
   }
 
   /**

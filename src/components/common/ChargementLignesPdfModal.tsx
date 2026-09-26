@@ -50,6 +50,10 @@ interface ChargementLignesPdfModalProps {
     articlePrecadreSuggere?: Article;
     figurePrecadreSuggeree?: FigurePrecadre;
     modeDebordementSuggere?: ModeDebordementPrecadre;
+    typeCaissonSuggere?: string;
+    articleCaissonSuggere?: Article;
+    avecSousFaceSuggeree?: boolean;
+    colorisSousFaceSuggere?: string;
   }) => void;
 }
 
@@ -78,6 +82,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
   const [appliquerClient, setAppliquerClient] = useState(false); // DEFAULT FALSE
   const [appliquerProfilCouleur, setAppliquerProfilCouleur] = useState(true); // DEFAULT TRUE : Appliquer profilé et couleur détectés
   const [optionAvecLF, setOptionAvecLF] = useState<boolean>(true); // Option Lame Finale : Détectée ou au choix
+  const [afficherRecapitulatif, setAfficherRecapitulatif] = useState<boolean>(true); // Afficher/Masquer le panneau supérieur pour maximiser l'espace tableau
   
   // Inspecteur visuel de châssis / photo
   const [inspecteurLigne, setInspecteurLigne] = useState<LigneCommandeExtraite | null>(null);
@@ -151,6 +156,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
 
   // Mode strict : chaque moteur est exclusif à sa famille
   const isPrecadre = familleActive === 'PRECADRE';
+  const isCaisson = familleActive === 'CAISSON';
 
   // Validation stricte : le document doit correspondre exactement à la famille du moteur ouvert
   const estImportValide = useMemo(() => {
@@ -176,6 +182,14 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     if (!resultat || articles.length === 0) return null;
     return PdfCommandeParserService.trouverArticlePrecadrePourPdf(
       resultat.typePrecadreDetecte || 'TYPE_50',
+      articles
+    );
+  }, [resultat, articles]);
+
+  const articleCaissonTrouve = useMemo(() => {
+    if (!resultat || articles.length === 0) return null;
+    return PdfCommandeParserService.trouverArticleCaissonPourPdf(
+      resultat.typeCaissonPrincipalDetecte || '30',
       articles
     );
   }, [resultat, articles]);
@@ -312,11 +326,51 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     );
   };
 
+  const handleAppliquerTypeCaissonSelection = (typeCaisson: '25' | '30' | '35' | '40' | 'FIBRAGLO') => {
+    const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(typeCaisson, articles);
+    const labelMap: Record<string, string> = {
+      '25': 'Caisson 25 (25X25)',
+      '30': 'Caisson 30 (30X30)',
+      '35': 'Caisson 35 (35X35)',
+      '40': 'Caisson 40 (40X40)',
+      'FIBRAGLO': 'Caisson FIBRAGLO'
+    };
+    setLignesModifiables(prev =>
+      prev.map(l =>
+        lignesSelectionnees.has(l.id)
+          ? {
+              ...l,
+              typeCaissonDetecte: typeCaisson,
+              typeCaissonLabel: labelMap[typeCaisson] || `Caisson ${typeCaisson}`,
+              articleCaissonCode: art?.code_art || l.articleCaissonCode,
+              articleCaissonDesignation: art?.designation || l.articleCaissonDesignation
+            }
+          : l
+      )
+    );
+  };
+
+  const handleAppliquerSousFaceSelection = (avecSF: boolean, coloris?: string) => {
+    setLignesModifiables(prev =>
+      prev.map(l =>
+        lignesSelectionnees.has(l.id)
+          ? {
+              ...l,
+              avecSousFaceDetectee: avecSF,
+              colorisSousFace: coloris !== undefined ? coloris : l.colorisSousFace
+            }
+          : l
+      )
+    );
+  };
+
   const handleConfirmer = () => {
     if (estImportRefuse) {
       alert(
         familleActive === 'PRECADRE'
           ? "Importation refusée : Cette commande n'est pas un bon de commande de Précadre."
+          : familleActive === 'CAISSON'
+          ? "Importation refusée : Cette commande n'est pas un bon de commande de Caisson Tunnel."
           : "Importation refusée : Cette commande n'est pas un bon de commande de Tablier / Volet Roulant."
       );
       return;
@@ -337,12 +391,16 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
       majAvecLF: optionAvecLF,
       hauteurLameSuggeree: resultat?.hauteurLameDetectee || selection[0]?.hauteurLameDetectee,
       couleurDetectee: resultat?.couleurNormalisee || resultat?.couleurDetectee,
-      articleSuggere: (appliquerProfilCouleur && (isPrecadre ? articlePrecadreTrouve : articleTablierTrouve)) || undefined,
+      articleSuggere: (appliquerProfilCouleur && (isPrecadre ? articlePrecadreTrouve : isCaisson ? articleCaissonTrouve : articleTablierTrouve)) || undefined,
       appliquerProfilEtCouleur: appliquerProfilCouleur,
       typePrecadreSuggere: resultat?.typePrecadreDetecte || selection[0]?.typePrecadre || 'TYPE_50',
       articlePrecadreSuggere: articlePrecadreTrouve || undefined,
       figurePrecadreSuggeree: selection[0]?.figurePrecadre,
-      modeDebordementSuggere: selection[0]?.modeDebordementPrecadre
+      modeDebordementSuggere: selection[0]?.modeDebordementPrecadre,
+      typeCaissonSuggere: selection[0]?.typeCaissonDetecte || resultat?.typeCaissonPrincipalDetecte || '30',
+      articleCaissonSuggere: articleCaissonTrouve || undefined,
+      avecSousFaceSuggeree: selection.some(l => l.avecSousFaceDetectee),
+      colorisSousFaceSuggere: selection.find(l => l.colorisSousFace)?.colorisSousFace || resultat?.colorisSousFaceDetecte || 'BRUT'
     });
 
     handleClose();
@@ -353,19 +411,29 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     .reduce((sum, l) => sum + (Number(l.quantite) || 1), 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className={`bg-slate-900 border-2 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden ${
-        isPrecadre ? 'border-purple-500/50 shadow-purple-950/50' : 'border-amber-500/50 shadow-amber-950/50'
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+      <div className={`bg-slate-900 border-2 rounded-2xl w-[98vw] max-w-[1600px] max-h-[96vh] flex flex-col shadow-2xl overflow-hidden ${
+        isPrecadre
+          ? 'border-purple-500/50 shadow-purple-950/50'
+          : isCaisson
+          ? 'border-emerald-500/50 shadow-emerald-950/50'
+          : 'border-amber-500/50 shadow-amber-950/50'
       }`}>
         
         {/* En-tête Modal Dédié à la Famille */}
         <div className={`px-6 py-4 border-b bg-slate-950 flex items-center justify-between ${
-          isPrecadre ? 'border-purple-500/30' : 'border-amber-500/30'
+          isPrecadre
+            ? 'border-purple-500/30'
+            : isCaisson
+            ? 'border-emerald-500/30'
+            : 'border-amber-500/30'
         }`}>
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl border ${
               isPrecadre
                 ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                : isCaisson
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                 : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
             }`}>
               <FileText className="w-6 h-6" />
@@ -375,14 +443,18 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                 <h2 className="text-lg font-black text-slate-100 tracking-tight">
                   {isPrecadre
                     ? 'Moteur d\'Importation Dédié — Précadres Aluminium'
+                    : isCaisson
+                    ? 'Moteur d\'Importation Dédié — Caissons Tunnel & Sous-Faces'
                     : 'Moteur d\'Importation Dédié — Volets Roulants & Tabliers'}
                 </h2>
                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
                   isPrecadre
                     ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                    : isCaisson
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                 }`}>
-                  {isPrecadre ? '🚪 Exclusif Précadre' : '🪟 Exclusif Tablier'}
+                  {isPrecadre ? '🚪 Exclusif Précadre' : isCaisson ? '📦 Exclusif Caisson' : '🪟 Exclusif Tablier'}
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" />
@@ -392,6 +464,8 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
               <p className="text-xs text-slate-400 mt-0.5">
                 {isPrecadre
                   ? 'Traitement exclusif des bons de commande de Précadres (CT 50 / CT 36, Dormants). Tout autre type de commande sera refusé.'
+                  : isCaisson
+                  ? 'Traitement exclusif des bons de commande de Caissons Tunnel (25, 30, 35, 40, FIBRAGLO) et Sous-Faces.'
                   : 'Traitement exclusif des bons de commande de Tabliers et Volets (Lames 55 / 43). Tout autre type de commande sera refusé.'}
               </p>
             </div>
@@ -416,9 +490,15 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
               onClick={() => fileInputRef.current?.click()}
               className={`border-2 border-dashed rounded-2xl p-10 text-center transition cursor-pointer flex flex-col items-center justify-center gap-4 ${
                 isDragging
-                  ? isPrecadre ? 'border-purple-400 bg-purple-500/10 scale-[0.99]' : 'border-amber-400 bg-amber-500/10 scale-[0.99]'
+                  ? isPrecadre
+                    ? 'border-purple-400 bg-purple-500/10 scale-[0.99]'
+                    : isCaisson
+                    ? 'border-emerald-400 bg-emerald-500/10 scale-[0.99]'
+                    : 'border-amber-400 bg-amber-500/10 scale-[0.99]'
                   : isPrecadre
                   ? 'border-purple-500/30 bg-slate-950/60 hover:border-purple-500/60 hover:bg-slate-950'
+                  : isCaisson
+                  ? 'border-emerald-500/30 bg-slate-950/60 hover:border-emerald-500/60 hover:bg-slate-950'
                   : 'border-slate-700 bg-slate-950/50 hover:border-amber-500/50 hover:bg-slate-950'
               }`}
             >
@@ -436,11 +516,17 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
               <div className={`p-4 rounded-2xl border shadow-inner ${
                 isPrecadre
                   ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                  : isCaisson
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                   : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
               }`}>
                 {isProcessing ? (
                   <div className={`w-10 h-10 border-4 rounded-full animate-spin ${
-                    isPrecadre ? 'border-purple-400 border-t-transparent' : 'border-amber-400 border-t-transparent'
+                    isPrecadre
+                      ? 'border-purple-400 border-t-transparent'
+                      : isCaisson
+                      ? 'border-emerald-400 border-t-transparent'
+                      : 'border-amber-400 border-t-transparent'
                   }`} />
                 ) : (
                   <Upload className="w-10 h-10" />
@@ -452,11 +538,15 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                     ? 'Analyse du document PDF en cours...'
                     : isPrecadre
                     ? 'Glissez votre Bon de Commande de PRÉCADRES ici (ou cliquez pour parcourir)'
+                    : isCaisson
+                    ? 'Glissez votre Bon de Commande de CAISSONS TUNNEL ici (ou cliquez pour parcourir)'
                     : 'Glissez votre Bon de Commande de TABLIERS / VOLETS ici (ou cliquez pour parcourir)'}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
                   {isPrecadre
                     ? 'Détection et extraction sécurisées des profilés CT 50/36, dimensions châssis, renforts et débordements'
+                    : isCaisson
+                    ? 'Détection et extraction sécurisées des Caissons 25, 30, 35, 40, FIBRAGLO et Sous-Faces associées'
                     : 'Détection et extraction sécurisées des lames 55/43, dimensions tabliers, coloris et lames finales'}
                 </p>
               </div>
@@ -495,6 +585,8 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                     <h3 className="text-lg font-black text-red-100">
                       {familleActive === 'PRECADRE'
                         ? "Cette commande n'est pas un bon de commande de Précadre et l'import est refusé."
+                        : familleActive === 'CAISSON'
+                        ? "Cette commande n'est pas un bon de commande de Caisson Tunnel et l'import est refusé."
                         : familleActive === 'TABLIER'
                         ? "Cette commande n'est pas un bon de commande de Tablier / Volet Roulant et l'import est refusé."
                         : `Cette commande n'est pas de la famille ${familleActive} et l'import est refusé.`}
@@ -506,9 +598,15 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                         <span className={`px-2 py-0.5 rounded font-black text-[11px] ${
                           familleActive === 'PRECADRE'
                             ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                            : familleActive === 'CAISSON'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                             : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                         }`}>
-                          {familleActive === 'PRECADRE' ? '🚪 Précadre Aluminium (Exclusif)' : '🪟 Volet Roulant / Tablier (Exclusif)'}
+                          {familleActive === 'PRECADRE'
+                            ? '🚪 Précadre Aluminium (Exclusif)'
+                            : familleActive === 'CAISSON'
+                            ? '📦 Caisson Tunnel (Exclusif)'
+                            : '🪟 Volet Roulant / Tablier (Exclusif)'}
                         </span>
                       </div>
 
@@ -524,7 +622,26 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                       </div>
 
                       <div className="pt-2 border-t border-slate-800 text-slate-300 leading-relaxed">
-                        {familleActive === 'PRECADRE' ? (
+                        {familleActive === 'CAISSON' ? (
+                          <div>
+                            <p className="font-semibold text-slate-200">
+                              Le moteur d'importation de l'onglet Caisson traite exclusivement les commandes de Caissons Tunnel (25, 30, 35, 40, FIBRAGLO) et Sous-Faces.
+                            </p>
+                            {resultat.familleDetectee === 'TABLIER' ? (
+                              <p className="text-sky-300 font-semibold mt-1">
+                                👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Tablier / Volet Roulant</strong>. Veuillez basculer sur l'onglet <strong>Volet / Tablier</strong> pour importer ce document.
+                              </p>
+                            ) : resultat.familleDetectee === 'PRECADRE' ? (
+                              <p className="text-purple-300 font-semibold mt-1">
+                                👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Précadre Aluminium</strong>. Veuillez basculer sur l'onglet <strong>Précadre</strong> pour importer ce document.
+                              </p>
+                            ) : (
+                              <p className="text-slate-400 mt-1">
+                                Aucun caisson tunnel reconnu dans ce document. L'import est bloqué pour protéger vos calculs d'atelier.
+                              </p>
+                            )}
+                          </div>
+                        ) : familleActive === 'PRECADRE' ? (
                           <div>
                             <p className="font-semibold text-slate-200">
                               Le moteur d'importation de l'onglet Précadre traite exclusivement les commandes de Précadres (CT 50 / CT 36 / Dormants aluminium).
@@ -532,6 +649,10 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                             {resultat.familleDetectee === 'TABLIER' ? (
                               <p className="text-sky-300 font-semibold mt-1">
                                 👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Tablier / Volet Roulant</strong> (Lame {resultat.hauteurLameDetectee || 55}mm). Veuillez basculer sur l'onglet <strong>Volet / Tablier</strong> dans Écosystème pour importer ce document.
+                              </p>
+                            ) : resultat.familleDetectee === 'CAISSON' ? (
+                              <p className="text-emerald-300 font-semibold mt-1">
+                                👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Caisson Tunnel</strong>. Veuillez basculer sur l'onglet <strong>Caisson / Sous-Face</strong> pour importer ce document.
                               </p>
                             ) : (
                               <p className="text-slate-400 mt-1">
@@ -547,6 +668,10 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                             {resultat.familleDetectee === 'PRECADRE' ? (
                               <p className="text-purple-300 font-semibold mt-1">
                                 👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Précadre Aluminium</strong> ({resultat.typePrecadreDetecte || 'Profilé CT 50/36'}). Veuillez basculer sur l'onglet <strong>Précadre</strong> dans Écosystème pour importer ce document.
+                              </p>
+                            ) : resultat.familleDetectee === 'CAISSON' ? (
+                              <p className="text-emerald-300 font-semibold mt-1">
+                                👉 Ce fichier a été identifié comme un <strong>Bon de Commande de Caisson Tunnel</strong>. Veuillez basculer sur l'onglet <strong>Caisson / Sous-Face</strong> pour importer ce document.
                               </p>
                             ) : (
                               <p className="text-slate-400 mt-1">
@@ -575,24 +700,23 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                       <div className="flex items-center gap-2">
                         {onBasculerFamille && (
                           (familleActive === 'PRECADRE' && resultat.familleDetectee === 'TABLIER') ||
-                          (familleActive === 'TABLIER' && resultat.familleDetectee === 'PRECADRE')
+                          (familleActive === 'TABLIER' && resultat.familleDetectee === 'PRECADRE') ||
+                          (familleActive !== 'CAISSON' && resultat.familleDetectee === 'CAISSON')
                         ) && (
                           <button
                             type="button"
                             onClick={() => {
-                              const cible = resultat.familleDetectee === 'TABLIER' ? 'TABLIER' : 'PRECADRE';
+                              const cible = resultat.familleDetectee as any;
                               handleClose();
                               onBasculerFamille(cible);
                             }}
-                            className={`px-4 py-2 rounded-xl font-black text-xs transition flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 ${
-                              resultat.familleDetectee === 'TABLIER'
-                                ? 'bg-sky-500 hover:bg-sky-400 text-slate-950 shadow-sky-500/30'
-                                : 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30'
-                            }`}
+                            className="px-4 py-2 rounded-xl font-black text-xs transition flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 bg-sky-500 hover:bg-sky-400 text-slate-950 shadow-sky-500/30"
                           >
                             <span>
                               {resultat.familleDetectee === 'TABLIER'
                                 ? "🪟 Basculer vers l'Onglet Volet / Tablier"
+                                : resultat.familleDetectee === 'CAISSON'
+                                ? "📦 Basculer vers l'Onglet Caisson / Sous-Face"
                                 : "🚪 Basculer vers l'Onglet Précadre"}
                             </span>
                             <ArrowRight className="w-4 h-4" />
@@ -614,8 +738,41 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
             ) : (
               <div className="space-y-4 animate-fadeIn">
               
-              {/* Cartes Récapitulatives Détectées */}
-              <div className="space-y-3">
+              {/* Cartes Récapitulatives Détectées (Rétractable pour un confort maximal) */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-black text-slate-200 uppercase tracking-wide flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Données détectées dans le PDF</span>
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                      isPrecadre ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                    }`}>
+                      {isPrecadre ? (resultat.typePrecadreDetecte === 'TYPE_36' ? 'CT 36' : 'CT 50') : 'Volet / Tablier'}
+                    </span>
+                    {resultat.numCommandeDetecte && (
+                      <span className="text-[11px] font-mono font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                        N° {resultat.numCommandeDetecte}
+                      </span>
+                    )}
+                    {resultat.clientDetecte && (
+                      <span className="text-[11px] text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800 font-medium">
+                        Client : <strong className="text-slate-100">{resultat.clientDetecte}</strong>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAfficherRecapitulatif(v => !v)}
+                    className="text-xs font-bold text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>{afficherRecapitulatif ? 'Masquer détails ▲' : 'Afficher détails ▼'}</span>
+                  </button>
+                </div>
+
+                {afficherRecapitulatif && (
+                  <div className="space-y-3">
                 
                 {/* 1. Sécurité En-tête Commande : PROTÉGÉE CONTRE L'ÉCRASEMENT INVOLONTAIRE */}
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-inner">
@@ -805,6 +962,87 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                       </div>
                     </div>
                   </div>
+                ) : isCaisson ? (
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* 1. Type de Caisson Principal */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
+                        <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Type Caisson Détecté</span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-emerald-300 text-xs bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-md">
+                          {resultat.typeCaissonPrincipalDetecte === 'FIBRAGLO'
+                            ? 'FIBRAGLO'
+                            : `Caisson ${resultat.typeCaissonPrincipalDetecte || '30'}`}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {resultat.typeCaissonPrincipalDetecte === 'FIBRAGLO'
+                            ? 'Isolé'
+                            : `${resultat.typeCaissonPrincipalDetecte || '30'}x${resultat.typeCaissonPrincipalDetecte || '30'}`}
+                        </span>
+                      </div>
+                      {articleCaissonTrouve && (
+                        <div className="text-[11px] font-bold text-slate-200 mt-1 truncate" title={articleCaissonTrouve.designation}>
+                          📦 <span className="text-emerald-300">{articleCaissonTrouve.designation}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. Sous-Face Détectée */}
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
+                        <Palette className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Sous-Face Détectée</span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-black text-sky-300 text-xs bg-sky-500/10 border border-sky-500/30 px-2.5 py-1 rounded-md">
+                          {resultat.avecSousFaceDetectee ? `Avec SF (${resultat.colorisSousFaceDetecte || 'BRUT'})` : 'Sans SF'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">
+                        Profilé alu sous linteau
+                      </div>
+                    </div>
+
+                    {/* 3. Types Multiples Présents */}
+                    <div className="space-y-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/80">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Gammes dans le document</span>
+                      </span>
+                      <div className="text-[11px] text-emerald-300 font-semibold flex flex-wrap gap-1 mt-1">
+                        {(resultat.typesCaissonsDetectes && resultat.typesCaissonsDetectes.length > 0)
+                          ? resultat.typesCaissonsDetectes.map(t => (
+                              <span key={t} className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
+                                {t === 'FIBRAGLO' ? 'FIBRAGLO' : `CT ${t}`}
+                              </span>
+                            ))
+                          : (
+                            <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
+                              CT {resultat.typeCaissonPrincipalDetecte || '30'}
+                            </span>
+                          )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Détection selon hauteur & libellé
+                      </div>
+                    </div>
+
+                    {/* 4. Contrôle Intégrité */}
+                    <div className="space-y-1 bg-emerald-950/30 border border-emerald-500/40 rounded-lg p-2.5 flex flex-col justify-center">
+                      <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Contrôle Intégrité 100%</span>
+                      </div>
+                      <div className="text-xs font-mono text-emerald-200 mt-0.5">
+                        <strong>{totalSelectionnePieces}</strong> caissons / <strong>{lignesModifiables.length}</strong> lignes
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Prêt pour optimisation de coupe 1D
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* 1. Profilé & Hauteur */}
@@ -921,6 +1159,8 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                 )}
 
               </div>
+              )}
+            </div>
 
               {/* Barre d'outils du tableau */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
@@ -1070,39 +1310,126 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                 </div>
               )}
 
+              {/* Barre d'actions groupées pour Caissons Tunnel (Sélection multiple 25, 30, 35, 40, FIBRAGLO, SF) */}
+              {isCaisson && lignesSelectionnees.size > 0 && (
+                <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs animate-fadeIn">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-black text-emerald-300 uppercase tracking-wide">
+                      ⚡ Appliquer aux {lignesSelectionnees.size} sélectionné(s) :
+                    </span>
+                    <div className="flex items-center gap-1 bg-slate-900/80 px-2 py-1 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-400 font-medium">Type :</span>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('30')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        CT 30 (30x30)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('25')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        CT 25 (25x25)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('35')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        CT 35 (35x35)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('40')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        CT 40 (40x40)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('FIBRAGLO')}
+                        className="px-2 py-0.5 rounded bg-amber-900/50 hover:bg-amber-500 hover:text-slate-950 text-amber-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        FIBRAGLO
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-slate-900/80 px-2 py-1 rounded-lg border border-slate-800">
+                      <span className="text-[10px] text-slate-400 font-medium">Sous-Face :</span>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerSousFaceSelection(true)}
+                        className="px-2 py-0.5 rounded bg-sky-900/50 hover:bg-sky-600 hover:text-white text-sky-300 text-[10px] font-bold cursor-pointer transition"
+                      >
+                        ✓ Avec SF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerSousFaceSelection(false)}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold cursor-pointer transition"
+                      >
+                        ✕ Sans SF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerSousFaceSelection(true, 'GRIS 7024')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold cursor-pointer transition"
+                      >
+                        🎨 SF 7024
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerSousFaceSelection(true, 'BL (Blanc)')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-100 text-[10px] font-bold cursor-pointer transition"
+                      >
+                        🎨 SF Blanc
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Tableau des lignes extraites avec vérification 100% */}
-              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950 shadow-inner">
-                <div className="max-h-[360px] overflow-y-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="sticky top-0 bg-slate-900 text-slate-400 text-[11px] font-semibold border-b border-slate-800 z-10">
+              <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950 shadow-inner flex flex-col">
+                <div className="min-h-[300px] max-h-[56vh] 2xl:max-h-[62vh] overflow-y-auto overflow-x-auto">
+                  <table className="w-full min-w-[1240px] text-xs text-left border-collapse">
+                    <thead className="sticky top-0 bg-slate-900/95 backdrop-blur-md text-slate-300 text-[11px] font-bold uppercase tracking-wider border-b border-slate-800 z-10 shadow-sm">
                       <tr>
-                        <th className="py-2.5 px-3 w-10 text-center">
+                        <th className="py-3 px-3 w-12 text-center">
                           <input
                             type="checkbox"
                             checked={lignesSelectionnees.size === lignesModifiables.length && lignesModifiables.length > 0}
                             onChange={toggleSelectAll}
-                            className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500"
+                            className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500 w-4 h-4 cursor-pointer"
                           />
                         </th>
-                        <th className="py-2.5 px-3 w-12 text-center">N°</th>
-                        <th className="py-2.5 px-3 w-28">Repère</th>
-                        <th className="py-2.5 px-3 w-16 text-center">Qté</th>
-                        <th className="py-2.5 px-3 w-24">Largeur (mm)</th>
-                        <th className="py-2.5 px-3 w-24">Hauteur (mm)</th>
+                        <th className="py-3 px-3 w-12 text-center">N°</th>
+                        <th className="py-3 px-3 w-32 min-w-[110px]">Repère</th>
+                        <th className="py-3 px-3 w-20 min-w-[75px] text-center">Qté</th>
+                        <th className="py-3 px-3 w-32 min-w-[115px] text-center">{isCaisson ? 'Longueur L (mm)' : 'Largeur (mm)'}</th>
+                        <th className="py-3 px-3 w-32 min-w-[115px] text-center">Hauteur (mm)</th>
                         {isPrecadre ? (
                           <>
-                            <th className="py-2.5 px-3 w-32">Profilé</th>
-                            <th className="py-2.5 px-3 w-48">Renfort / Figure</th>
-                            <th className="py-2.5 px-3 w-52">Débordements (Montants)</th>
+                            <th className="py-3 px-3 w-44 min-w-[150px]">Profilé</th>
+                            <th className="py-3 px-3 w-64 min-w-[230px]">Renfort / Figure</th>
+                            <th className="py-3 px-3 w-80 min-w-[320px]">Débordements (Montants)</th>
+                          </>
+                        ) : isCaisson ? (
+                          <>
+                            <th className="py-3 px-3 w-56 min-w-[190px]">Type de Caisson</th>
+                            <th className="py-3 px-3 w-60 min-w-[210px]">Sous-Face Associée</th>
+                            <th className="py-3 px-3 min-w-[240px]">Désignation / Détails</th>
                           </>
                         ) : (
                           <>
-                            <th className="py-2.5 px-3">Désignation / Détails</th>
-                            <th className="py-2.5 px-3 w-20 text-center">Coloris</th>
-                            <th className="py-2.5 px-2 w-20 text-center">Lame Finale</th>
+                            <th className="py-3 px-3 min-w-[240px]">Désignation / Détails</th>
+                            <th className="py-3 px-3 w-28 min-w-[110px] text-center">Coloris</th>
+                            <th className="py-3 px-3 w-28 min-w-[110px] text-center">Lame Finale</th>
                           </>
                         )}
-                        <th className="py-2.5 px-3 w-12 text-center">Action</th>
+                        <th className="py-3 px-3 w-14 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -1115,55 +1442,55 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                               isChecked ? 'bg-slate-900/40 hover:bg-slate-900/70' : 'opacity-40 hover:opacity-70 bg-slate-950'
                             }`}
                           >
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-2.5 px-3 text-center">
                               <input
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => toggleSelectLigne(ligne.id)}
-                                className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500"
+                                className="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500 w-4 h-4 cursor-pointer"
                               />
                             </td>
-                            <td className="py-2 px-3 text-center text-slate-500 font-sans text-[11px]">
+                            <td className="py-2.5 px-3 text-center text-slate-400 font-sans text-xs font-bold">
                               {idx + 1}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-2.5 px-3">
                               <input
                                 type="text"
                                 value={ligne.repere}
                                 onChange={e => handleModifierChamp(ligne.id, 'repere', e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-amber-300 focus:ring-1 focus:ring-amber-500"
+                                className="w-full bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-amber-500 rounded-lg px-2.5 py-1.5 text-xs font-black text-amber-300 focus:ring-1 focus:ring-amber-500 text-center tracking-wide"
                               />
                             </td>
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-2.5 px-3 text-center">
                               <input
                                 type="number"
                                 min="1"
                                 value={ligne.quantite}
                                 onChange={e => handleModifierChamp(ligne.id, 'quantite', Math.max(1, parseInt(e.target.value, 10) || 1))}
-                                className="w-14 text-center bg-slate-900 border border-slate-700 rounded px-1.5 py-1 text-xs font-bold text-slate-100 focus:ring-1 focus:ring-amber-500"
+                                className="w-full text-center bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-amber-500 rounded-lg px-1 py-1.5 text-xs font-black text-slate-100 focus:ring-1 focus:ring-amber-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-2.5 px-3 text-center">
                               <input
                                 type="number"
                                 value={ligne.largeur}
                                 onChange={e => handleModifierChamp(ligne.id, 'largeur', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                className="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-emerald-300 focus:ring-1 focus:ring-amber-500"
+                                className="w-full text-center bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-emerald-500 rounded-lg px-2 py-1.5 text-xs font-mono font-black text-emerald-300 focus:ring-1 focus:ring-emerald-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-2.5 px-3 text-center">
                               <input
                                 type="number"
                                 value={ligne.hauteur}
                                 onChange={e => handleModifierChamp(ligne.id, 'hauteur', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                className="w-24 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-sky-300 focus:ring-1 focus:ring-amber-500"
+                                className="w-full text-center bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-sky-500 rounded-lg px-2 py-1.5 text-xs font-mono font-black text-sky-300 focus:ring-1 focus:ring-sky-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </td>
 
                             {isPrecadre ? (
                               <>
                                 {/* Choix profilé précadre */}
-                                <td className="py-2 px-2">
+                                <td className="py-2.5 px-3">
                                   <select
                                     value={ligne.typePrecadre || 'TYPE_50'}
                                     onChange={e => {
@@ -1171,34 +1498,34 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                                       handleModifierChamp(ligne.id, 'typePrecadre', val);
                                       handleModifierChamp(ligne.id, 'typePrecadreLabel', val === 'TYPE_36' ? 'CT 36' : 'CT 50');
                                     }}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-black text-amber-300 focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                                    className="w-full bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-amber-500 rounded-lg px-3 py-1.5 text-xs font-black text-amber-300 focus:ring-1 focus:ring-amber-500 cursor-pointer"
                                   >
-                                    <option value="TYPE_50">CT 50 (50mm)</option>
-                                    <option value="TYPE_36">CT 36 (36mm)</option>
+                                    <option value="TYPE_50">CT 50 (50 mm)</option>
+                                    <option value="TYPE_36">CT 36 (36 mm)</option>
                                   </select>
                                 </td>
 
                                 {/* Choix figure renfort */}
-                                <td className="py-2 px-2">
+                                <td className="py-2.5 px-3">
                                   <select
                                     value={ligne.figurePrecadre || 'VIDE'}
                                     onChange={e => handleModifierChamp(ligne.id, 'figurePrecadre', e.target.value as FigurePrecadre)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs font-bold text-purple-300 focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                                    className="w-full bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-purple-500 rounded-lg px-3 py-1.5 text-xs font-bold text-purple-300 focus:ring-1 focus:ring-purple-500 cursor-pointer"
                                   >
                                     <option value="VIDE">🔲 Vide (aucun renfort)</option>
                                     <option value="RENFORT_H1">↕️ Renfort V / H1 (Montant)</option>
-                                    <option value="RENFORT_L1">↔️ Renfort H / L1 (Traverse)</option>
+                                    <option value="RENFORT_L1">↔️ Traverse H / L1</option>
                                     <option value="RENFORT_CROISE">✝️ Croisé (R1/R2 + H1)</option>
                                   </select>
                                 </td>
 
                                 {/* Choix débordements montants */}
-                                <td className="py-2 px-2">
-                                  <div className="flex items-center gap-1.5">
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
                                     <select
                                       value={ligne.modeDebordementPrecadre || 'SUPERIEUR_INFERIEUR'}
                                       onChange={e => handleChangerModeDebordementLigne(ligne.id, e.target.value as ModeDebordementPrecadre)}
-                                      className={`flex-1 border rounded px-2 py-1 text-xs font-bold cursor-pointer transition focus:ring-1 focus:ring-emerald-500 ${
+                                      className={`flex-1 border rounded-lg px-3 py-1.5 text-xs font-bold cursor-pointer transition focus:ring-1 focus:ring-emerald-500 ${
                                         ligne.modeDebordementPrecadre === 'SUPERIEUR_INFERIEUR'
                                           ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300 font-black'
                                           : ligne.modeDebordementPrecadre === 'INFERIEUR_SEUL'
@@ -1221,14 +1548,14 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                                         setInspecteurLigne(ligne);
                                         setIsInspecteurOpen(true);
                                       }}
-                                      className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700 transition cursor-pointer flex-shrink-0"
+                                      className="p-1.5 w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700 transition cursor-pointer flex-shrink-0 flex items-center justify-center shadow-sm"
                                       title="Ouvrir l'inspecteur visuel (détection géométrique sur croquis/photo)"
                                     >
                                       {ligne.chassisImageCropDataUrl ? (
                                         <img
                                           src={ligne.chassisImageAnnotatedDataUrl || ligne.chassisImageCropDataUrl}
                                           alt="Châssis"
-                                          className="w-5 h-5 object-contain bg-white rounded-sm border border-slate-600"
+                                          className="w-6 h-6 object-contain bg-white rounded-sm border border-slate-600 shadow-sm"
                                         />
                                       ) : (
                                         <Camera className="w-4 h-4 text-amber-400" />
@@ -1236,11 +1563,11 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                                     </button>
                                   </div>
 
-                                  <div className="flex items-center gap-1.5 mt-1 text-[9px] font-sans">
+                                  <div className="flex items-center gap-1.5 mt-1.5 text-[10px] font-sans">
                                     {ligne.sourceDetectionDebordement === 'PHOTO' && (
-                                      <span className="text-emerald-400 font-semibold truncate flex items-center gap-1" title={ligne.detailsDebordement}>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-bold" title={ligne.detailsDebordement}>
                                         <span>📷 Croquis :</span>
-                                        <span className="font-bold">
+                                        <span>
                                           {ligne.modeDebordementPrecadre === 'SANS_DEBORDEMENT'
                                             ? 'Fermé (0/0)'
                                             : ligne.modeDebordementPrecadre === 'SUPERIEUR_SEUL'
@@ -1252,28 +1579,99 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                                       </span>
                                     )}
                                     {ligne.sourceDetectionDebordement === 'TEXTE' && (
-                                      <span className="text-amber-400 font-medium truncate" title={ligne.detailsDebordement}>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 font-semibold" title={ligne.detailsDebordement}>
                                         📝 Texte : {ligne.detailsDebordement}
                                       </span>
                                     )}
                                     {ligne.sourceDetectionDebordement === 'NOMENCLATURE' && (
-                                      <span className="text-slate-400 truncate" title={ligne.detailsDebordement}>
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700 text-slate-400" title={ligne.detailsDebordement}>
                                         📐 Règle atelier
                                       </span>
                                     )}
                                   </div>
                                 </td>
                               </>
+                            ) : isCaisson ? (
+                              <>
+                                {/* Choix type caisson */}
+                                <td className="py-2.5 px-3">
+                                  <select
+                                    value={ligne.typeCaissonDetecte || '30'}
+                                    onChange={e => {
+                                      const val = e.target.value as '25' | '30' | '35' | '40' | 'FIBRAGLO';
+                                      const labelMap: Record<string, string> = {
+                                        '25': 'Caisson 25 (25X25)',
+                                        '30': 'Caisson 30 (30X30)',
+                                        '35': 'Caisson 35 (35X35)',
+                                        '40': 'Caisson 40 (40X40)',
+                                        'FIBRAGLO': 'Caisson FIBRAGLO'
+                                      };
+                                      const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(val, articles);
+                                      handleModifierChamp(ligne.id, 'typeCaissonDetecte', val);
+                                      handleModifierChamp(ligne.id, 'typeCaissonLabel', labelMap[val] || `Caisson ${val}`);
+                                      if (art) {
+                                        handleModifierChamp(ligne.id, 'articleCaissonCode', art.code_art);
+                                        handleModifierChamp(ligne.id, 'articleCaissonDesignation', art.designation);
+                                      }
+                                    }}
+                                    className="w-full bg-slate-900 border border-emerald-500/40 hover:border-emerald-500 focus:border-emerald-400 rounded-lg px-2.5 py-1.5 text-xs font-black text-emerald-300 focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                                  >
+                                    <option value="30">📦 Caisson 30 (30X30)</option>
+                                    <option value="25">📦 Caisson 25 (25X25)</option>
+                                    <option value="35">📦 Caisson 35 (35X35)</option>
+                                    <option value="40">📦 Caisson 40 (40X40)</option>
+                                    <option value="FIBRAGLO">🧱 FIBRAGLO (Isolé)</option>
+                                  </select>
+                                </td>
+
+                                {/* Sous-Face associée */}
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleModifierChamp(ligne.id, 'avecSousFaceDetectee', !ligne.avecSousFaceDetectee)}
+                                      className={`px-2 py-1 rounded-md text-[11px] font-black cursor-pointer transition border ${
+                                        ligne.avecSousFaceDetectee
+                                          ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                                          : 'bg-slate-800 text-slate-500 border-slate-700'
+                                      }`}
+                                    >
+                                      {ligne.avecSousFaceDetectee ? '✓ Avec SF' : '✕ Sans SF'}
+                                    </button>
+                                    {ligne.avecSousFaceDetectee && (
+                                      <select
+                                        value={ligne.colorisSousFace || 'BRUT'}
+                                        onChange={e => handleModifierChamp(ligne.id, 'colorisSousFace', e.target.value)}
+                                        className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-[11px] font-bold text-slate-200 cursor-pointer"
+                                      >
+                                        <option value="BRUT">SF Brut</option>
+                                        <option value="BL (Blanc)">SF Blanc</option>
+                                        <option value="GRIS 7024">SF Gris 7024</option>
+                                      </select>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* Désignation Détectée */}
+                                <td className="py-2.5 px-3 text-slate-300 font-sans text-xs truncate max-w-[280px]" title={ligne.designation}>
+                                  <div className="font-semibold text-slate-200 truncate">{ligne.designation || 'Caisson Tunnel'}</div>
+                                  {ligne.articleCaissonDesignation && (
+                                    <div className="text-[10px] text-emerald-400 font-mono font-bold truncate">
+                                      → Stock : {ligne.articleCaissonDesignation}
+                                    </div>
+                                  )}
+                                </td>
+                              </>
                             ) : (
                               <>
-                                <td className="py-2 px-3 text-slate-300 font-sans text-xs truncate max-w-[200px]" title={ligne.designation}>
+                                <td className="py-2.5 px-3 text-slate-200 font-sans text-xs truncate max-w-[280px]" title={ligne.designation}>
                                   {ligne.designation || '—'}
                                 </td>
-                                <td className="py-2 px-3 text-center text-slate-400 text-xs">
+                                <td className="py-2.5 px-3 text-center text-slate-300 text-xs font-semibold">
                                   {ligne.coloris || '—'}
                                 </td>
-                                <td className="py-2 px-2 text-center font-sans">
-                                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black ${
+                                <td className="py-2.5 px-2 text-center font-sans">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-black ${
                                     optionAvecLF
                                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                                       : 'bg-slate-800 text-slate-400 border border-slate-700'
@@ -1284,14 +1682,14 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                               </>
                             )}
 
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-2.5 px-3 text-center">
                               <button
                                 type="button"
                                 onClick={() => handleSupprimerLigne(ligne.id)}
-                                className="text-slate-500 hover:text-rose-400 p-1 transition cursor-pointer"
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer inline-flex items-center justify-center"
                                 title="Supprimer cette ligne"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Trash2 className="w-4 h-4" />
                               </button>
                             </td>
                           </tr>
