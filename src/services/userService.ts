@@ -63,9 +63,11 @@ export const DEFAULT_OPERATORS: UserProfile[] = [
     role: 'RESPONSABLE',
     initiales: 'FD',
     avatarColor: 'from-purple-600 to-indigo-600',
-    poste: 'Responsable Atelier & Production',
-    derniereActivite: 'Aujourd\'hui',
+    poste: 'Concepteur & Responsable Atelier',
+    derniereActivite: 'En ligne',
     pinCode: '1234',
+    isOwner: true,
+    isImmutable: true,
     permissions: { ...DEFAULT_PERMISSIONS_BY_ROLE.RESPONSABLE }
   },
   {
@@ -149,18 +151,33 @@ class UserService {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
           // Garantir que chaque opérateur a ses permissions et pinCode
-          this.operators = parsed.map(op => {
-            const role = (op.role || 'ATELIER') as UserRole;
+          let list: UserProfile[] = parsed.map(op => {
+            const isOwner = op.id === 'op_resp_fateh' || op.isOwner;
+            const role = isOwner ? 'RESPONSABLE' : ((op.role || 'ATELIER') as UserRole);
             const defaultPerms = DEFAULT_PERMISSIONS_BY_ROLE[role] || DEFAULT_PERMISSIONS_BY_ROLE.ATELIER;
             return {
               ...op,
+              role,
+              isOwner: Boolean(isOwner),
+              isImmutable: Boolean(isOwner || op.isImmutable),
               pinCode: op.pinCode || (role === 'RESPONSABLE' ? '1234' : '0000'),
-              permissions: {
-                ...defaultPerms,
-                ...(op.permissions || {})
-              }
+              permissions: isOwner
+                ? { ...DEFAULT_PERMISSIONS_BY_ROLE.RESPONSABLE }
+                : {
+                    ...defaultPerms,
+                    ...(op.permissions || {})
+                  }
             };
           });
+
+          // GARANTIE ANTI-VOL & ANTI-ÉVICTION : Si le compte Propriétaire (Fateh D.) a été supprimé frauduleusement, le réinjecter en tête
+          const hasOwner = list.some(o => o.id === 'op_resp_fateh' || o.isOwner);
+          if (!hasOwner) {
+            list.unshift({ ...DEFAULT_OPERATORS[0] });
+          }
+
+          this.operators = list;
+          this.persistOperators();
           return;
         }
       }
@@ -225,8 +242,16 @@ class UserService {
     const active = this.getActiveOperator();
     const correctPin = active.pinCode || (active.role === 'RESPONSABLE' ? '1234' : '0000');
     
-    // Master PIN de secours pour l'administrateur d'atelier : 3333
-    if (enteredPin === correctPin || enteredPin === '3333' || enteredPin === '1234') {
+    // Master Passkeys & PINs de secours pour le concepteur/administrateur : 3333, 9876, 1234, MASTER
+    const cleanInput = enteredPin.trim();
+    if (
+      cleanInput === correctPin ||
+      cleanInput === '3333' ||
+      cleanInput === '9876' ||
+      cleanInput === '1234' ||
+      cleanInput === '3M-MASTER-FATEH-2026' ||
+      cleanInput.toUpperCase() === 'MASTER3M'
+    ) {
       try {
         localStorage.setItem(STORAGE_SESSION_LOCKED_KEY, 'false');
       } catch {}
@@ -339,6 +364,10 @@ class UserService {
     if (index === -1) return null;
 
     const current = this.operators[index];
+    const isOwner = current.id === 'op_resp_fateh' || current.isOwner;
+
+    // Si c'est le profil propriétaire, verrouiller son rôle RESPONSABLE et son statut
+    const role: UserRole = isOwner ? 'RESPONSABLE' : (updates.role || current.role);
     const nom = updates.nom !== undefined ? updates.nom.trim() : current.nom;
     const initiales = nom
       ? nom.split(' ').map(p => p[0]).filter(Boolean).join('').substring(0, 2).toUpperCase()
@@ -347,7 +376,10 @@ class UserService {
     const updated: UserProfile = {
       ...current,
       ...updates,
-      nom,
+      nom: isOwner && !updates.nom ? current.nom : nom,
+      role,
+      isOwner: Boolean(isOwner),
+      isImmutable: Boolean(isOwner || current.isImmutable),
       initiales
     };
 
@@ -395,6 +427,14 @@ class UserService {
 
   deleteOperator(id: string): boolean {
     if (this.operators.length <= 1) return false;
+    
+    // Protection absolue du compte propriétaire (Fateh D.)
+    const target = this.operators.find(o => o.id === id);
+    if (target && (target.id === 'op_resp_fateh' || target.isOwner || target.isImmutable)) {
+      console.warn('Action refusée : Le compte Concepteur & Propriétaire ne peut pas être supprimé.');
+      return false;
+    }
+
     this.operators = this.operators.filter(o => o.id !== id);
     this.persistOperators();
 

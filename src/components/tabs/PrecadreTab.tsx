@@ -4,6 +4,8 @@ import { SelecteurArticle } from '../common/SelecteurArticle';
 import { SelecteurMode } from '../common/SelecteurMode';
 import { VisualiseurBarres } from '../common/VisualiseurBarres';
 import { OrdreFabricationModal } from '../common/OrdreFabricationModal';
+import { ChargementLignesPdfModal } from '../common/ChargementLignesPdfModal';
+import { LigneCommandeExtraite } from '../../services/pdfCommandeParserService';
 import { OptimiseurCoupe1D } from '../../services/optimiseur1d';
 import { getArticleCuttingParams } from '../../services/cuttingParamsService';
 import { detecterAgence, getTodayDateString } from '../../services/codificationService';
@@ -22,7 +24,8 @@ import {
   Check,
   X,
   Copy,
-  Layers
+  Layers,
+  FileText
 } from 'lucide-react';
 
 interface PrecadreTabProps {
@@ -98,9 +101,68 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
   const [resultat, setResultat] = useState<ResultatOptimisation | null>(null);
   const [isCalculating, setIsCalculating] = useState<boolean>(false);
   const [isOFOpen, setIsOFOpen] = useState<boolean>(false);
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
 
   const mappedSheetName = selectedArticle ? mapping[selectedArticle.code_art] || null : null;
   const availableChutes = mappedSheetName ? chutesBarres[mappedSheetName] || [] : [];
+
+  const handleValiderImportPdf = (data: {
+    lignes: LigneCommandeExtraite[];
+    modeAjout: 'REMPLACER' | 'AJOUTER';
+    majNumCommande?: string;
+    majClient?: string;
+    majDate?: string;
+    typePrecadreSuggere?: string;
+    articlePrecadreSuggere?: Article;
+    figurePrecadreSuggeree?: FigurePrecadre;
+    modeDebordementSuggere?: ModeDebordementPrecadre;
+  }) => {
+    if (!data.lignes || data.lignes.length === 0) return;
+
+    if (data.majNumCommande && data.majNumCommande.trim()) {
+      setRefCommandeDefaut(data.majNumCommande.trim());
+    }
+    if (data.majClient && data.majClient.trim()) {
+      setNomClientDefaut(data.majClient.trim());
+    }
+    if (data.majDate && data.majDate.trim()) {
+      setDateCommandeDefaut(data.majDate.trim());
+    }
+    if (data.articlePrecadreSuggere) {
+      setSelectedArticle(data.articlePrecadreSuggere);
+    } else if (data.typePrecadreSuggere) {
+      const match = safeArticles.find(a => {
+        const d = (a.designation || '').toUpperCase();
+        return data.typePrecadreSuggere === 'TYPE_36'
+          ? (d.includes('36') || a.hauteur === 36)
+          : (d.includes('50') || a.hauteur === 50);
+      });
+      if (match) setSelectedArticle(match);
+    }
+
+    const ref = (data.majNumCommande || refCommandeDefaut || 'CMD-PRC').trim();
+    const client = (data.majClient || nomClientDefaut || 'CLIENT').trim();
+
+    const nouveauxCadres: CadreItem[] = data.lignes.map((l, idx) => ({
+      id: `prc-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
+      refCommande: ref,
+      nomClient: client,
+      largeur: l.largeur,
+      hauteur: l.hauteur,
+      quantite: Math.max(1, l.quantite || 1),
+      repere: l.repere || `P-${idx + 1}`,
+      figure: l.figurePrecadre || data.figurePrecadreSuggeree || saisieFigure || 'VIDE',
+      modeDebordement: l.modeDebordementPrecadre || data.modeDebordementSuggere || saisieModeDebordement || 'SUPERIEUR_INFERIEUR',
+      debordementSuperieur: l.debordementSuperieur !== undefined ? l.debordementSuperieur : 100,
+      debordementInferieur: l.debordementInferieur !== undefined ? l.debordementInferieur : 300
+    }));
+
+    if (data.modeAjout === 'REMPLACER') {
+      setCadres(nouveauxCadres);
+    } else {
+      setCadres(prev => [...prev, ...nouveauxCadres]);
+    }
+  };
 
   const handleAjouterCadre = () => {
     const l = parseFloat(saisieL);
@@ -334,7 +396,17 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setIsPdfModalOpen(true)}
+              className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black px-3.5 py-1.5 rounded-lg text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95 transition cursor-pointer"
+              title="Importer instantanément un bordereau PDF de précadres"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Charger Bordereau PDF</span>
+            </button>
+
             <div className="flex items-center gap-2 text-xs">
               <span className="text-slate-400">Coupe d'assemblage :</span>
               <select
@@ -887,6 +959,20 @@ export const PrecadreTab: React.FC<PrecadreTabProps> = ({
           mapping={mapping}
           famille="PRECADRE"
           onOFEmis={onStockUpdated}
+        />
+      )}
+
+      {/* Modal de Chargement PDF pour Précadres */}
+      {isPdfModalOpen && (
+        <ChargementLignesPdfModal
+          isOpen={isPdfModalOpen}
+          onClose={() => setIsPdfModalOpen(false)}
+          familleActive="PRECADRE"
+          nomProfilActif={selectedArticle?.designation || 'PRÉCADRE CT 50'}
+          numCommandeActuel={refCommandeDefaut}
+          nomClientActuel={nomClientDefaut}
+          articles={articles}
+          onValiderImportLignes={handleValiderImportPdf}
         />
       )}
     </div>

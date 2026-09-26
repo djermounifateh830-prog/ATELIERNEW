@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { useTheme, ThemeMode } from '../../services/themeService';
 import { SystemLogsViewer } from '../common/SystemLogsViewer';
+import { SecurityLicensingView } from './parametres/SecurityLicensingView';
 import {
   Article,
   ChuteItem,
@@ -77,6 +78,7 @@ interface ParametresTabProps {
 }
 
 type ParamSubTab =
+  | 'securite'
   | 'utilisateurs'
   | 'cadences'
   | 'codification'
@@ -667,6 +669,18 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
         {/* Barre de navigation des sous-onglets */}
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <button
+            onClick={() => setActiveSubTab('securite')}
+            className={`px-3 py-2 text-xs font-black rounded-xl flex items-center gap-2 transition cursor-pointer border ${
+              activeSubTab === 'securite'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white border-purple-400 shadow-md shadow-purple-500/30'
+                : 'bg-purple-950/40 text-purple-300 hover:text-white border-purple-800/60 hover:border-purple-600'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5 text-purple-400" />
+            <span>🛡️ Sécurité & Licences Postes</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab('sauvegarde')}
             className={`px-3 py-2 text-xs font-bold rounded-xl flex items-center gap-2 transition cursor-pointer ${
               activeSubTab === 'sauvegarde'
@@ -799,6 +813,15 @@ export const ParametresTab: React.FC<ParametresTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* =================================================================== */}
+      {/* 0. SECTION SÉCURITÉ & LICENCES MULTI-POSTES                         */}
+      {/* =================================================================== */}
+      {activeSubTab === 'securite' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          <SecurityLicensingView />
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* 1. SECTION SAUVEGARDE & PROGRAMMATION AUTO JOURNALIÈRE (16h30)      */}

@@ -4719,6 +4719,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     couleurDetectee?: string;
     articleSuggere?: Article;
     appliquerProfilEtCouleur?: boolean;
+    typePrecadreSuggere?: string;
+    articlePrecadreSuggere?: Article;
+    figurePrecadreSuggeree?: FigurePrecadre;
+    modeDebordementSuggere?: ModeDebordementPrecadre;
   }) => {
     if (!data.lignes || data.lignes.length === 0) return;
 
@@ -4733,7 +4737,69 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
       setDateCommande(data.majDate.trim());
     }
 
-    // 2. Application automatique du profilé & couleur détectés pour les tabliers
+    const numCmdCible = (data.majNumCommande ? formaterRefCommandeAvecPrefixe(data.majNumCommande, monClient, clientCodifications) : (getActiveNumCommande() || 'CMD-01')).trim();
+    const clientCible = (data.majClient || clientDeMonClient || 'Client').trim();
+    const dateCible = data.majDate || dateCommande;
+
+    // 2. Traitement Spécifique : PRÉCADRE
+    if (familleArticle === 'PRECADRE') {
+      const artPrc = data.articlePrecadreSuggere || data.articleSuggere || currentPRCArticle;
+      if (artPrc) {
+        setPrecadreConfig(prev => ({
+          ...prev,
+          articleCode: artPrc.code_art,
+          figure: data.figurePrecadreSuggeree || prev.figure,
+          modeDebordement: data.modeDebordementSuggere || prev.modeDebordement
+        }));
+      }
+
+      const nouvellesLignesPrc: CommandePrecadre[] = data.lignes.map((ligne, idx) => ({
+        id: `PRC-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
+        refCommande: numCmdCible,
+        nomClient: clientCible,
+        donneurOrdre: monClient,
+        dateCommande: dateCible,
+        largeur: ligne.largeur,
+        hauteur: ligne.hauteur,
+        quantite: Math.max(1, ligne.quantite || 1),
+        repere: ligne.repere || `P-${idx + 1}`,
+        figure: ligne.figurePrecadre || data.figurePrecadreSuggeree || precadreConfig.figure || 'VIDE',
+        modeDebordement: ligne.modeDebordementPrecadre || data.modeDebordementSuggere || precadreConfig.modeDebordement || 'SUPERIEUR_INFERIEUR',
+        debordementSuperieur: ligne.debordementSuperieur !== undefined ? ligne.debordementSuperieur : (precadreConfig.debordementSuperieur ?? 100),
+        debordementInferieur: ligne.debordementInferieur !== undefined ? ligne.debordementInferieur : (precadreConfig.debordementInferieur ?? 300),
+        typePrecadre: ligne.typePrecadre || data.typePrecadreSuggere || (artPrc?.designation?.includes('36') ? 'TYPE_36' : 'TYPE_50'),
+        articleCode: artPrc?.code_art || precadreConfig.articleCode || 'ART0060',
+        articleDesignation: artPrc?.designation || currentPRCArticle?.designation || 'PRÉCADRE TYPE 50',
+        typeCoupe: '90'
+      }));
+
+      const totalPcs = nouvellesLignesPrc.reduce((sum, l) => sum + l.quantite, 0);
+
+      if (data.modeAjout === 'REMPLACER') {
+        if (numCmdCible) {
+          setLignesPrecadres(prev => [
+            ...prev.filter(p => (p.refCommande || '').trim() !== numCmdCible),
+            ...nouvellesLignesPrc
+          ]);
+        } else {
+          setLignesPrecadres(nouvellesLignesPrc);
+        }
+      } else {
+        setLignesPrecadres(prev => [...prev, ...nouvellesLignesPrc]);
+      }
+
+      try {
+        confetti({ particleCount: 50, spread: 60, origin: { y: 0.7 } });
+      } catch (e) {}
+
+      showFlashNotification(
+        `⚡ ${nouvellesLignesPrc.length} lignes de précadre chargées depuis le PDF (${totalPcs} châssis au total) !`,
+        'success'
+      );
+      return;
+    }
+
+    // 3. Application automatique du profilé & couleur détectés pour les tabliers
     let targetTBLArticle = (data.articleSuggere && (familleArticle === 'TABLIER' || !currentTBLArticle)) ? data.articleSuggere : currentTBLArticle;
     let matchingLF = targetTBLArticle ? trouverLameFinalePourTablier(targetTBLArticle, articlesLameFinale) : null;
     let targetLFArticle = matchingLF || currentLFArticle;
@@ -4772,9 +4838,6 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     );
 
     const isVolet = tablierConfig.typeFabrication === 'VOLET_COMPLET';
-    const numCmdCible = (data.majNumCommande ? formaterRefCommandeAvecPrefixe(data.majNumCommande, monClient, clientCodifications) : (getActiveNumCommande() || 'CMD-TABLIER')).trim();
-    const clientCible = (data.majClient || clientDeMonClient || 'Client').trim();
-    const dateCible = data.majDate || dateCommande;
 
     const nouvellesLignes: CommandeTablier[] = data.lignes.map((ligne, idx) => {
       const nbLames = Math.ceil(ligne.hauteur / hLame) + (isVolet ? 2 : 0);
@@ -7951,12 +8014,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsPdfModalOpen(true)}
+                    onClick={() => {
+                      setFamilleArticle('TABLIER');
+                      setIsPdfModalOpen(true);
+                    }}
                     className="text-[11px] font-black px-3 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 hover:border-amber-400 shadow-xs active:scale-95"
-                    title="Charger automatiquement les lignes depuis un bordereau PDF"
+                    title="Moteur d'importation dédié : Charger les lignes de Tabliers / Volets depuis un bon de commande PDF"
                   >
                     <FileUp className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Charger lignes PDF</span>
+                    <span>📄 Import PDF Tablier</span>
                   </button>
                 </>
               )}
@@ -8034,6 +8100,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   <span className="text-[11px] font-bold text-slate-300 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg">
                     {currentPRCArticle?.designation || precadreConfig.articleCode || 'PRC'}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFamilleArticle('PRECADRE');
+                      setIsPdfModalOpen(true);
+                    }}
+                    className="text-[11px] font-black px-3 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-purple-500/20 to-indigo-500/20 text-purple-300 border-purple-500/50 hover:bg-purple-500/30 hover:border-purple-400 shadow-xs active:scale-95"
+                    title="Moteur d'importation dédié : Charger les lignes de Précadres depuis un bon de commande PDF"
+                  >
+                    <FileUp className="w-3.5 h-3.5 text-purple-400" />
+                    <span>📄 Import PDF Précadre</span>
+                  </button>
                 </>
               )}
             </div>
@@ -8777,11 +8855,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsPdfModalOpen(true)}
+                  onClick={() => {
+                    setFamilleArticle('TABLIER');
+                    setIsPdfModalOpen(true);
+                  }}
                   className="text-xs font-black px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
                 >
                   <FileUp className="w-4 h-4 text-amber-400" />
-                  <span>📄 Charger lignes depuis PDF</span>
+                  <span>📄 Charger lignes Tablier depuis PDF</span>
                 </button>
               </div>
 
@@ -8810,15 +8891,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                             <td colSpan={6} className="py-8 text-center text-slate-400 font-sans text-xs">
                               <div className="flex flex-col items-center justify-center gap-3">
                                 <p className="italic text-slate-400">
-                                  Aucun tablier/volet dans cette commande N° {activeRef || 'en cours'}. Saisissez L × H ci-dessus ou chargez directement votre bordereau PDF.
+                                  Aucun tablier/volet dans cette commande N° {activeRef || 'en cours'}. Saisissez L × H ci-dessus ou chargez directement votre bordereau PDF de tabliers.
                                 </p>
                                 <button
                                   type="button"
-                                  onClick={() => setIsPdfModalOpen(true)}
+                                  onClick={() => {
+                                    setFamilleArticle('TABLIER');
+                                    setIsPdfModalOpen(true);
+                                  }}
                                   className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg cursor-pointer transition active:scale-95"
                                 >
                                   <FileUp className="w-4 h-4" />
-                                  <span>📄 Charger les lignes depuis un bordereau PDF</span>
+                                  <span>📄 Charger les lignes depuis un bordereau PDF (Tablier)</span>
                                 </button>
                               </div>
                             </td>
@@ -9566,8 +9650,21 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       })}
                     </div>
 
-                    <div className="text-[11px] text-slate-400 font-mono">
-                      Total : <strong className="text-purple-300">{lignesPrecadres.length}</strong> ligne(s) de précadre
+                    <div className="flex items-center gap-3">
+                      <div className="text-[11px] text-slate-400 font-mono">
+                        Total : <strong className="text-purple-300">{lignesPrecadres.length}</strong> ligne(s) de précadre
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFamilleArticle('PRECADRE');
+                          setIsPdfModalOpen(true);
+                        }}
+                        className="text-xs font-black px-3 py-1.5 rounded-lg border border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <FileUp className="w-4 h-4 text-purple-400" />
+                        <span>📄 Charger lignes Précadre depuis PDF</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -9596,10 +9693,27 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                       if (precadresFiltres.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={8} className="py-6 text-center text-slate-500 font-sans italic text-xs">
-                              {lignesPrecadres.length === 0
-                                ? 'Aucun précadre enregistré pour le moment. Saisissez L × H ci-dessus puis validez.'
-                                : `Aucun précadre pour le filtre "${filterCmdActive}". Cliquez sur "Toutes les commandes" pour afficher l\'ensemble.`}
+                            <td colSpan={8} className="py-8 text-center text-slate-400 font-sans text-xs">
+                              {lignesPrecadres.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center gap-3 py-2">
+                                  <p className="italic text-slate-400">
+                                    Aucun précadre enregistré pour le moment. Saisissez L × H ci-dessus ou chargez directement votre bon de commande PDF de précadres.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFamilleArticle('PRECADRE');
+                                      setIsPdfModalOpen(true);
+                                    }}
+                                    className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs flex items-center gap-2 shadow-lg shadow-purple-600/30 cursor-pointer transition active:scale-95"
+                                  >
+                                    <FileUp className="w-4 h-4" />
+                                    <span>📄 Charger les lignes depuis un bon de commande PDF (Précadre)</span>
+                                  </button>
+                                </div>
+                              ) : (
+                                `Aucun précadre pour le filtre "${filterCmdActive}". Cliquez sur "Toutes les commandes" pour afficher l\'ensemble.`
+                              )}
                             </td>
                           </tr>
                         );
@@ -10688,10 +10802,15 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           isOpen={isPdfModalOpen}
           onClose={() => setIsPdfModalOpen(false)}
           familleActive={familleArticle}
-          nomProfilActif={currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43'}
+          nomProfilActif={
+            familleArticle === 'PRECADRE'
+              ? (currentPRCArticle?.designation || 'PRÉCADRE CT 50')
+              : (currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43')
+          }
           numCommandeActuel={getActiveNumCommande()}
           nomClientActuel={clientDeMonClient}
           articles={articles}
+          onBasculerFamille={(famille) => handleFamilleChange(famille)}
           onValiderImportLignes={handleValiderImportLignes}
         />
       )}

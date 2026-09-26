@@ -14,11 +14,13 @@ import { ClotureCockpitTab } from './components/tabs/ClotureCockpitTab';
 import { MonitoringAtelierTab } from './components/tabs/MonitoringAtelierTab';
 import { ParametresTab } from './components/tabs/ParametresTab';
 import { SecurityLockOverlay } from './components/common/SecurityLockOverlay';
+import { LicenseActivationModal } from './components/common/LicenseActivationModal';
 import { StorageService } from './services/storage';
 import { userService } from './services/userService';
+import { licenseService } from './services/licenseService';
 import { realtimeSync } from './services/realtimeSync';
 import { DelaisProductionService } from './services/delaisProductionService';
-import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert, FamilleProduit } from './types';
+import { Article, ChuteItem, ChuteMaille, MappingChutes, DossierCommandeGlobal, SuiviOF, MouvementStock, ClientCodification, FicheTransfert, FamilleProduit, LicenseValidationResult } from './types';
 
 const getInitialTab = (): string => {
   try {
@@ -35,6 +37,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>(getInitialTab);
   const [selectedDossierToLoad, setSelectedDossierToLoad] = useState<DossierCommandeGlobal | null>(null);
   const [isSessionLocked, setIsSessionLocked] = useState<boolean>(() => userService.isSessionLocked());
+  const [licenseValidation, setLicenseValidation] = useState<LicenseValidationResult>(() =>
+    licenseService.validateCurrentLicense()
+  );
 
   // Application Data States (Pure SQLite — Source Unique de Vérité)
   const [articles, setArticles] = useState<Article[]>([]);
@@ -118,6 +123,14 @@ export default function App() {
     });
     return unsub;
   }, [activeTab, handleSetActiveTab]);
+
+  // Surveillance en temps réel de la licence et de la protection matérielle
+  useEffect(() => {
+    const unsub = licenseService.onLicenseChange((val) => {
+      setLicenseValidation(val);
+    });
+    return unsub;
+  }, []);
 
   const handleLoadDossierFromHistorique = useCallback((dossier: DossierCommandeGlobal, targetFamille?: FamilleProduit) => {
     try {
@@ -291,10 +304,24 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-950 border-t border-slate-900 py-4 text-center text-xs text-slate-500">
-        <div className="w-full px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-center gap-2">
-          <span>3M Atelier — Système d'Optimisation de Découpe & Gestion de Stock (SQLite 3m_atelier.db)</span>
+      {/* Footer avec Filigrane de Propriété et État de Licence */}
+      <footer className="bg-slate-950 border-t border-slate-900 py-3.5 text-center text-xs text-slate-500">
+        <div className="w-full px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-3 text-[11px]">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-300">3M Atelier</span>
+            <span>— Système d'Optimisation de Découpe & Gestion de Stock (SQLite 3m_atelier.db)</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-600">ID Machine : {licenseValidation.machineId}</span>
+            <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-bold border ${
+              licenseValidation.isValid
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+            }`}>
+              {licenseValidation.isValid ? '🛡️ LICENCE CERTIFIÉE' : '🔒 NON ACTIVÉ'}
+            </span>
+          </div>
         </div>
       </footer>
 
@@ -303,6 +330,18 @@ export default function App() {
         isOpen={isSessionLocked}
         onUnlock={() => setIsSessionLocked(false)}
       />
+
+      {/* Écran d'Activation Obligatoire si le poste n'a pas de licence valide */}
+      {!licenseValidation.isValid && (
+        <LicenseActivationModal
+          validationResult={licenseValidation}
+          onActivated={() => {
+            const nextVal = licenseService.validateCurrentLicense();
+            setLicenseValidation(nextVal);
+            loadData();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -754,6 +754,38 @@ export interface UserProfile {
   derniereActivite?: string;
   pinCode?: string;             // Code secret PIN à 4 chiffres (ex: '1234')
   permissions?: UserPermissions;// Permissions paramétrables par checkboxes
+  isOwner?: boolean;            // Vrai pour le compte créateur intouchable (Fateh D.)
+  isImmutable?: boolean;        // Ne peut pas être supprimé ou rétrogradé
+}
+
+// =========================================================================
+// SYSTÈME DE PROTECTION MATÉRIELLE & LICENCE MULTI-POSTES
+// =========================================================================
+export type LicenseStatus = 'ACTIVE' | 'EXPIRED' | 'UNLICENSED' | 'REVOKED' | 'TRIAL';
+export type LicenseEdition = 'COMPLETE' | 'ATELIER' | 'COMMERCIAL';
+
+export interface AppLicense {
+  machineId: string;            // Empreinte matérielle unique du PC
+  clientName: string;           // Nom du client ou de l'atelier titulaire
+  edition: LicenseEdition;      // Édition accordée
+  createdAt: string;            // Date d'émission ISO
+  expiresAt: string;            // Date d'expiration ISO ou 'LIFETIME'
+  isLifetime: boolean;          // Licence définitive à vie
+  activationKey: string;        // Clé cryptographique signée
+  signature: string;            // Hash HMAC d'intégrité
+  activatedAt?: string;         // Date d'activation sur ce poste
+  revoked?: boolean;            // Si révoqué manuellement par le propriétaire
+  revocationReason?: string;
+  posteLabel?: string;          // Ex: "Poste Découpe Scie #1"
+}
+
+export interface LicenseValidationResult {
+  isValid: boolean;
+  status: LicenseStatus;
+  message: string;
+  license?: AppLicense | null;
+  daysRemaining?: number;
+  machineId: string;
 }
 
 // =========================================================================

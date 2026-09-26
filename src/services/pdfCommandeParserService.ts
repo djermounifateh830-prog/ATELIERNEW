@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import { Article } from '../types';
+import { Article, FigurePrecadre, ModeDebordementPrecadre } from '../types';
+import { ChassisVisionService } from './chassisVisionService';
 
 // Configuration du worker PDF.js pour environnement Vite
 if (typeof window !== 'undefined' && 'Worker' in window) {
@@ -27,6 +28,15 @@ export interface LigneCommandeExtraite {
   pageNumber: number;
   hauteurLameDetectee?: number;
   avecLameFinaleDetectee?: boolean;
+  // Détection spécifique pour Précadre
+  figurePrecadre?: FigurePrecadre;
+  modeDebordementPrecadre?: ModeDebordementPrecadre;
+  debordementSuperieur?: number;
+  debordementInferieur?: number;
+  typePrecadre?: 'TYPE_50' | 'TYPE_36' | string;
+  typePrecadreLabel?: string;
+  sourceDetectionDebordement?: 'PHOTO' | 'TEXTE' | 'NOMENCLATURE';
+  detailsDebordement?: string;
 }
 
 export interface ResultatExtractionPDF {
@@ -46,6 +56,10 @@ export interface ResultatExtractionPDF {
   couleurNormalisee?: string;
   avecLameFinaleDetectee?: boolean;
   indicationLameFinale?: string;
+  // Détections globales pour Précadre
+  typePrecadreDetecte?: string;
+  figurePrecadreDetectee?: FigurePrecadre;
+  modeDebordementDetecte?: ModeDebordementPrecadre;
 }
 
 /**
@@ -67,12 +81,21 @@ export class PdfCommandeParserService {
       const totalPages = pdf.numPages;
 
       let texteComplet = '';
-      const lignesTexteParPage: { pageNumber: number; lignes: string[] }[] = [];
+      const lignesTexteParPage: { pageNumber: number; lignes: string[]; coordonneesY?: number[] }[] = [];
+      const indicesVisuelsParPage = new Map<number, Array<{ y: number; hint: any }>>();
 
       for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         
+        // Extraction des indices visuels des dessins de châssis présents sur cette page
+        try {
+          const visualHints = await this.extraireIndicesVisuelsChassisPage(page);
+          indicesVisuelsParPage.set(pageNum, visualHints);
+        } catch (e) {
+          console.warn(`Extraction visuelle impossible pour la page ${pageNum}:`, e);
+        }
+
         // Reconstruction des lignes physiques par coordonnées Y
         const items = textContent.items as Array<{ str: string; transform: number[]; width: number; height: number }>;
         
@@ -95,20 +118,22 @@ export class PdfCommandeParserService {
         // Tri décroissant de Y (haut en bas de la page)
         const sortedYs = Array.from(lignesMap.keys()).sort((a, b) => b - a);
         const pageLignes: string[] = [];
+        const pageYs: number[] = [];
 
         for (const y of sortedYs) {
           const rowItems = lignesMap.get(y)!.sort((a, b) => a.x - b.x);
           const rowText = rowItems.map(i => i.text).join(' ').replace(/\s+/g, ' ').trim();
           if (rowText) {
             pageLignes.push(rowText);
+            pageYs.push(y);
             texteComplet += rowText + '\n';
           }
         }
 
-        lignesTexteParPage.push({ pageNumber: pageNum, lignes: pageLignes });
+        lignesTexteParPage.push({ pageNumber: pageNum, lignes: pageLignes, coordonneesY: pageYs });
       }
 
-      return this.analyserTexteStructure(texteComplet, lignesTexteParPage);
+      return this.analyserTexteStructure(texteComplet, lignesTexteParPage, indicesVisuelsParPage);
     } catch (err: any) {
       console.error('Erreur parsing PDF:', err);
       return {
@@ -127,7 +152,8 @@ export class PdfCommandeParserService {
    */
   public static analyserTexteStructure(
     texteComplet: string,
-    lignesTexteParPage: { pageNumber: number; lignes: string[] }[]
+    lignesTexteParPage: { pageNumber: number; lignes: string[]; coordonneesY?: number[] }[],
+    indicesVisuelsParPage?: Map<number, Array<{ y: number; hint: any }>>
   ): ResultatExtractionPDF {
     const avertissements: string[] = [];
 
@@ -218,18 +244,54 @@ export class PdfCommandeParserService {
       }
     }
 
-    // 4. Détection de la Famille de Produit
-    let familleDetectee: 'TABLIER' | 'CAISSON' | 'MOUSTIQUAIRE' | 'PRECADRE' | 'INCONNUE' = 'INCONNUE';
+    // 4. Détection fine et fiabilisée de la Famille de Produit (Scoring déterministe)
+    let scorePrecadre = 0;
+    let scoreTablier = 0;
+    let scoreMoustiquaire = 0;
+    let scoreCaisson = 0;
     const upperTexte = texteComplet.toUpperCase();
+    const upperRef = (referenceComplete || '').toUpperCase();
 
-    if (upperTexte.includes('TABLIER') || upperTexte.includes('TAB 55') || upperTexte.includes('LAME 55') || upperTexte.includes('LAME 43')) {
-      familleDetectee = 'TABLIER';
-    } else if (upperTexte.includes('PRÉCADRE') || upperTexte.includes('PRECADRE') || upperTexte.includes('PRC50')) {
-      familleDetectee = 'PRECADRE';
-    } else if (upperTexte.includes('MOUSTIQUAIRE') || upperTexte.includes('MOUST')) {
-      familleDetectee = 'MOUSTIQUAIRE';
-    } else if (upperTexte.includes('SOMOBOX') || upperTexte.includes('CAISSON TUNNEL') || upperTexte.includes('CAISSON')) {
-      familleDetectee = 'CAISSON';
+    // Détection Précadre
+    if (upperTexte.includes('PRÉCADRE') || upperTexte.includes('PRECADRE') || upperTexte.includes('PRCADRE')) scorePrecadre += 15;
+    if (upperTexte.includes('PRC 50') || upperTexte.includes('PRC50')) scorePrecadre += 12;
+    if (upperTexte.includes('PRC 36') || upperTexte.includes('PRC36')) scorePrecadre += 12;
+    if (upperTexte.includes('PRC 43') || upperTexte.includes('PRC43')) scorePrecadre += 10;
+    if (upperTexte.includes('CT 50') || upperTexte.includes('CT50')) scorePrecadre += 10;
+    if (upperTexte.includes('CT 36') || upperTexte.includes('CT36')) scorePrecadre += 10;
+    if (upperTexte.includes('DORMANT') || upperTexte.includes('DORMANTS')) scorePrecadre += 8;
+    if (upperTexte.includes('BOUCHON 90') || upperTexte.includes('BOUCHON PRECADRE')) scorePrecadre += 8;
+    if (upperTexte.includes('CHÂSSIS PRÉCADRE') || upperTexte.includes('CHASSIS PRECADRE')) scorePrecadre += 15;
+    if (/\b(?:PRC|PC)\b/i.test(upperRef)) scorePrecadre += 10;
+    if (upperRef.includes('PRÉCADRE') || upperRef.includes('PRECADRE')) scorePrecadre += 15;
+
+    // Détection Tablier / Volet
+    if (upperTexte.includes('TABLIER') || upperTexte.includes('TABLIERS')) scoreTablier += 15;
+    if (upperTexte.includes('VOLET ROULANT') || upperTexte.includes('VOLETS ROULANTS') || upperTexte.includes('VOLET')) scoreTablier += 12;
+    if (upperTexte.includes('TAB 55') || upperTexte.includes('TAB 43')) scoreTablier += 12;
+    if (upperTexte.includes('LAME 55') || upperTexte.includes('LAME 43')) scoreTablier += 12;
+    if (upperTexte.includes('LAME FINALE') || upperTexte.includes('LAMES FINALES') || upperTexte.includes('AVEC LF') || upperTexte.includes('SANS LF')) scoreTablier += 8;
+    if (upperTexte.includes('AGRAVEE') || upperTexte.includes('AGRAFEE') || upperTexte.includes('AGRAVÉE')) scoreTablier += 7;
+    if (/\b(?:TAB|VR|VLT)\b/i.test(upperRef)) scoreTablier += 10;
+    if (upperRef.includes('TABLIER') || upperRef.includes('VOLET')) scoreTablier += 15;
+
+    // Détection Moustiquaire
+    if (upperTexte.includes('MOUSTIQUAIRE') || upperTexte.includes('MOUSTIQUAIRES')) scoreMoustiquaire += 15;
+    if (upperTexte.includes('MSTQ') || upperTexte.includes('PLISSÉE') || upperTexte.includes('PLISSEE')) scoreMoustiquaire += 10;
+    if (upperRef.includes('MOUSTIQUAIRE') || upperRef.includes('MSTQ')) scoreMoustiquaire += 15;
+
+    // Détection Caisson
+    if (upperTexte.includes('SOMOBOX') || upperTexte.includes('CAISSON TUNNEL') || upperTexte.includes('CAISSON')) scoreCaisson += 15;
+    if (upperTexte.includes('SOUS-FACE') || upperTexte.includes('SOUS FACE')) scoreCaisson += 8;
+    if (upperRef.includes('CAISSON') || upperRef.includes('SOMOBOX')) scoreCaisson += 15;
+
+    let familleDetectee: 'TABLIER' | 'CAISSON' | 'MOUSTIQUAIRE' | 'PRECADRE' | 'INCONNUE' = 'INCONNUE';
+    const maxScore = Math.max(scorePrecadre, scoreTablier, scoreMoustiquaire, scoreCaisson);
+    if (maxScore >= 6) {
+      if (maxScore === scorePrecadre) familleDetectee = 'PRECADRE';
+      else if (maxScore === scoreTablier) familleDetectee = 'TABLIER';
+      else if (maxScore === scoreMoustiquaire) familleDetectee = 'MOUSTIQUAIRE';
+      else if (maxScore === scoreCaisson) familleDetectee = 'CAISSON';
     }
 
     // 5. Extraction des Lignes de Commande
@@ -258,9 +320,13 @@ export class PdfCommandeParserService {
     for (const pageObj of lignesTexteParPage) {
       const pageNum = pageObj.pageNumber;
       const lignesPage = pageObj.lignes;
+      const pageYs = pageObj.coordonneesY || [];
+      const pageVisualHints = indicesVisuelsParPage?.get(pageNum) || [];
+      let chassisIndexSurPage = 0;
 
       for (let i = 0; i < lignesPage.length; i++) {
         const line = lignesPage[i].trim();
+        const currentLineY = pageYs[i] || 0;
         if (!line) continue;
 
         // Éliminer les en-têtes et pieds répétés
@@ -346,10 +412,11 @@ export class PdfCommandeParserService {
             const finalRepere = repereFound || pendingRepere || `R-${lignes.length + 1}`;
             pendingRepere = ''; // consommé
 
-            // Recherche des attributs coloris et ouvrant sur les lignes suivantes
+            // Recherche des attributs coloris, ouvrant et compléments descriptifs sur les lignes suivantes
             let coloris = '';
             let typeOuvrant = '';
-            for (let nextIdx = i + 1; nextIdx < Math.min(lignesPage.length, i + 5); nextIdx++) {
+            let extraDescriptif = '';
+            for (let nextIdx = i + 1; nextIdx < Math.min(lignesPage.length, i + 6); nextIdx++) {
               const nextLine = lignesPage[nextIdx].trim();
               if (nextLine.match(/Coloris\s*:\s*([^\n\r]+)/i)) {
                 coloris = nextLine.replace(/Coloris\s*:\s*/i, '').trim();
@@ -357,9 +424,13 @@ export class PdfCommandeParserService {
                 typeOuvrant = nextLine.trim();
               } else if (
                 nextLine.match(/^(?:[A-Za-z0-9\-_]{1,15}|\d{6,}\s+\d+)/) ||
-                nextLine.toUpperCase().includes('PAGE N°')
+                nextLine.toUpperCase().includes('PAGE N°') ||
+                nextLine.toUpperCase().includes('CHÂSSIS') ||
+                nextLine.toUpperCase().includes('CHASSIS')
               ) {
                 break;
+              } else {
+                extraDescriptif += ' ' + nextLine;
               }
             }
 
@@ -377,18 +448,57 @@ export class PdfCommandeParserService {
               ligneAvecLF = true;
             }
 
+            const texteLigneComplet = (designation + ' ' + extraDescriptif + ' ' + (finalRepere || '')).trim();
+            
+            // Recherche prioritaire de l'indice visuel (photo/croquis) par proximité physique de coordonnée Y
+            let visualHintForLine = undefined;
+            if (pageVisualHints.length > 0) {
+              if (currentLineY > 0) {
+                let bestDist = 999999;
+                let bestHint = undefined;
+                for (const h of pageVisualHints) {
+                  const dist = Math.abs(h.y - currentLineY);
+                  if (dist < bestDist && dist <= 95) {
+                    bestDist = dist;
+                    bestHint = h.hint;
+                  }
+                }
+                visualHintForLine = bestHint;
+              }
+              // Fallback séquentiel si la coordonnée Y exacte n'est pas résolue
+              if (!visualHintForLine && chassisIndexSurPage < pageVisualHints.length) {
+                visualHintForLine = pageVisualHints[chassisIndexSurPage]?.hint;
+              }
+            }
+            chassisIndexSurPage++;
+
+            const precadreProps = PdfCommandeParserService.analyserLignePrecadre(
+              texteLigneComplet,
+              largeur,
+              hauteur,
+              visualHintForLine
+            );
+
             lignes.push({
               id: `pdf-line-${Date.now()}-${lignes.length + 1}`,
               repere: finalRepere,
               quantite: qte,
               largeur,
               hauteur,
-              designation,
+              designation: (designation + (extraDescriptif ? ' ' + extraDescriptif.trim() : '')).trim(),
               coloris,
               typeOuvrant,
               pageNumber: pageNum,
               hauteurLameDetectee,
-              avecLameFinaleDetectee: ligneAvecLF
+              avecLameFinaleDetectee: ligneAvecLF,
+              figurePrecadre: precadreProps.figure,
+              modeDebordementPrecadre: precadreProps.modeDebordement,
+              debordementSuperieur: precadreProps.debordementSuperieur,
+              debordementInferieur: precadreProps.debordementInferieur,
+              typePrecadre: precadreProps.typePrecadre,
+              typePrecadreLabel: precadreProps.typePrecadreLabel,
+              sourceDetectionDebordement: precadreProps.sourceDetectionDebordement,
+              detailsDebordement: precadreProps.detailsDebordement
             });
             continue;
           }
@@ -461,6 +571,12 @@ export class PdfCommandeParserService {
 
     const couleurNormalisee = PdfCommandeParserService.normaliserCouleur(couleurTrouvee) || undefined;
 
+    // Détection globale pour les précadres
+    const premiereLignePrc = lignes.find(l => l.figurePrecadre);
+    const typePrecadreDetecte = premiereLignePrc?.typePrecadre || 'TYPE_50';
+    const figurePrecadreDetectee = premiereLignePrc?.figurePrecadre;
+    const modeDebordementDetecte = premiereLignePrc?.modeDebordementPrecadre;
+
     return {
       succes: lignes.length > 0,
       clientDetecte,
@@ -476,8 +592,276 @@ export class PdfCommandeParserService {
       couleurDetectee: couleurTrouvee || undefined,
       couleurNormalisee,
       avecLameFinaleDetectee,
-      indicationLameFinale
+      indicationLameFinale,
+      typePrecadreDetecte,
+      figurePrecadreDetectee,
+      modeDebordementDetecte
     };
+  }
+
+  /**
+   * Analyse déterministe d'une ligne de précadre à partir de sa désignation, ses dimensions
+   * et des indices visuels/vectoriels issus du schéma du châssis.
+   */
+  public static analyserLignePrecadre(
+    designation: string = '',
+    largeur: number = 0,
+    hauteur: number = 0,
+    vectorHint?: {
+      hasTopStubs?: boolean;
+      hasBottomStubs?: boolean;
+      hasInternalV?: boolean;
+      hasInternalH?: boolean;
+      modeDetecte?: ModeDebordementPrecadre;
+      figureDetectee?: FigurePrecadre;
+      details?: string;
+    }
+  ): {
+    figure: FigurePrecadre;
+    modeDebordement: ModeDebordementPrecadre;
+    debordementSuperieur: number;
+    debordementInferieur: number;
+    typePrecadre: 'TYPE_50' | 'TYPE_36';
+    typePrecadreLabel: string;
+    sourceDetectionDebordement?: 'PHOTO' | 'TEXTE' | 'NOMENCLATURE';
+    detailsDebordement?: string;
+  } {
+    const upper = (designation || '').toUpperCase();
+
+    // 1. Type de profilé : CT 50 (50mm) vs CT 36 (36mm)
+    let typePrecadre: 'TYPE_50' | 'TYPE_36' = 'TYPE_50';
+    let typePrecadreLabel = 'CT 50';
+
+    if (/\b(?:CT\s*36|PRC\s*36|36\s*MM|TYPE\s*36)\b/i.test(upper)) {
+      typePrecadre = 'TYPE_36';
+      typePrecadreLabel = 'CT 36';
+    } else if (/\b(?:CT\s*50|PRC\s*50|50\s*MM|TYPE\s*50)\b/i.test(upper)) {
+      typePrecadre = 'TYPE_50';
+      typePrecadreLabel = 'CT 50';
+    } else if (/\b36\b/.test(upper) && !/\b50\b/.test(upper)) {
+      typePrecadre = 'TYPE_36';
+      typePrecadreLabel = 'CT 36';
+    } else if (largeur < 1800 && hauteur < 1800 && !/\b(?:BAIE|BAIS|BAYE|COULISSANT)\b/i.test(upper)) {
+      // Les fenêtres et petits châssis standards utilisent par défaut le profilé CT 36
+      typePrecadre = 'TYPE_36';
+      typePrecadreLabel = 'CT 36';
+    } else {
+      // Les baies coulissantes et grands châssis de sol utilisent le profilé lourd CT 50
+      typePrecadre = 'TYPE_50';
+      typePrecadreLabel = 'CT 50';
+    }
+
+    // Analyse lexicale tolérante aux variantes et fautes d'orthographe courantes dans les BL de précadre
+    const isBaiePM = /\b(?:BAIE\s*PM|PM\b)\b/i.test(upper);
+    const isBaieGM = /\b(?:BAIE\s*GM|GM\s*PF|GM\b)\b/i.test(upper);
+    const isBaie = isBaiePM || isBaieGM || /\b(?:BAIE|BAIS|BAYE|COULISSANT|COULISSANTE|COUL)\b/i.test(upper);
+    const isFenetre = /\b(?:FEN[EÊ]TRE|FENETRE|FEN\b|OUVRANT|SOUFFLET|FIXE|CHASSIS\s*FIXE)\b/i.test(upper);
+    const isPorteFenetre = /\b(?:PF\b|PORTE[- ]FEN[EÊ]TRE|PORTE)\b/i.test(upper);
+    const is2V = /\b(?:2\s*V(?:ANTAUX|ENTAUX|ANTAIL|ENTAIL)?|2\s*VTX?|2V)\b/i.test(upper);
+    const is3VOr4V = /\b(?:3\s*V(?:ANTAUX|ENTAUX)?|4\s*V(?:ANTAUX|ENTAUX)?|3V|4V)\b/i.test(upper);
+
+    // 2. Détection de la Figure de renfort (Croisé, Vertical H1, Horizontal L1, Vide)
+    let figure: FigurePrecadre = 'VIDE';
+
+    // Priorité 1 : Confirmation vectorielle si disponible depuis le dessin/croquis
+    if (vectorHint) {
+      if (vectorHint.hasInternalV && vectorHint.hasInternalH) {
+        figure = 'RENFORT_CROISE';
+      } else if (vectorHint.hasInternalV) {
+        figure = 'RENFORT_H1';
+      } else if (vectorHint.hasInternalH) {
+        figure = 'RENFORT_L1';
+      } else {
+        figure = 'VIDE';
+      }
+    } else {
+      // Priorité 2 : Analyse sémantique experte des désignations d'atelier Précadre
+      if (
+        isBaieGM ||
+        /\b(?:GM\s*PF|BAIE\s+GM\s+PF|CROIS[EÉ]|CROIX|CROISILLON|TR\s*\+\s*MONT|TRAVERSE\s*\+\s*MONTANT|TRAVERSE\s+ET\s+MONTANT|BAIE\s+AVEC\s+TRAVERSE|BAIE\s+AVEC\s+FIXE)\b/i.test(upper) ||
+        is3VOr4V ||
+        (isBaie && isPorteFenetre && hauteur >= 2100)
+      ) {
+        // Ex: "Précadre baie GM PF CT 50", "Croisé" -> 1 Montant central vertical + 2 Demi-traverses
+        figure = 'RENFORT_CROISE';
+      } else if (
+        isBaiePM ||
+        is2V ||
+        isBaie ||
+        /\b(?:BAIE\s*PM|RENFORT\s*V(?:ERTICAL)?|MONTANT\s*CENTRAL|MONTANT\s*INT|H1)\b/i.test(upper)
+      ) {
+        // Ex: "Précadre baie PM CT 50", "Baie 2V" -> 1 Montant central vertical H1
+        figure = 'RENFORT_H1';
+      } else if (
+        (isPorteFenetre || /\b(?:TRAVERSE\s*CENTRALE|TRAVERSE\s*INTERM[EÉ]DIAIRE|TRAVERSE|ALL[EÈ]GE|IMPOSTE|RENFORT\s*H(?:ORIZONTAL)?|L1\b|SOUS[- ]BASSEMENT|SOUBASSEMENT)\b/i.test(upper)) &&
+        !isBaie
+      ) {
+        // Ex: "Précadre PF CT 50" -> 1 Traverse horizontale L1
+        figure = 'RENFORT_L1';
+      } else if (
+        isFenetre ||
+        /\b(?:1\s*V(?:ANTAIL|ENTAIL)?|1\s*VT|SOUFFLET|FIXE|CHASSIS\s*FIXE|SANS\s*RENFORT|VIDE|STANDARD)\b/i.test(upper)
+      ) {
+        // Ex: "Précadre FENETRE CT 50" -> Cadre fermé sans aucun renfort intérieur (Vide)
+        figure = 'VIDE';
+      } else {
+        // Règle de repli déterministe basée sur les dimensions et proportions d'atelier :
+        if (largeur >= 1800 && hauteur >= 2100 && isPorteFenetre) {
+          figure = 'RENFORT_CROISE';
+        } else if (largeur >= 1400) {
+          figure = 'RENFORT_H1';
+        } else if (hauteur >= 1900 && largeur < 1100) {
+          figure = 'RENFORT_L1';
+        } else {
+          figure = 'VIDE';
+        }
+      }
+    }
+
+    // 3. Détection des Débordements supérieur et inférieur
+    let modeDebordement: ModeDebordementPrecadre = 'SUPERIEUR_INFERIEUR';
+    let debordementSuperieur = 100;
+    let debordementInferieur = 300;
+    let sourceDetectionDebordement: 'PHOTO' | 'TEXTE' | 'NOMENCLATURE' = 'NOMENCLATURE';
+    let detailsDebordement = '';
+
+    // Détection de valeurs chiffrées explicites dans la désignation (ex: "+100/+300", "SUP 100 INF 300", "DÉBORD 300", "0/0")
+    const explicitNumbersMatch = upper.match(/(?:D[EÉ]BORD(?:EMENT)?|D[EÉ]B\.?|COTES?)?\s*(?:SUP|HAUT)?\s*(?:[:=]|\+)?\s*(\d{2,3})\s*(?:(?:ET|&|\/|\+)\s*(?:BAS|INF)?\s*(?:[:=]|\+)?\s*(\d{2,3}))/i);
+    const zeroZeroMatch = /\b(?:0\s*\/\s*0|0\s*-\s*0|SANS\s*D[EÉ]BORD(?:EMENT)?|CADRE\s*FERM[EÉ]|FERM[EÉ]|BOUCHON|BOUCHONS)\b/i.test(upper);
+
+    if (vectorHint) {
+      sourceDetectionDebordement = 'PHOTO';
+      detailsDebordement = vectorHint.details || 'Détecté sur dessin / photo du châssis';
+      if (vectorHint.hasTopStubs && vectorHint.hasBottomStubs) {
+        modeDebordement = 'SUPERIEUR_INFERIEUR';
+        debordementSuperieur = 100;
+        debordementInferieur = 300;
+      } else if (vectorHint.hasBottomStubs && !vectorHint.hasTopStubs) {
+        modeDebordement = 'INFERIEUR_SEUL';
+        debordementSuperieur = 0;
+        debordementInferieur = 300;
+      } else if (vectorHint.hasTopStubs && !vectorHint.hasBottomStubs) {
+        modeDebordement = 'SUPERIEUR_SEUL';
+        debordementSuperieur = 100;
+        debordementInferieur = 0;
+      } else {
+        modeDebordement = 'SANS_DEBORDEMENT';
+        debordementSuperieur = 0;
+        debordementInferieur = 0;
+      }
+    } else if (zeroZeroMatch) {
+      sourceDetectionDebordement = 'TEXTE';
+      detailsDebordement = 'Mention "0/0" ou "Fermé" dans descriptif';
+      modeDebordement = 'SANS_DEBORDEMENT';
+      debordementSuperieur = 0;
+      debordementInferieur = 0;
+    } else if (explicitNumbersMatch) {
+      sourceDetectionDebordement = 'TEXTE';
+      const v1 = parseInt(explicitNumbersMatch[1], 10);
+      const v2 = parseInt(explicitNumbersMatch[2], 10);
+      if (!isNaN(v1) && !isNaN(v2)) {
+        debordementSuperieur = v1;
+        debordementInferieur = v2;
+        detailsDebordement = `Cotes explicites ${v1}/${v2} mm`;
+        if (v1 > 0 && v2 > 0) modeDebordement = 'SUPERIEUR_INFERIEUR';
+        else if (v1 > 0) modeDebordement = 'SUPERIEUR_SEUL';
+        else if (v2 > 0) modeDebordement = 'INFERIEUR_SEUL';
+        else modeDebordement = 'SANS_DEBORDEMENT';
+      }
+    } else if (/\b(?:SUP\s*SEUL|D[EÉ]BORD\s*HAUT|HAUT\s*SEUL|\+100\b)\b/i.test(upper)) {
+      sourceDetectionDebordement = 'TEXTE';
+      detailsDebordement = 'Mention "Haut seul" dans descriptif';
+      modeDebordement = 'SUPERIEUR_SEUL';
+      debordementSuperieur = 100;
+      debordementInferieur = 0;
+    } else if (/\b(?:INF\s*SEUL|BAS\s*SEUL|D[EÉ]BORD\s*BAS|BAVETTE\s*SEULE|\+300\b|CHAPE|SOL)\b/i.test(upper)) {
+      sourceDetectionDebordement = 'TEXTE';
+      detailsDebordement = 'Mention "Bas seul" dans descriptif';
+      modeDebordement = 'INFERIEUR_SEUL';
+      debordementSuperieur = 0;
+      debordementInferieur = 300;
+    } else {
+      sourceDetectionDebordement = 'NOMENCLATURE';
+      detailsDebordement = 'Règle métier atelier selon le type et la hauteur';
+      // Analyse contextuelle selon la nomenclature de fabrication d'atelier :
+      // 1. Châssis FENÊTRE (ex: "Précadre FENETRE CT 50", cadre fermé 4 côtés) :
+      //    -> SANS_DEBORDEMENT (0 / 0 - Cadre Fermé)
+      if (isFenetre && !isBaie && !isPorteFenetre) {
+        if (/\b(?:VR|VOLET|COFFRE|TUNNEL)\b/i.test(upper)) {
+          modeDebordement = 'SUPERIEUR_SEUL';
+          debordementSuperieur = 100;
+          debordementInferieur = 0;
+        } else {
+          modeDebordement = 'SANS_DEBORDEMENT';
+          debordementSuperieur = 0;
+          debordementInferieur = 0;
+        }
+      }
+      // 2. Châssis "baie PM" (Petite Moyenne sur allège, ex: A1, A4, A5 1950x1400) :
+      //    -> SUPERIEUR_SEUL (Haut +100mm seul pour coffre volet / Bas 0mm fermé sur allège)
+      else if (isBaiePM) {
+        modeDebordement = 'SUPERIEUR_SEUL';
+        debordementSuperieur = 100;
+        debordementInferieur = 0;
+      }
+      // 3. Châssis "PF" seul (Porte-Fenêtre standard au sol, ex: A6, A7 800x2000) :
+      //    -> INFERIEUR_SEUL (Haut 0mm plat sous linteau / Bas +300mm pieds dans la chape)
+      else if (isPorteFenetre && !isBaieGM) {
+        modeDebordement = 'INFERIEUR_SEUL';
+        debordementSuperieur = 0;
+        debordementInferieur = 300;
+      }
+      // 4. Châssis "baie GM" ou "baie GM PF" (Grande Baie de sol, ex: A3 1950x2400) :
+      //    -> SUPERIEUR_INFERIEUR (Haut +100mm coffre volet & Bas +300mm pieds dans la chape)
+      else if (isBaieGM || (isBaie && hauteur >= 1800)) {
+        modeDebordement = 'SUPERIEUR_INFERIEUR';
+        debordementSuperieur = 100;
+        debordementInferieur = 300;
+      }
+      // 5. Repli général :
+      else if (hauteur < 1800) {
+        modeDebordement = 'SANS_DEBORDEMENT';
+        debordementSuperieur = 0;
+        debordementInferieur = 0;
+      } else {
+        modeDebordement = 'SUPERIEUR_INFERIEUR';
+        debordementSuperieur = 100;
+        debordementInferieur = 300;
+      }
+    }
+
+    return {
+      figure,
+      modeDebordement,
+      debordementSuperieur,
+      debordementInferieur,
+      typePrecadre,
+      typePrecadreLabel,
+      sourceDetectionDebordement,
+      detailsDebordement
+    };
+  }
+
+  /**
+   * Trouve l'article de profilé de précadre correspondant (ex: 'PRÉCADRE TYPE 50' vs 'PRÉCADRE TYPE 36')
+   */
+  public static trouverArticlePrecadrePourPdf(
+    typePrecadre: string = 'TYPE_50',
+    articles: Article[] = []
+  ): Article | null {
+    const prcArticles = articles.filter(a => {
+      const d = (a.designation || '').toUpperCase();
+      return (d.includes('PRÉCADRE') || d.includes('PRECADRE') || d.includes('PRC')) && !d.includes('BOUCHON');
+    });
+    if (prcArticles.length === 0) return null;
+
+    const is36 = typePrecadre === 'TYPE_36' || typePrecadre.includes('36');
+    const matched = prcArticles.find(a => {
+      const d = a.designation.toUpperCase();
+      return is36 ? (d.includes('36') || a.hauteur === 36) : (d.includes('50') || a.hauteur === 50);
+    });
+
+    return matched || prcArticles[0];
   }
 
   /**
@@ -535,5 +919,309 @@ export class PdfCommandeParserService {
     const fallback7024 = pool.find(a => a.designation.includes('7024'));
     const fallbackBL = pool.find(a => a.designation.includes('BL'));
     return fallback7024 || fallbackBL || pool[0];
+  }
+
+  /**
+   * Extrait les indices visuels (débordements haut/bas des 2 montants, montant central, traverse)
+   * directement depuis les dessins/croquis de châssis présents dans la colonne Châssis de la page.
+   * Gère les 4 cas fondamentaux de fabrication :
+   * 1. FERMÉ (Cadre fermé 4 côtés sans débordement : 0/0)
+   * 2. HAUT SEUL (Les 2 montants dépassent en haut uniquement : +100/0)
+   * 3. BAS SEUL (Les 2 montants dépassent en bas uniquement : 0/+300)
+   * 4. HAUT ET BAS (Les 2 montants dépassent en haut ET en bas : +100/+300)
+   */
+  public static async extraireIndicesVisuelsChassisPage(
+    page: any
+  ): Promise<Array<{
+    y: number;
+    hint: {
+      hasTopStubs: boolean;
+      hasBottomStubs: boolean;
+      hasInternalV: boolean;
+      hasInternalH: boolean;
+      modeDetecte: ModeDebordementPrecadre;
+      figureDetectee: FigurePrecadre;
+      details: string;
+    };
+  }>> {
+    try {
+      const ops = await page.getOperatorList();
+      let currentTransform = [1, 0, 0, 1, 0, 0];
+      const transformStack: number[][] = [];
+      const imagePositions: Array<{
+        rawName: string;
+        cleanName: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }> = [];
+
+      for (let i = 0; i < ops.fnArray.length; i++) {
+        const fn = ops.fnArray[i];
+        const args = ops.argsArray[i];
+        if (fn === pdfjsLib.OPS.save) {
+          transformStack.push([...currentTransform]);
+        } else if (fn === pdfjsLib.OPS.restore) {
+          if (transformStack.length > 0) currentTransform = transformStack.pop()!;
+        } else if (fn === pdfjsLib.OPS.transform) {
+          currentTransform = args;
+        } else if (fn === pdfjsLib.OPS.paintImageXObject) {
+          const rawName = String(args[0] || '');
+          const cleanName = rawName.replace(/^g_d\d+_/, '');
+          const x = currentTransform[4];
+          const y = currentTransform[5];
+          const scaleX = Math.abs(currentTransform[0]);
+          const scaleY = Math.abs(currentTransform[3]);
+          // Les croquis de châssis sont des vignettes de taille raisonnable (largeur/hauteur 15-380 pt)
+          // et pas les bannières en-tête / pleine page (> 450 pt)
+          if (scaleX >= 15 && scaleX <= 380 && scaleY >= 15 && scaleY <= 380) {
+            imagePositions.push({ rawName, cleanName, x, y, width: scaleX, height: scaleY });
+          }
+        }
+      }
+
+      // Trier de haut en bas selon Y décroissant
+      imagePositions.sort((a, b) => b.y - a.y);
+
+      const results: Array<{
+        y: number;
+        hint: {
+          hasTopStubs: boolean;
+          hasBottomStubs: boolean;
+          hasInternalV: boolean;
+          hasInternalH: boolean;
+          modeDetecte: ModeDebordementPrecadre;
+          figureDetectee: FigurePrecadre;
+          details: string;
+        };
+      }> = [];
+
+      for (const pos of imagePositions) {
+        try {
+          const img: any = await new Promise((resolve) => {
+            let done = false;
+            const cb = (obj: any) => {
+              if (!done && obj) {
+                done = true;
+                resolve(obj);
+              }
+            };
+            if (page.objs?.has(pos.rawName)) page.objs.get(pos.rawName, cb);
+            else if (page.objs?.has(pos.cleanName)) page.objs.get(pos.cleanName, cb);
+            else if (page.commonObjs?.has(pos.rawName)) page.commonObjs.get(pos.rawName, cb);
+            else if (page.commonObjs?.has(pos.cleanName)) page.commonObjs.get(pos.cleanName, cb);
+            setTimeout(() => {
+              if (!done) resolve(null);
+            }, 120);
+          });
+
+          if (img && img.data && img.width && img.height) {
+            const hint = this.analyserBitmapChassis(img);
+            if (hint) {
+              results.push({ y: pos.y, hint });
+            }
+          }
+        } catch (e) {
+          // ignore error for single image
+        }
+      }
+
+      return results;
+    } catch (e) {
+      console.warn('Erreur extraction visuels châssis page:', e);
+      return [];
+    }
+  }
+
+  /**
+   * Analyse haute précision des pixels du croquis/photo de châssis pour détecter
+   * formellement les 4 cas de débordements des 2 montants :
+   * 1. FERMÉ (Cadre fermé 4 côtés : 0/0)
+   * 2. HAUT SEUL (Les 2 montants dépassent en haut : +100/0)
+   * 3. BAS SEUL (Les 2 montants dépassent en bas : 0/+300)
+   * 4. HAUT ET BAS (Les 2 montants dépassent en haut ET en bas : +100/+300)
+   */
+  public static analyserBitmapChassis(img: any): {
+    hasTopStubs: boolean;
+    hasBottomStubs: boolean;
+    hasInternalV: boolean;
+    hasInternalH: boolean;
+    modeDetecte: ModeDebordementPrecadre;
+    figureDetectee: FigurePrecadre;
+    details: string;
+  } | null {
+    const w = img.width;
+    const h = img.height;
+    const bytes = img.data;
+    if (!bytes || w < 8 || h < 8) return null;
+
+    const bpp = Math.floor(bytes.length / (w * h));
+    if (bpp < 1) return null;
+
+    // 1. Déterminer la luminosité de fond en échantillonnant les 4 coins
+    const getPixelBrightness = (x: number, y: number): number => {
+      const idx = (y * w + x) * bpp;
+      if (bpp >= 3) {
+        return (bytes[idx] + bytes[idx + 1] + bytes[idx + 2]) / 3;
+      }
+      return bytes[idx];
+    };
+
+    const cornerSamples = [
+      getPixelBrightness(1, 1),
+      getPixelBrightness(w - 2, 1),
+      getPixelBrightness(1, h - 2),
+      getPixelBrightness(w - 2, h - 2)
+    ];
+    const avgBg = cornerSamples.reduce((a, b) => a + b, 0) / cornerSamples.length;
+    const isDarkBg = avgBg < 128;
+
+    // Un pixel fait partie d'un trait/profil s'il contraste avec le fond
+    const isStroke = (x: number, y: number): boolean => {
+      if (x < 0 || x >= w || y < 0 || y >= h) return false;
+      const b = getPixelBrightness(x, y);
+      return isDarkBg ? (b > avgBg + 35) : (b < avgBg - 35);
+    };
+
+    // 2. Trouver la boîte englobante exacte du châssis (en ignorant le bruit 1px)
+    let minX = w, maxX = 0, minY = h, maxY = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (isStroke(x, y)) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    if (maxX <= minX || maxY <= minY) return null;
+    const boxW = maxX - minX + 1;
+    const boxH = maxY - minY + 1;
+    if (boxW < 12 || boxH < 12) return null;
+
+    // 3. Délimitation des 2 montants (gauche et droite)
+    // Montant gauche : bande dans les premiers 20%
+    const leftX1 = minX;
+    const leftX2 = minX + Math.max(2, Math.floor(boxW * 0.20));
+    // Montant droit : bande dans les derniers 20%
+    const rightX1 = maxX - Math.max(2, Math.floor(boxW * 0.20));
+    const rightX2 = maxX;
+
+    // Zone intérieure centrale (exclut les 2 montants extérieurs)
+    const midX1 = minX + Math.floor(boxW * 0.22);
+    const midX2 = maxX - Math.floor(boxW * 0.22);
+    const midW = Math.max(1, midX2 - midX1 + 1);
+
+    // Analyse ligne par ligne de la boîte englobante
+    const rowData: Array<{ y: number; hasMontants: boolean; midDensity: number; isStub: boolean }> = [];
+    for (let y = minY; y <= maxY; y++) {
+      let leftCount = 0;
+      for (let x = leftX1; x <= leftX2; x++) if (isStroke(x, y)) leftCount++;
+      let rightCount = 0;
+      for (let x = rightX1; x <= rightX2; x++) if (isStroke(x, y)) rightCount++;
+      let midCount = 0;
+      for (let x = midX1; x <= midX2; x++) if (isStroke(x, y)) midCount++;
+
+      const midDensity = midCount / midW;
+      const hasMontants = leftCount > 0 || rightCount > 0;
+      // Ligne de débordement : les montants existent, mais l'intérieur entre eux est vide (< 10%)
+      const isStub = hasMontants && midDensity < 0.10;
+      rowData.push({ y, hasMontants, midDensity, isStub });
+    }
+
+    // Détection Débordement HAUT (cornes supérieures des montants qui dépassent au-dessus de la traverse haute)
+    let maxTopContig = 0;
+    let curTop = 0;
+    const scanTopLimit = Math.floor(rowData.length * 0.45);
+    for (let i = 0; i < scanTopLimit; i++) {
+      if (rowData[i].isStub) {
+        curTop++;
+        if (curTop > maxTopContig) maxTopContig = curTop;
+      } else {
+        curTop = 0;
+      }
+    }
+
+    // Détection Débordement BAS (pieds inférieurs des montants qui dépassent en-dessous de la traverse basse)
+    let maxBottomContig = 0;
+    let curBottom = 0;
+    const scanBottomStart = Math.floor(rowData.length * 0.55);
+    for (let i = scanBottomStart; i < rowData.length; i++) {
+      if (rowData[i].isStub) {
+        curBottom++;
+        if (curBottom > maxBottomContig) maxBottomContig = curBottom;
+      } else {
+        curBottom = 0;
+      }
+    }
+
+    const minThreshold = Math.max(5, Math.floor(boxH * 0.05));
+    const hasTopStubs = maxTopContig >= minThreshold;
+    const hasBottomStubs = maxBottomContig >= minThreshold;
+
+    // Détermination formelle des 4 cas demandés par l'utilisateur :
+    // 1. Fermé (0 / 0)
+    // 2. Haut seul (+100 / 0)
+    // 3. Bas seul (0 / +300)
+    // 4. Haut et bas (+100 / +300)
+    let modeDetecte: ModeDebordementPrecadre = 'SANS_DEBORDEMENT';
+    let details = 'Cadre fermé 4 côtés (aucun débordement des montants)';
+
+    if (hasTopStubs && hasBottomStubs) {
+      modeDetecte = 'SUPERIEUR_INFERIEUR';
+      details = `Haut et bas détectés (cornes haut: ${maxTopContig}px, pieds bas: ${maxBottomContig}px)`;
+    } else if (hasTopStubs) {
+      modeDetecte = 'SUPERIEUR_SEUL';
+      details = `Haut seul détecté (cornes supérieures: ${maxTopContig}px, bas fermé)`;
+    } else if (hasBottomStubs) {
+      modeDetecte = 'INFERIEUR_SEUL';
+      details = `Bas seul détecté (pieds inférieurs: ${maxBottomContig}px, haut fermé)`;
+    }
+
+    // Analyse des renforts intérieurs (Montant central vertical H1 et Traverse centrale horizontale L1)
+    const centerX = Math.floor((minX + maxX) / 2);
+    let vCount = 0;
+    const yStart = minY + Math.floor(boxH * 0.20);
+    const yEnd = maxY - Math.floor(boxH * 0.20);
+    const scanH = Math.max(1, yEnd - yStart + 1);
+    for (let y = yStart; y <= yEnd; y++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        if (isStroke(centerX + dx, y)) {
+          vCount++;
+          break;
+        }
+      }
+    }
+    const hasInternalV = (vCount / scanH) > 0.35;
+
+    const centerY = Math.floor((minY + maxY) / 2);
+    let hCount = 0;
+    for (let x = midX1; x <= midX2; x++) {
+      for (let dy = -3; dy <= 3; dy++) {
+        if (isStroke(x, centerY + dy)) {
+          hCount++;
+          break;
+        }
+      }
+    }
+    const hasInternalH = (hCount / midW) > 0.40;
+
+    let figureDetectee: FigurePrecadre = 'VIDE';
+    if (hasInternalV && hasInternalH) figureDetectee = 'RENFORT_CROISE';
+    else if (hasInternalV) figureDetectee = 'RENFORT_H1';
+    else if (hasInternalH) figureDetectee = 'RENFORT_L1';
+
+    return {
+      hasTopStubs,
+      hasBottomStubs,
+      hasInternalV,
+      hasInternalH,
+      modeDetecte,
+      figureDetectee,
+      details
+    };
   }
 }
