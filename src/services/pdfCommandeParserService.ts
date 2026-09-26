@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { Article, FigurePrecadre, ModeDebordementPrecadre } from '../types';
 import { ChassisVisionService } from './chassisVisionService';
+import { trouverSousFacePourCaisson, extraireCouleur } from '../utils/articlePairingService';
 
 // Configuration du worker PDF.js pour environnement Vite
 if (typeof window !== 'undefined' && 'Worker' in window) {
@@ -85,7 +86,10 @@ export class PdfCommandeParserService {
   /**
    * Lit un fichier PDF et extrait l'en-tête et les lignes de commande
    */
-  public static async parserBordereauPDF(file: File | ArrayBuffer): Promise<ResultatExtractionPDF> {
+  public static async parserBordereauPDF(
+    file: File | ArrayBuffer,
+    articlesDisponibles: Article[] = []
+  ): Promise<ResultatExtractionPDF> {
     try {
       const data = file instanceof File ? await file.arrayBuffer() : file;
       const loadingTask = pdfjsLib.getDocument({
@@ -149,7 +153,7 @@ export class PdfCommandeParserService {
         lignesTexteParPage.push({ pageNumber: pageNum, lignes: pageLignes, coordonneesY: pageYs });
       }
 
-      return this.analyserTexteStructure(texteComplet, lignesTexteParPage, indicesVisuelsParPage);
+      return this.analyserTexteStructure(texteComplet, lignesTexteParPage, indicesVisuelsParPage, articlesDisponibles);
     } catch (err: any) {
       console.error('Erreur parsing PDF:', err);
       return {
@@ -169,7 +173,8 @@ export class PdfCommandeParserService {
   public static analyserTexteStructure(
     texteComplet: string,
     lignesTexteParPage: { pageNumber: number; lignes: string[]; coordonneesY?: number[] }[],
-    indicesVisuelsParPage?: Map<number, Array<{ y: number; hint: any }>>
+    indicesVisuelsParPage?: Map<number, Array<{ y: number; hint: any }>>,
+    articlesDisponibles: Article[] = []
   ): ResultatExtractionPDF {
     const avertissements: string[] = [];
 
@@ -405,7 +410,8 @@ export class PdfCommandeParserService {
               desig,
               larg,
               haut,
-              referenceComplete
+              referenceComplete,
+              articlesDisponibles
             );
 
             lignes.push({
@@ -566,7 +572,8 @@ export class PdfCommandeParserService {
               texteLigneComplet,
               largeur,
               hauteur,
-              referenceComplete
+              referenceComplete,
+              articlesDisponibles
             );
 
             lignes.push({
@@ -697,9 +704,10 @@ export class PdfCommandeParserService {
     designation: string = '',
     largeur: number = 0,
     hauteur: number = 0,
-    referenceComplete: string = ''
+    referenceComplete: string = '',
+    articlesDisponibles: Article[] = []
   ): {
-    typeCaisson: '25' | '30' | '35' | '40' | 'FIBRAGLO' | string;
+    typeCaisson: '25' | '25_CARRE' | '30' | '35' | '40' | 'FIBRAGLO' | string;
     typeCaissonLabel: string;
     articleCaissonCode?: string;
     articleCaissonDesignation?: string;
@@ -711,96 +719,176 @@ export class PdfCommandeParserService {
     const upperDesig = (designation || '').toUpperCase();
     const upperRef = (referenceComplete || '').toUpperCase();
 
-    // Détection Sous-Face (SF GR / Gris 7024 / Blanc / Brut)
+    // 1. Détection Sous-Face & Couleur globale
+    // Règle générale atelier : dans la référence en haut du bon de commande (ex: "DEVIS CT30 KARTOUT RAFIK SF GR"),
+    // on mentionne SF GRIS ou BL pour TOUS les caissons de la commande.
     let avecSousFace = true;
-    let colorisSousFace = 'BRUT';
-    let isGris = false;
+    let colorisSousFace = 'GRIS 7024';
+    let targetSFColor: '7024' | 'BL' = '7024';
 
-    if (upperRef.includes('SF GR') || upperRef.includes('7024') || upperDesig.includes('7024') || upperRef.includes('GRIS')) {
+    if (
+      upperRef.includes('SF GR') ||
+      upperRef.includes('7024') ||
+      upperRef.includes('GRIS') ||
+      /\bGR\b/.test(upperRef) ||
+      upperDesig.includes('7024') ||
+      upperDesig.includes('SF GR')
+    ) {
       colorisSousFace = 'GRIS 7024';
-      isGris = true;
-    } else if (upperRef.includes('SF BL') || upperRef.includes('BLANC') || upperDesig.includes('BL')) {
+      targetSFColor = '7024';
+      avecSousFace = true;
+    } else if (
+      upperRef.includes('SF BL') ||
+      upperRef.includes('BLANC') ||
+      upperRef.includes('9010') ||
+      /\bBL\b/.test(upperRef) ||
+      upperDesig.includes('SF BL')
+    ) {
       colorisSousFace = 'BL (Blanc)';
+      targetSFColor = 'BL';
+      avecSousFace = true;
     } else if (upperRef.includes('SF') || upperRef.includes('SOUS-FACE') || upperRef.includes('SOUS FACE')) {
-      colorisSousFace = 'BRUT';
+      colorisSousFace = 'GRIS 7024';
+      targetSFColor = '7024';
+      avecSousFace = true;
     }
 
-    // 1. FIBRAGLO
-    if (upperDesig.includes('FIBRAGLO') || upperDesig.includes('FIBRA') || upperRef.includes('FIBRAGLO')) {
-      const is25 = upperDesig.includes('25') || hauteur === 250;
-      return {
-        typeCaisson: 'FIBRAGLO',
-        typeCaissonLabel: is25 ? 'Caisson 25 Fibraglo' : 'Caisson 30 Fibraglo',
-        articleCaissonCode: is25 ? 'ART0012' : 'ART0013',
-        articleCaissonDesignation: is25 ? 'CT SOMO 25 FIBRAGLO' : 'CT SOMO 30 FIBRAGLO',
-        sfArticleCode: is25 ? (isGris ? 'ART0024' : 'ART0021') : (isGris ? 'ART0025' : 'ART0022'),
-        sfArticleDesignation: is25 ? (isGris ? 'SF 250 7024' : 'SF 250') : (isGris ? 'SF 300 7024' : 'SF 300'),
-        avecSousFace,
-        colorisSousFace
-      };
+    // 2. Détection du type de Caisson sur la LIGNE (avec priorité absolue aux spécifications de la ligne)
+    let typeCaisson: '25' | '25_CARRE' | '30' | '35' | '40' | 'FIBRAGLO' | string = '30';
+    let typeCaissonLabel = 'Caisson 30 (30X30)';
+
+    // a) FIBRAGLO (Caisson Tunnel Isolé Fibraglo)
+    if (
+      upperDesig.includes('FIBRAGLO') ||
+      upperDesig.includes('FIBRA') ||
+      upperDesig.includes('FIBRO') ||
+      upperDesig.includes('FIBROCIMENT') ||
+      (upperRef.includes('FIBRAGLO') && !upperDesig.includes('ARRONDI') && !upperDesig.includes('ARRONDE') && !upperDesig.includes('NORMAL'))
+    ) {
+      typeCaisson = 'FIBRAGLO';
+      typeCaissonLabel = 'Caisson FIBRAGLO';
+    }
+    // b) Caisson 40 (40x40)
+    else if (
+      upperDesig.includes('40X40') ||
+      upperDesig.includes('40*40') ||
+      upperDesig.includes('40/40') ||
+      /\b400\b/.test(upperDesig) ||
+      /\b40\b/.test(upperDesig) ||
+      /\bCT\s*40\b/.test(upperDesig) ||
+      hauteur === 400 ||
+      (upperRef.includes('CT40') && !upperDesig.includes('25') && !upperDesig.includes('30') && !upperDesig.includes('35'))
+    ) {
+      typeCaisson = '40';
+      typeCaissonLabel = 'Caisson 40 (40X40)';
+    }
+    // c) Caisson 35 (35x35)
+    else if (
+      upperDesig.includes('35X35') ||
+      upperDesig.includes('35*35') ||
+      upperDesig.includes('35/35') ||
+      /\b350\b/.test(upperDesig) ||
+      /\b35\b/.test(upperDesig) ||
+      /\bCT\s*35\b/.test(upperDesig) ||
+      hauteur === 350 ||
+      (upperRef.includes('CT35') && !upperDesig.includes('25') && !upperDesig.includes('30') && !upperDesig.includes('40'))
+    ) {
+      typeCaisson = '35';
+      typeCaissonLabel = 'Caisson 35 (35X35)';
+    }
+    // d) Caisson 25 (25x25) - Priorité sur 25 pour éviter faux positifs avec CT30 dans la référence
+    else if (
+      upperDesig.includes('25X25') ||
+      upperDesig.includes('25*25') ||
+      upperDesig.includes('25/25') ||
+      /\b250\b/.test(upperDesig) ||
+      /\b25\b/.test(upperDesig) ||
+      /\bCT\s*25\b/.test(upperDesig) ||
+      hauteur === 250
+    ) {
+      // Distinction Arrondi vs Carré : en Somo le 25 est par défaut ARRONDI (ART0010 CT SOMO 25 ARRONDE)
+      // Seul un descriptif explicitant "CARRE" / "CARRÉ" sélectionne le 25 Carré (ART0011 CT SOMO 25 CARRE)
+      const isCarre = upperDesig.includes('CARRE') || upperDesig.includes('CARRÉ');
+      if (isCarre) {
+        typeCaisson = '25_CARRE';
+        typeCaissonLabel = 'Caisson 25 Carré (25X25)';
+      } else {
+        typeCaisson = '25';
+        typeCaissonLabel = 'Caisson 25 Arrondi (25X25)';
+      }
+    }
+    // e) Caisson 30 (30x30)
+    else if (
+      upperDesig.includes('30X30') ||
+      upperDesig.includes('30*30') ||
+      upperDesig.includes('30/30') ||
+      /\b300\b/.test(upperDesig) ||
+      /\b30\b/.test(upperDesig) ||
+      /\bCT\s*30\b/.test(upperDesig) ||
+      hauteur === 300 ||
+      (upperRef.includes('CT30') && !upperDesig.includes('25'))
+    ) {
+      typeCaisson = '30';
+      typeCaissonLabel = 'Caisson 30 (30X30)';
+    }
+    // f) Fallback par défaut selon la hauteur
+    else {
+      const fallbackType = hauteur >= 380 ? '40' : hauteur >= 330 ? '35' : (hauteur === 250 || (hauteur > 0 && hauteur < 280)) ? '25' : '30';
+      typeCaisson = fallbackType;
+      typeCaissonLabel = fallbackType === '25' ? 'Caisson 25 Arrondi (25X25)' : `Caisson ${fallbackType} (${fallbackType}X${fallbackType})`;
     }
 
-    // 2. Caisson 40 (40x40)
-    if (upperDesig.includes('40X40') || upperDesig.includes('400') || hauteur === 400 || /\b40\b/.test(upperDesig)) {
-      return {
-        typeCaisson: '40',
-        typeCaissonLabel: 'Caisson 40 (40X40)',
-        articleCaissonCode: 'ART0018',
-        articleCaissonDesignation: 'CT SOMO 40',
-        avecSousFace,
-        colorisSousFace
-      };
+    // 3. Résolution Dynamique des Articles de Stock Réels (CT et SF)
+    const artCaisson = PdfCommandeParserService.trouverArticleCaissonPourPdf(typeCaisson, articlesDisponibles, designation);
+    
+    // Résolution de la sous-face correspondante : STRICTEMENT assortie à la dimension du caisson et à la couleur de la référence
+    const articlesSF = articlesDisponibles.filter(a => {
+      const d = (a.designation || '').toUpperCase();
+      return (d.startsWith('SF') || d.includes('SOUS-FACE') || d.includes('SOUS FACE')) && !d.startsWith('CT');
+    });
+    const artSF = trouverSousFacePourCaisson(
+      artCaisson || { designation: typeCaissonLabel, hauteur: (typeCaisson === '25' || typeCaisson === '25_CARRE') ? 250 : (typeCaisson === '30' || typeCaisson === 'FIBRAGLO') ? 300 : typeCaisson === '35' ? 350 : 400 },
+      articlesSF,
+      targetSFColor
+    );
+
+    // Fallbacks sécurisés basés sur le stock réel physique si articlesDisponibles n'était pas fourni ou incomplet
+    let fallbackCTCode = 'ART0009';
+    let fallbackCTDesig = 'CT SOMO 30 BL';
+    if (typeCaisson === '25') {
+      fallbackCTCode = 'ART0010';
+      fallbackCTDesig = 'CT SOMO 25 ARRONDE';
+    } else if (typeCaisson === '25_CARRE') {
+      fallbackCTCode = 'ART0011';
+      fallbackCTDesig = 'CT SOMO 25 CARRE';
+    } else if (typeCaisson === '35') {
+      fallbackCTCode = 'ART0032';
+      fallbackCTDesig = 'CT SOMO 35';
+    } else if (typeCaisson === '40') {
+      fallbackCTCode = 'ART0012';
+      fallbackCTDesig = 'CT SOMO 40*35';
+    } else if (typeCaisson === 'FIBRAGLO') {
+      fallbackCTCode = 'ART0041';
+      fallbackCTDesig = 'CT SOMO 30 FIBRAGLO';
     }
 
-    // 3. Caisson 35 (35x35)
-    if (upperDesig.includes('35X35') || upperDesig.includes('350') || hauteur === 350 || /\b35\b/.test(upperDesig)) {
-      return {
-        typeCaisson: '35',
-        typeCaissonLabel: 'Caisson 35 (35X35)',
-        articleCaissonCode: 'ART0019',
-        articleCaissonDesignation: 'CT SOMO 35',
-        avecSousFace,
-        colorisSousFace
-      };
+    let fallbackSFCode = targetSFColor === 'BL' ? 'ART0015' : 'ART0060';
+    let fallbackSFDesig = targetSFColor === 'BL' ? 'SF SOMO 30 BL' : 'SF SOMO 30 GR';
+    if (typeCaisson === '25' || typeCaisson === '25_CARRE') {
+      fallbackSFCode = targetSFColor === 'BL' ? 'ART0013' : 'ART0014';
+      fallbackSFDesig = targetSFColor === 'BL' ? 'SF SOMO 25 BL' : 'SF SOMOX  25 GR';
+    } else if (typeCaisson === '35' || typeCaisson === '40') {
+      fallbackSFCode = targetSFColor === 'BL' ? 'ART0031' : 'ART0059';
+      fallbackSFDesig = targetSFColor === 'BL' ? 'SF SOMO 40 BL' : 'SF SOMO 40 GR';
     }
 
-    // 4. Caisson 30 (30x30)
-    if (upperDesig.includes('30X30') || upperDesig.includes('300') || hauteur === 300 || /\b30\b/.test(upperDesig) || (upperRef.includes('CT30') && !upperDesig.includes('25'))) {
-      return {
-        typeCaisson: '30',
-        typeCaissonLabel: 'Caisson 30 (30X30)',
-        articleCaissonCode: 'ART0011',
-        articleCaissonDesignation: 'CT SOMO 30 ARRONDI',
-        sfArticleCode: isGris ? 'ART0025' : 'ART0022',
-        sfArticleDesignation: isGris ? 'SF 300 7024' : 'SF 300',
-        avecSousFace,
-        colorisSousFace
-      };
-    }
-
-    // 5. Caisson 25 (25x25)
-    if (upperDesig.includes('25X25') || upperDesig.includes('250') || hauteur === 250 || /\b25\b/.test(upperDesig)) {
-      return {
-        typeCaisson: '25',
-        typeCaissonLabel: 'Caisson 25 (25X25)',
-        articleCaissonCode: 'ART0010',
-        articleCaissonDesignation: 'CT SOMO 25 ARRONDI',
-        sfArticleCode: isGris ? 'ART0024' : 'ART0021',
-        sfArticleDesignation: isGris ? 'SF 250 7024' : 'SF 250',
-        avecSousFace,
-        colorisSousFace
-      };
-    }
-
-    // Fallback par défaut selon la hauteur
-    const fallbackType = hauteur >= 280 ? '30' : '25';
     return {
-      typeCaisson: fallbackType,
-      typeCaissonLabel: fallbackType === '30' ? 'Caisson 30 (30X30)' : 'Caisson 25 (25X25)',
-      articleCaissonCode: fallbackType === '30' ? 'ART0011' : 'ART0010',
-      articleCaissonDesignation: fallbackType === '30' ? 'CT SOMO 30 ARRONDI' : 'CT SOMO 25 ARRONDI',
-      sfArticleCode: fallbackType === '30' ? (isGris ? 'ART0025' : 'ART0022') : (isGris ? 'ART0024' : 'ART0021'),
-      sfArticleDesignation: fallbackType === '30' ? (isGris ? 'SF 300 7024' : 'SF 300') : (isGris ? 'SF 250 7024' : 'SF 250'),
+      typeCaisson,
+      typeCaissonLabel,
+      articleCaissonCode: artCaisson?.code_art || fallbackCTCode,
+      articleCaissonDesignation: artCaisson?.designation || fallbackCTDesig,
+      sfArticleCode: artSF?.code_art || fallbackSFCode,
+      sfArticleDesignation: artSF?.designation || fallbackSFDesig,
       avecSousFace,
       colorisSousFace
     };
@@ -1081,47 +1169,61 @@ export class PdfCommandeParserService {
    */
   public static trouverArticleCaissonPourPdf(
     typeCaisson: string = '30',
-    articles: Article[] = []
+    articles: Article[] = [],
+    designationLine: string = ''
   ): Article | null {
     const ctArticles = articles.filter(a => {
       const d = (a.designation || '').toUpperCase();
-      return (d.startsWith('CT') || d.includes('CAISSON')) && !d.includes('PRECADRE') && !d.includes('SF') && !d.includes('SOUS-FACE');
+      return (d.startsWith('CT') || d.includes('CAISSON')) &&
+        !d.includes('PRECADRE') &&
+        !d.startsWith('SF') &&
+        !d.includes('SOUS-FACE') &&
+        !d.includes('SOUS FACE') &&
+        !d.includes('JOUE') &&
+        !d.includes('BOUCHON');
     });
     if (ctArticles.length === 0) return null;
 
     const upper = (typeCaisson || '30').toUpperCase();
+    const upperLine = (designationLine || '').toUpperCase();
 
     // 1. FIBRAGLO
-    if (upper === 'FIBRAGLO' || upper.includes('FIBRA')) {
-      const matchFibra = ctArticles.find(a => a.designation.toUpperCase().includes('FIBRAGLO') || a.designation.toUpperCase().includes('FIBRA'));
+    if (upper === 'FIBRAGLO' || upper.includes('FIBRA') || upper.includes('FIBRO')) {
+      const matchFibra = ctArticles.find(a => /FIBRAGLO|FIBRA/i.test(a.designation));
       if (matchFibra) return matchFibra;
     }
 
     // 2. 40 (40x40)
     if (upper === '40' || upper.includes('40')) {
-      const match40 = ctArticles.find(a => a.designation.toUpperCase().includes('40') || a.hauteur === 40 || a.hauteur === 400);
+      const match40 = ctArticles.find(a => /40/i.test(a.designation) && !/FIBRA/i.test(a.designation));
       if (match40) return match40;
     }
 
     // 3. 35 (35x35)
     if (upper === '35' || upper.includes('35')) {
-      const match35 = ctArticles.find(a => a.designation.toUpperCase().includes('35') || a.hauteur === 35 || a.hauteur === 350);
+      const match35 = ctArticles.find(a => /35/i.test(a.designation) && !/40/i.test(a.designation) && !/FIBRA/i.test(a.designation));
       if (match35) return match35;
     }
 
-    // 4. 25 (25x25)
-    if (upper === '25' || upper.includes('25')) {
-      const match25 = ctArticles.find(a => (a.designation.toUpperCase().includes('25') || a.hauteur === 25 || a.hauteur === 250) && !a.designation.toUpperCase().includes('FIBRAGLO'));
-      if (match25) return match25;
+    // 4. 25 (25x25) - Distinction stricte Arrondi vs Carré
+    if (upper === '25' || upper.includes('25') || upper === '25_CARRE') {
+      const isCarre = upper === '25_CARRE' || upperLine.includes('CARRE') || upperLine.includes('CARRÉ');
+      if (isCarre) {
+        const matchCarre = ctArticles.find(a => /25/i.test(a.designation) && /CARRE|CARRÉ/i.test(a.designation));
+        if (matchCarre) return matchCarre;
+      } else {
+        const matchArrondi = ctArticles.find(a => /25/i.test(a.designation) && (/ARRONDE|ARRONDI/i.test(a.designation) || !/CARRE/i.test(a.designation)));
+        if (matchArrondi) return matchArrondi;
+      }
     }
 
     // 5. 30 (30x30)
     if (upper === '30' || upper.includes('30')) {
-      const match30 = ctArticles.find(a => (a.designation.toUpperCase().includes('30') || a.hauteur === 30 || a.hauteur === 300) && !a.designation.toUpperCase().includes('FIBRAGLO'));
+      const match30 = ctArticles.find(a => /30/i.test(a.designation) && !/FIBRAGLO|FIBRA/i.test(a.designation) && !/CARRE/i.test(a.designation));
       if (match30) return match30;
     }
 
-    return ctArticles.find(a => a.designation.toUpperCase().includes('30')) || ctArticles[0] || null;
+    return ctArticles.find(a => /30/i.test(a.designation)) || ctArticles[0] || null;
   }
 
   /**

@@ -60,13 +60,19 @@ export function extraireDimensionCaisson(art?: Article | { designation?: string;
   const desig = (art.designation || '').toUpperCase();
   const h = art.hauteur || 0;
 
-  if (desig.includes('300') || desig.includes(' 30 ') || desig.endsWith(' 30') || desig.includes('CT 30') || desig.includes('SF 300') || desig.includes('SF 30') || h === 30 || h === 300) {
+  if (/\b400\b|\b40\b|40\*|40X|40\/|SF\s*40|CT\s*40/i.test(desig) || h === 40 || h === 400) {
+    return 400;
+  }
+  if (/\b350\b|\b35\b|35\*|35X|35\/|SF\s*35|CT\s*35/i.test(desig) || h === 35 || h === 350) {
+    return 350;
+  }
+  if (/\b300\b|\b30\b|30\*|30X|30\/|SF\s*30|CT\s*30/i.test(desig) || h === 30 || h === 300) {
     return 300;
   }
-  if (desig.includes('250') || desig.includes(' 25 ') || desig.endsWith(' 25') || desig.includes('CT 25') || desig.includes('SF 250') || desig.includes('SF 25') || h === 25 || h === 250) {
+  if (/\b250\b|\b25\b|25\*|25X|25\/|SF\s*25|CT\s*25/i.test(desig) || h === 25 || h === 250) {
     return 250;
   }
-  if (desig.includes('200') || desig.includes(' 20 ') || desig.endsWith(' 20') || desig.includes('CT 20') || desig.includes('SF 200') || desig.includes('SF 20') || h === 20 || h === 200) {
+  if (/\b200\b|\b20\b|20\*|20X|20\/|SF\s*20|CT\s*20/i.test(desig) || h === 20 || h === 200) {
     return 200;
   }
   return h > 0 ? h : 0;
@@ -78,39 +84,67 @@ export function extraireDimensionCaisson(art?: Article | { designation?: string;
  * "si je choisie le caisson 30 bl la souface automùatiquement doit etres 30 bl
  * apres lutisateur poura choisir la couleur si il veux mais la liste doit etres optimiser
  * avec les meme mesure que le caisson si 30 30 si 25 25 etc"
+ * + Généralement dans la référence en haut du bon de commande on mentionne SF GRIS ou BL pour tous les caissons.
  */
-export function trouverSousFacePourCaisson(caisson: Article | null, articlesSF: Article[]): Article | null {
-  if (!caisson || articlesSF.length === 0) return articlesSF[0] || null;
+export function trouverSousFacePourCaisson(
+  caisson: Article | { designation?: string; hauteur?: number } | null,
+  articlesSF: Article[],
+  couleurDemandee?: string | null
+): Article | null {
+  if (articlesSF.length === 0) return null;
+  if (!caisson) return articlesSF[0] || null;
 
   const dimCaisson = extraireDimensionCaisson(caisson);
-  const couleurCaisson = extraireCouleur(caisson.designation);
+  // Couleur cible : priorité à la couleur explicitement demandée (ex: de la référence PDF "SF GR"), sinon couleur du caisson
+  const rawColor = couleurDemandee || extraireCouleur(caisson.designation);
+  const couleurCible = extraireCouleur(rawColor || undefined);
 
-  // 1. Filtrer les sous-faces de même dimension (ex: 300 pour caisson 30)
-  const sousFacesMemeDimension = dimCaisson > 0
-    ? articlesSF.filter(sf => extraireDimensionCaisson(sf) === dimCaisson)
-    : articlesSF;
-
-  if (sousFacesMemeDimension.length === 0) {
-    return articlesSF[0] || null;
+  // 1. Filtrer les sous-faces de même dimension (ex: 250 pour caisson 25, 300 pour caisson 30)
+  let sousFacesMemeDimension: Article[] = [];
+  if (dimCaisson > 0) {
+    sousFacesMemeDimension = articlesSF.filter(sf => {
+      const d = extraireDimensionCaisson(sf);
+      if (dimCaisson === 350) return d === 350 || d === 400;
+      return d === dimCaisson;
+    });
   }
 
-  // 2. Si le caisson a une couleur spécifiée (ex: BL, 7024), trouver la sous-face avec la même couleur
-  if (couleurCaisson) {
+  // Fallback si aucune SF trouvée pour cette dimension exacte
+  if (sousFacesMemeDimension.length === 0) {
+    if (dimCaisson >= 300) {
+      sousFacesMemeDimension = articlesSF.filter(sf => extraireDimensionCaisson(sf) >= 300);
+    }
+    if (sousFacesMemeDimension.length === 0) {
+      sousFacesMemeDimension = articlesSF;
+    }
+  }
+
+  // 2. Si une couleur est ciblée (ex: 7024 / GRIS ou BL / BLANC), trouver la sous-face correspondante
+  if (couleurCible) {
     const matchExact = sousFacesMemeDimension.find(sf => {
-      const couleurSF = extraireCouleur(sf.designation);
-      return couleurSF === couleurCaisson;
+      const c = extraireCouleur(sf.designation);
+      return c === couleurCible;
     });
     if (matchExact) return matchExact;
+
+    // Tolérance : recherche textuelle si l'ID normalisé n'a pas suffi
+    if (couleurCible === '7024') {
+      const matchGr = sousFacesMemeDimension.find(sf => {
+        const u = sf.designation.toUpperCase();
+        return u.includes('7024') || u.includes(' GR') || u.endsWith('GR') || u.includes('GRIS');
+      });
+      if (matchGr) return matchGr;
+    } else if (couleurCible === 'BL') {
+      const matchBl = sousFacesMemeDimension.find(sf => {
+        const u = sf.designation.toUpperCase();
+        return u.includes('BL') || u.includes('BLANC') || u.includes('9010');
+      });
+      if (matchBl) return matchBl;
+    }
   }
 
-  // 3. Sinon, si le caisson n'a pas de couleur spécifiée ou couleur non trouvée,
-  // privilégier la version standard/blanc ou le premier de la bonne taille
-  const matchStandard = sousFacesMemeDimension.find(sf => {
-    const c = extraireCouleur(sf.designation);
-    return !c || c === 'BL';
-  });
-
-  return matchStandard || sousFacesMemeDimension[0] || articlesSF[0];
+  // 3. Sinon, privilégier le premier élément de la bonne dimension
+  return sousFacesMemeDimension[0] || articlesSF[0];
 }
 
 /**
@@ -119,7 +153,11 @@ export function trouverSousFacePourCaisson(caisson: Article | null, articlesSF: 
  *   triées avec la couleur correspondante en tête.
  * - `autres` : Les autres sous-faces (autres dimensions) pour laisser le choix complet à l'utilisateur.
  */
-export function optimiserListeSousFaces(caisson: Article | null, articlesSF: Article[]): {
+export function optimiserListeSousFaces(
+  caisson: Article | null,
+  articlesSF: Article[],
+  couleurDemandee?: string | null
+): {
   recommandees: Article[];
   autres: Article[];
   dimLabel: string;
@@ -129,8 +167,9 @@ export function optimiserListeSousFaces(caisson: Article | null, articlesSF: Art
   }
 
   const dimCaisson = extraireDimensionCaisson(caisson);
-  const couleurCaisson = extraireCouleur(caisson.designation);
-  const labelDim = dimCaisson > 0 ? (dimCaisson === 300 ? '30' : dimCaisson === 250 ? '25' : dimCaisson === 200 ? '20' : `${dimCaisson}`) : '';
+  const rawColor = couleurDemandee || extraireCouleur(caisson.designation);
+  const couleurCible = extraireCouleur(rawColor || undefined);
+  const labelDim = dimCaisson > 0 ? (dimCaisson === 400 ? '40' : dimCaisson === 350 ? '35' : dimCaisson === 300 ? '30' : dimCaisson === 250 ? '25' : dimCaisson === 200 ? '20' : `${dimCaisson}`) : '';
 
   if (dimCaisson <= 0) {
     return { recommandees: articlesSF, autres: [], dimLabel: '' };
@@ -141,20 +180,20 @@ export function optimiserListeSousFaces(caisson: Article | null, articlesSF: Art
 
   for (const sf of articlesSF) {
     const dimSF = extraireDimensionCaisson(sf);
-    if (dimSF === dimCaisson) {
+    if (dimSF === dimCaisson || (dimCaisson === 350 && dimSF === 400)) {
       recommandees.push(sf);
     } else {
       autres.push(sf);
     }
   }
 
-  // Trier les recommandées pour mettre en premier celle qui a la même couleur que le caisson
+  // Trier les recommandées pour mettre en premier celle qui a la couleur demandée
   recommandees.sort((a, b) => {
     const ca = extraireCouleur(a.designation);
     const cb = extraireCouleur(b.designation);
-    if (couleurCaisson) {
-      if (ca === couleurCaisson && cb !== couleurCaisson) return -1;
-      if (cb === couleurCaisson && ca !== couleurCaisson) return 1;
+    if (couleurCible) {
+      if (ca === couleurCible && cb !== couleurCible) return -1;
+      if (cb === couleurCible && ca !== couleurCible) return 1;
     }
     return a.designation.localeCompare(b.designation);
   });

@@ -600,15 +600,16 @@ export const EcosystemeCommandesTab: React.FC<EcosystemeCommandesTabProps> = ({
   // =========================================================================
   // 4. CONDITIONS & EXIGENCES PAR DÉFAUT (RÈGLES D'HÉRITAGE EN HAUT)
   // =========================================================================
-  // Filtrer STRICTEMENT les Caissons Tunnel (CT) - AUCUNE Sous-Face, aucun précadre
+  // Filtrer STRICTEMENT les Caissons Tunnel (CT) - AUCUNE Sous-Face, aucun précadre, aucune joue
   const articlesCT = useMemo(() => {
     return articles.filter(a => {
       const d = a.designation.toUpperCase().trim();
       const isSF = d.startsWith('SF') || d.includes('SOUS-FACE') || d.includes('SOUS FACE') || d.includes('CH SF');
       const isPrecadre = d.includes('PRECADRE') || d.includes('CADRE') || d.includes('TUBULAIRE');
       const isTablier = d.includes('TAB') || d.includes('LAME') || d.includes('COULISSE') || d.includes('TBL') || d.includes('BAR COULIS');
+      const isJoue = d.includes('JOUE') || d.includes('BOUCHON');
       const isCT = d.startsWith('CT') || d.startsWith('CAISSON TUNNEL') || (d.includes('CAISSON') && !isSF);
-      return isCT && !isSF && !isPrecadre && !isTablier;
+      return isCT && !isSF && !isPrecadre && !isTablier && !isJoue;
     });
   }, [articles]);
 
@@ -4816,9 +4817,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
       const nouvellesLignesCaisson: CommandeCaisson[] = data.lignes.map((ligne, idx) => {
         const typeC = (ligne.typeCaissonDetecte || data.typeCaissonSuggere || '30') as string;
-        const artLigne = ligne.articleCaissonCode
-          ? safeArticles.find(a => a.code_art === ligne.articleCaissonCode)
-          : (typeC ? PdfCommandeParserService.trouverArticleCaissonPourPdf(typeC, safeArticles) : artCaisson);
+        
+        // 1. Trouver l'article Caisson exact dans les articles de stock
+        const artLigne = (ligne.articleCaissonCode ? safeArticles.find(a => a.code_art === ligne.articleCaissonCode) : null)
+          || PdfCommandeParserService.trouverArticleCaissonPourPdf(typeC, safeArticles, ligne.designation)
+          || artCaisson;
+
+        // 2. Trouver la Sous-Face exacte assortie à la dimension du caisson et à la couleur demandée dans la référence
+        const couleurSF = ligne.colorisSousFace || data.colorisSousFaceSuggere || 'GRIS 7024';
+        const sfExistant = (ligne.sfArticleCode ? articlesSF.find(a => a.code_art === ligne.sfArticleCode) : null);
+        const sfLigne = sfExistant || trouverSousFacePourCaisson(artLigne, articlesSF, couleurSF);
+
+        const avecSF = ligne.avecSousFaceDetectee !== undefined ? ligne.avecSousFaceDetectee : (data.avecSousFaceSuggeree ?? true);
 
         return {
           id: `CAISSON-${Date.now()}-${idx + 1}-${Math.random().toString(36).substring(2, 6)}`,
@@ -4831,14 +4841,14 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           quantite: Math.max(1, ligne.quantite || 1),
           repere: ligne.repere || `C-${idx + 1}`,
           typeCaisson: 'TUNNEL_SIMPLE',
-          typePrestation: 'CAISSON_ET_SOUS_FACE',
+          typePrestation: avecSF ? 'CAISSON_ET_SOUS_FACE' : 'CAISSON_SEUL',
           isSousFaceSeule: false,
           articleCode: artLigne?.code_art || ligne.articleCaissonCode || caissonConfig.ctArticleCode,
-          articleDesignation: artLigne?.designation || ligne.articleCaissonDesignation || currentCTArticle?.designation || 'CT SOMO 30 ARRONDI',
-          avecSousFace: ligne.avecSousFaceDetectee !== undefined ? ligne.avecSousFaceDetectee : (data.avecSousFaceSuggeree ?? true),
-          sfArticleCode: ligne.sfArticleCode || caissonConfig.sfArticleCode,
-          sfArticleDesignation: ligne.sfArticleDesignation || currentSFArticle?.designation || 'SF 300 ALU',
-          colorisSousFace: ligne.colorisSousFace || data.colorisSousFaceSuggere || 'BRUT',
+          articleDesignation: artLigne?.designation || ligne.articleCaissonDesignation || currentCTArticle?.designation || 'CT SOMO 30 BL',
+          avecSousFace: avecSF,
+          sfArticleCode: avecSF ? (sfLigne?.code_art || ligne.sfArticleCode || caissonConfig.sfArticleCode) : undefined,
+          sfArticleDesignation: avecSF ? (sfLigne?.designation || currentSFArticle?.designation || 'SF SOMO 30 GR') : undefined,
+          colorisSousFace: couleurSF,
           montageSousFace: 'MONTEE_ATELIER',
           avecPeinture: false
         };
@@ -8140,6 +8150,18 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                   >
                     {caissonConfig.avecPlaque ? '🛡️ Avec Plaque' : 'Sans Plaque'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFamilleArticle('CAISSON');
+                      setIsPdfModalOpen(true);
+                    }}
+                    className="text-[11px] font-black px-3 py-1 rounded-lg border transition cursor-pointer flex items-center gap-1.5 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30 hover:border-emerald-400 shadow-xs active:scale-95"
+                    title="Moteur d'importation dédié : Charger les lignes de Caissons Tunnel (25, 30, 35, 40, FIBRAGLO) depuis un bon de commande PDF"
+                  >
+                    <FileUp className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>📄 Import PDF Caisson</span>
+                  </button>
                 </>
               )}
 
@@ -8430,49 +8452,59 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
                 return (
                   <>
-                    {/* BARRE D'ACTION RAPIDE : CONVERSION DU BON ENTIER EN 1 CLIC */}
-                    {caissonsFiltres.length > 0 && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 rounded-xl border border-amber-500/30 shadow-md">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
-                            📦 Lignes Caissons &amp; Sous-Faces ({caissonsFiltres.length} ligne{caissonsFiltres.length > 1 ? 's' : ''})
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            • Total : <strong className="text-amber-300 font-mono">{caissonsFiltres.reduce((s, c) => s + (Number(c.quantite) || 1), 0)} pcs</strong>
-                          </span>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
-                            <Zap className="w-3.5 h-3.5 text-amber-400" /> Convertir tout ce bon en :
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => convertirToutLeBonCaisson('CAISSON_ET_SOUS_FACE')}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
-                            title="Convertir toutes les lignes de ce bon en Caisson + Sous-Face"
-                          >
-                            <span>📦 + ✂️ Caisson &amp; SF</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => convertirToutLeBonCaisson('CAISSON_SEUL')}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
-                            title="Convertir toutes les lignes de ce bon en Caisson Seul (sans sous-face)"
-                          >
-                            <span>📦 Caisson Seul</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => convertirToutLeBonCaisson('SOUS_FACE_SEULE')}
-                            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
-                            title="Convertir toutes les lignes de ce bon en Sous-Face Seule (sans caisson tunnel)"
-                          >
-                            <span>✂️ Sous-Face Seule</span>
-                          </button>
-                        </div>
+                    {/* BARRE D'ACTION RAPIDE : CONVERSION DU BON ENTIER EN 1 CLIC & IMPORT PDF */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 rounded-xl border border-amber-500/30 shadow-md">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                          📦 Lignes Caissons &amp; Sous-Faces ({caissonsFiltres.length} ligne{caissonsFiltres.length > 1 ? 's' : ''})
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          • Total : <strong className="text-amber-300 font-mono">{caissonsFiltres.reduce((s, c) => s + (Number(c.quantite) || 1), 0)} pcs</strong>
+                        </span>
                       </div>
-                    )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFamilleArticle('CAISSON');
+                            setIsPdfModalOpen(true);
+                          }}
+                          className="text-xs font-black px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                          title="Importer un bon de commande de caissons tunnel depuis un fichier PDF"
+                        >
+                          <FileUp className="w-4 h-4 text-emerald-400" />
+                          <span>📄 Charger lignes Caisson depuis PDF</span>
+                        </button>
+                        <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                          <Zap className="w-3.5 h-3.5 text-amber-400" /> Convertir :
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => convertirToutLeBonCaisson('CAISSON_ET_SOUS_FACE')}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                          title="Convertir toutes les lignes de ce bon en Caisson + Sous-Face"
+                        >
+                          <span>📦 + ✂️ Caisson &amp; SF</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => convertirToutLeBonCaisson('CAISSON_SEUL')}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                          title="Convertir toutes les lignes de ce bon en Caisson Seul (sans sous-face)"
+                        >
+                          <span>📦 Caisson Seul</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => convertirToutLeBonCaisson('SOUS_FACE_SEULE')}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 transition cursor-pointer flex items-center gap-1 shadow-sm"
+                          title="Convertir toutes les lignes de ce bon en Sous-Face Seule (sans caisson tunnel)"
+                        >
+                          <span>✂️ Sous-Face Seule</span>
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950">
                       <table className="w-full text-xs text-left">
@@ -8492,8 +8524,23 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
                         <tbody className="divide-y divide-slate-800/60 font-mono">
                           {caissonsFiltres.length === 0 ? (
                             <tr>
-                              <td colSpan={9} className="py-6 text-center text-slate-500 font-sans italic text-xs">
-                                Aucun caisson dans cette commande N° {activeRef || 'en cours'}. Saisissez une longueur ci-dessus puis validez.
+                              <td colSpan={9} className="py-8 text-center text-slate-400 font-sans text-xs">
+                                <div className="flex flex-col items-center justify-center gap-3">
+                                  <p className="italic text-slate-400">
+                                    Aucun caisson dans cette commande N° {activeRef || 'en cours'}. Saisissez une longueur ci-dessus ou chargez directement votre bordereau PDF de caissons.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFamilleArticle('CAISSON');
+                                      setIsPdfModalOpen(true);
+                                    }}
+                                    className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg cursor-pointer transition active:scale-95"
+                                  >
+                                    <FileUp className="w-4 h-4" />
+                                    <span>📄 Charger les lignes depuis un bordereau PDF (Caisson)</span>
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ) : (
@@ -8739,8 +8786,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
 
                               const ctFoundObj = articlesCT.find(a => a.code_art === c.articleCode) || articles.find(a => a.code_art === c.articleCode);
                               const sfFoundObj = articlesSF.find(a => a.code_art === c.sfArticleCode) || articles.find(a => a.code_art === c.sfArticleCode);
-                              const ctName = c.articleDesignation || ctFoundObj?.designation || (c.articleCode === 'ART0010' ? 'CT SOMO 25 ARRONDI' : 'CT SOMO 30 ARRONDI');
-                              const sfName = c.sfArticleDesignation || sfFoundObj?.designation || (c.sfArticleCode === 'ART0020' ? 'SF 200 (SOUS-FACE 200MM)' : 'SF 300');
+                              const ctName = ctFoundObj?.designation || c.articleDesignation || (c.articleCode === 'ART0010' ? 'CT SOMO 25 ARRONDE' : 'CT SOMO 30 BL');
+                              const sfName = sfFoundObj?.designation || c.sfArticleDesignation || (c.sfArticleCode === 'ART0014' ? 'SF SOMOX  25 GR' : 'SF SOMO 30 GR');
                               const ctCmd = (c.refCommande || numCommandeCaisson || 'CMD').trim();
                               const sfCmd = (c.sfRefCommande || numCommandeSousFace || ctCmd).trim();
 
@@ -10876,6 +10923,8 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
           nomProfilActif={
             familleArticle === 'PRECADRE'
               ? (currentPRCArticle?.designation || 'PRÉCADRE CT 50')
+              : familleArticle === 'CAISSON'
+              ? (currentCTArticle?.designation || 'Caisson Tunnel 30 / 25 / 35 / 40 / FIBRAGLO')
               : (currentTBLArticle?.designation || tablierConfig.articleCode || 'Lame 55 / 43')
           }
           numCommandeActuel={getActiveNumCommande()}

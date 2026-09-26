@@ -25,6 +25,7 @@ import {
 } from '../../services/pdfCommandeParserService';
 import { Article, FigurePrecadre, ModeDebordementPrecadre } from '../../types';
 import { InspecteurVisionChassisModal } from '../modals/InspecteurVisionChassisModal';
+import { trouverSousFacePourCaisson } from '../../utils/articlePairingService';
 
 interface ChargementLignesPdfModalProps {
   isOpen: boolean;
@@ -186,6 +187,13 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     );
   }, [resultat, articles]);
 
+  const articlesSF = useMemo(() => {
+    return articles.filter(a => {
+      const d = (a.designation || '').toUpperCase();
+      return (d.startsWith('SF') || d.includes('SOUS-FACE') || d.includes('SOUS FACE')) && !d.startsWith('CT');
+    });
+  }, [articles]);
+
   const articleCaissonTrouve = useMemo(() => {
     if (!resultat || articles.length === 0) return null;
     return PdfCommandeParserService.trouverArticleCaissonPourPdf(
@@ -206,7 +214,7 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     setIsProcessing(true);
 
     try {
-      const res = await PdfCommandeParserService.parserBordereauPDF(file);
+      const res = await PdfCommandeParserService.parserBordereauPDF(file, articles);
       setResultat(res);
       setLignesModifiables(res.lignes);
       setLignesSelectionnees(new Set(res.lignes.map(l => l.id)));
@@ -326,41 +334,48 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
     );
   };
 
-  const handleAppliquerTypeCaissonSelection = (typeCaisson: '25' | '30' | '35' | '40' | 'FIBRAGLO') => {
+  const handleAppliquerTypeCaissonSelection = (typeCaisson: '25' | '25_CARRE' | '30' | '35' | '40' | 'FIBRAGLO') => {
     const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(typeCaisson, articles);
     const labelMap: Record<string, string> = {
-      '25': 'Caisson 25 (25X25)',
+      '25': 'Caisson 25 Arrondi (25X25)',
+      '25_CARRE': 'Caisson 25 Carré (25X25)',
       '30': 'Caisson 30 (30X30)',
       '35': 'Caisson 35 (35X35)',
       '40': 'Caisson 40 (40X40)',
       'FIBRAGLO': 'Caisson FIBRAGLO'
     };
     setLignesModifiables(prev =>
-      prev.map(l =>
-        lignesSelectionnees.has(l.id)
-          ? {
-              ...l,
-              typeCaissonDetecte: typeCaisson,
-              typeCaissonLabel: labelMap[typeCaisson] || `Caisson ${typeCaisson}`,
-              articleCaissonCode: art?.code_art || l.articleCaissonCode,
-              articleCaissonDesignation: art?.designation || l.articleCaissonDesignation
-            }
-          : l
-      )
+      prev.map(l => {
+        if (!lignesSelectionnees.has(l.id)) return l;
+        const matchingSF = trouverSousFacePourCaisson(art, articlesSF, l.colorisSousFace);
+        return {
+          ...l,
+          typeCaissonDetecte: typeCaisson,
+          typeCaissonLabel: labelMap[typeCaisson] || `Caisson ${typeCaisson}`,
+          articleCaissonCode: art?.code_art || l.articleCaissonCode,
+          articleCaissonDesignation: art?.designation || l.articleCaissonDesignation,
+          sfArticleCode: matchingSF?.code_art || l.sfArticleCode,
+          sfArticleDesignation: matchingSF?.designation || l.sfArticleDesignation
+        };
+      })
     );
   };
 
   const handleAppliquerSousFaceSelection = (avecSF: boolean, coloris?: string) => {
     setLignesModifiables(prev =>
-      prev.map(l =>
-        lignesSelectionnees.has(l.id)
-          ? {
-              ...l,
-              avecSousFaceDetectee: avecSF,
-              colorisSousFace: coloris !== undefined ? coloris : l.colorisSousFace
-            }
-          : l
-      )
+      prev.map(l => {
+        if (!lignesSelectionnees.has(l.id)) return l;
+        const newColor = coloris !== undefined ? coloris : l.colorisSousFace;
+        const artCaisson = articles.find(a => a.code_art === l.articleCaissonCode) || PdfCommandeParserService.trouverArticleCaissonPourPdf(l.typeCaissonDetecte || '30', articles, l.designation);
+        const matchingSF = trouverSousFacePourCaisson(artCaisson, articlesSF, newColor);
+        return {
+          ...l,
+          avecSousFaceDetectee: avecSF,
+          colorisSousFace: newColor,
+          sfArticleCode: matchingSF?.code_art || l.sfArticleCode,
+          sfArticleDesignation: matchingSF?.designation || l.sfArticleDesignation
+        };
+      })
     );
   };
 
@@ -1331,7 +1346,14 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                         onClick={() => handleAppliquerTypeCaissonSelection('25')}
                         className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
                       >
-                        CT 25 (25x25)
+                        CT 25 Arrondi
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAppliquerTypeCaissonSelection('25_CARRE')}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 font-black text-[10px] cursor-pointer transition"
+                      >
+                        CT 25 Carré
                       </button>
                       <button
                         type="button"
@@ -1598,26 +1620,33 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
                                   <select
                                     value={ligne.typeCaissonDetecte || '30'}
                                     onChange={e => {
-                                      const val = e.target.value as '25' | '30' | '35' | '40' | 'FIBRAGLO';
+                                      const val = e.target.value as '25' | '25_CARRE' | '30' | '35' | '40' | 'FIBRAGLO';
                                       const labelMap: Record<string, string> = {
-                                        '25': 'Caisson 25 (25X25)',
+                                        '25': 'Caisson 25 Arrondi (25X25)',
+                                        '25_CARRE': 'Caisson 25 Carré (25X25)',
                                         '30': 'Caisson 30 (30X30)',
                                         '35': 'Caisson 35 (35X35)',
                                         '40': 'Caisson 40 (40X40)',
                                         'FIBRAGLO': 'Caisson FIBRAGLO'
                                       };
-                                      const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(val, articles);
+                                      const art = PdfCommandeParserService.trouverArticleCaissonPourPdf(val, articles, ligne.designation);
+                                      const matchingSF = trouverSousFacePourCaisson(art, articlesSF, ligne.colorisSousFace);
                                       handleModifierChamp(ligne.id, 'typeCaissonDetecte', val);
                                       handleModifierChamp(ligne.id, 'typeCaissonLabel', labelMap[val] || `Caisson ${val}`);
                                       if (art) {
                                         handleModifierChamp(ligne.id, 'articleCaissonCode', art.code_art);
                                         handleModifierChamp(ligne.id, 'articleCaissonDesignation', art.designation);
                                       }
+                                      if (matchingSF) {
+                                        handleModifierChamp(ligne.id, 'sfArticleCode', matchingSF.code_art);
+                                        handleModifierChamp(ligne.id, 'sfArticleDesignation', matchingSF.designation);
+                                      }
                                     }}
                                     className="w-full bg-slate-900 border border-emerald-500/40 hover:border-emerald-500 focus:border-emerald-400 rounded-lg px-2.5 py-1.5 text-xs font-black text-emerald-300 focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                                   >
                                     <option value="30">📦 Caisson 30 (30X30)</option>
-                                    <option value="25">📦 Caisson 25 (25X25)</option>
+                                    <option value="25">📦 Caisson 25 Arrondi (25X25)</option>
+                                    <option value="25_CARRE">📦 Caisson 25 Carré (25X25)</option>
                                     <option value="35">📦 Caisson 35 (35X35)</option>
                                     <option value="40">📦 Caisson 40 (40X40)</option>
                                     <option value="FIBRAGLO">🧱 FIBRAGLO (Isolé)</option>
@@ -1626,28 +1655,44 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
 
                                 {/* Sous-Face associée */}
                                 <td className="py-2.5 px-3">
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleModifierChamp(ligne.id, 'avecSousFaceDetectee', !ligne.avecSousFaceDetectee)}
-                                      className={`px-2 py-1 rounded-md text-[11px] font-black cursor-pointer transition border ${
-                                        ligne.avecSousFaceDetectee
-                                          ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                                          : 'bg-slate-800 text-slate-500 border-slate-700'
-                                      }`}
-                                    >
-                                      {ligne.avecSousFaceDetectee ? '✓ Avec SF' : '✕ Sans SF'}
-                                    </button>
-                                    {ligne.avecSousFaceDetectee && (
-                                      <select
-                                        value={ligne.colorisSousFace || 'BRUT'}
-                                        onChange={e => handleModifierChamp(ligne.id, 'colorisSousFace', e.target.value)}
-                                        className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-[11px] font-bold text-slate-200 cursor-pointer"
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleModifierChamp(ligne.id, 'avecSousFaceDetectee', !ligne.avecSousFaceDetectee)}
+                                        className={`px-2 py-1 rounded-md text-[11px] font-black cursor-pointer transition border ${
+                                          ligne.avecSousFaceDetectee
+                                            ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                                            : 'bg-slate-800 text-slate-500 border-slate-700'
+                                        }`}
                                       >
-                                        <option value="BRUT">SF Brut</option>
-                                        <option value="BL (Blanc)">SF Blanc</option>
-                                        <option value="GRIS 7024">SF Gris 7024</option>
-                                      </select>
+                                        {ligne.avecSousFaceDetectee ? '✓ Avec SF' : '✕ Sans SF'}
+                                      </button>
+                                      {ligne.avecSousFaceDetectee && (
+                                        <select
+                                          value={ligne.colorisSousFace || 'GRIS 7024'}
+                                          onChange={e => {
+                                            const newCol = e.target.value;
+                                            handleModifierChamp(ligne.id, 'colorisSousFace', newCol);
+                                            const artCaisson = articles.find(a => a.code_art === ligne.articleCaissonCode) || PdfCommandeParserService.trouverArticleCaissonPourPdf(ligne.typeCaissonDetecte || '30', articles, ligne.designation);
+                                            const matchingSF = trouverSousFacePourCaisson(artCaisson, articlesSF, newCol);
+                                            if (matchingSF) {
+                                              handleModifierChamp(ligne.id, 'sfArticleCode', matchingSF.code_art);
+                                              handleModifierChamp(ligne.id, 'sfArticleDesignation', matchingSF.designation);
+                                            }
+                                          }}
+                                          className="bg-slate-900 border border-slate-700 rounded-md px-2 py-1 text-[11px] font-bold text-slate-200 cursor-pointer"
+                                        >
+                                          <option value="GRIS 7024">SF Gris 7024 (SF GR)</option>
+                                          <option value="BL (Blanc)">SF Blanc (SF BL)</option>
+                                          <option value="BRUT">SF Brut</option>
+                                        </select>
+                                      )}
+                                    </div>
+                                    {ligne.avecSousFaceDetectee && ligne.sfArticleDesignation && (
+                                      <div className="text-[10px] text-sky-400 font-mono font-semibold truncate" title={ligne.sfArticleDesignation}>
+                                        ✂️ {ligne.sfArticleDesignation}
+                                      </div>
                                     )}
                                   </div>
                                 </td>
