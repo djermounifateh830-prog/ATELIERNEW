@@ -37,6 +37,8 @@ export interface LigneCommandeExtraite {
   typePrecadreLabel?: string;
   sourceDetectionDebordement?: 'PHOTO' | 'TEXTE' | 'NOMENCLATURE';
   detailsDebordement?: string;
+  chassisImageCropDataUrl?: string;
+  chassisImageAnnotatedDataUrl?: string;
 }
 
 export interface ResultatExtractionPDF {
@@ -88,14 +90,6 @@ export class PdfCommandeParserService {
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
         
-        // Extraction des indices visuels des dessins de châssis présents sur cette page
-        try {
-          const visualHints = await this.extraireIndicesVisuelsChassisPage(page);
-          indicesVisuelsParPage.set(pageNum, visualHints);
-        } catch (e) {
-          console.warn(`Extraction visuelle impossible pour la page ${pageNum}:`, e);
-        }
-
         // Reconstruction des lignes physiques par coordonnées Y
         const items = textContent.items as Array<{ str: string; transform: number[]; width: number; height: number }>;
         
@@ -128,6 +122,14 @@ export class PdfCommandeParserService {
             pageYs.push(y);
             texteComplet += rowText + '\n';
           }
+        }
+
+        // Extraction haute précision des indices visuels des dessins de châssis présents sur cette page
+        try {
+          const visualHints = await this.extraireIndicesVisuelsChassisPage(page, sortedYs);
+          indicesVisuelsParPage.set(pageNum, visualHints);
+        } catch (e) {
+          console.warn(`Extraction visuelle impossible pour la page ${pageNum}:`, e);
         }
 
         lignesTexteParPage.push({ pageNumber: pageNum, lignes: pageLignes, coordonneesY: pageYs });
@@ -498,7 +500,9 @@ export class PdfCommandeParserService {
               typePrecadre: precadreProps.typePrecadre,
               typePrecadreLabel: precadreProps.typePrecadreLabel,
               sourceDetectionDebordement: precadreProps.sourceDetectionDebordement,
-              detailsDebordement: precadreProps.detailsDebordement
+              detailsDebordement: precadreProps.detailsDebordement,
+              chassisImageCropDataUrl: visualHintForLine?.cropDataUrl,
+              chassisImageAnnotatedDataUrl: visualHintForLine?.dataUrlAnnote
             });
             continue;
           }
@@ -665,7 +669,9 @@ export class PdfCommandeParserService {
 
     // Priorité 1 : Confirmation vectorielle si disponible depuis le dessin/croquis
     if (vectorHint) {
-      if (vectorHint.hasInternalV && vectorHint.hasInternalH) {
+      if (vectorHint.figureDetectee) {
+        figure = vectorHint.figureDetectee;
+      } else if (vectorHint.hasInternalV && vectorHint.hasInternalH) {
         figure = 'RENFORT_CROISE';
       } else if (vectorHint.hasInternalV) {
         figure = 'RENFORT_H1';
@@ -732,20 +738,22 @@ export class PdfCommandeParserService {
     if (vectorHint) {
       sourceDetectionDebordement = 'PHOTO';
       detailsDebordement = vectorHint.details || 'Détecté sur dessin / photo du châssis';
-      if (vectorHint.hasTopStubs && vectorHint.hasBottomStubs) {
-        modeDebordement = 'SUPERIEUR_INFERIEUR';
+      const mode = vectorHint.modeDetecte || (
+        (vectorHint.hasTopStubs && vectorHint.hasBottomStubs) ? 'SUPERIEUR_INFERIEUR' :
+        vectorHint.hasBottomStubs ? 'INFERIEUR_SEUL' :
+        vectorHint.hasTopStubs ? 'SUPERIEUR_SEUL' : 'SANS_DEBORDEMENT'
+      );
+      modeDebordement = mode;
+      if (mode === 'SUPERIEUR_INFERIEUR') {
         debordementSuperieur = 100;
         debordementInferieur = 300;
-      } else if (vectorHint.hasBottomStubs && !vectorHint.hasTopStubs) {
-        modeDebordement = 'INFERIEUR_SEUL';
-        debordementSuperieur = 0;
-        debordementInferieur = 300;
-      } else if (vectorHint.hasTopStubs && !vectorHint.hasBottomStubs) {
-        modeDebordement = 'SUPERIEUR_SEUL';
+      } else if (mode === 'SUPERIEUR_SEUL') {
         debordementSuperieur = 100;
         debordementInferieur = 0;
+      } else if (mode === 'INFERIEUR_SEUL') {
+        debordementSuperieur = 0;
+        debordementInferieur = 300;
       } else {
-        modeDebordement = 'SANS_DEBORDEMENT';
         debordementSuperieur = 0;
         debordementInferieur = 0;
       }
@@ -931,7 +939,8 @@ export class PdfCommandeParserService {
    * 4. HAUT ET BAS (Les 2 montants dépassent en haut ET en bas : +100/+300)
    */
   public static async extraireIndicesVisuelsChassisPage(
-    page: any
+    page: any,
+    targetYs: number[] = []
   ): Promise<Array<{
     y: number;
     hint: {
@@ -942,8 +951,77 @@ export class PdfCommandeParserService {
       modeDetecte: ModeDebordementPrecadre;
       figureDetectee: FigurePrecadre;
       details: string;
+      cropDataUrl?: string;
+      dataUrlAnnote?: string;
     };
   }>> {
+    // Méthode 1 (Prioritaire) : Rendu Canvas haute définition
+    // Permet de capturer avec une fidélité absolue aussi bien les tracés vectoriels (paths/lines)
+    // que les images raster intégrées dans la colonne "Châssis" du bordereau.
+    if (typeof document !== 'undefined') {
+      try {
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = viewport.width;
+        pageCanvas.height = viewport.height;
+        const pageCtx = pageCanvas.getContext('2d', { willReadFrequently: true });
+
+        if (pageCtx) {
+          await page.render({ canvasContext: pageCtx, viewport }).promise;
+
+          // Dans les bordereaux de menuiserie, la colonne "Châssis" est située sur la gauche (entre X=18pt et 150pt)
+          // On applique une marge intérieure de sécurité pour exclure les traits de grille du tableau
+          const cropX = Math.round(22 * scale);
+          const cropW = Math.round(128 * scale);
+
+          const canvasResults: Array<{ y: number; hint: any }> = [];
+
+          if (targetYs && targetYs.length > 0) {
+            for (const pdfY of targetYs) {
+              const canvasY = Math.round(viewport.height - (pdfY * scale));
+              // Le croquis du châssis est positionné dans la cellule juste en-dessous du repère textuel
+              const rowCropY = Math.max(0, canvasY + Math.round(2 * scale));
+              const rowCropH = Math.min(Math.round(115 * scale), pageCanvas.height - rowCropY);
+
+              if (rowCropH > 20) {
+                const thumbCanvas = document.createElement('canvas');
+                thumbCanvas.width = cropW;
+                thumbCanvas.height = rowCropH;
+                const thumbCtx = thumbCanvas.getContext('2d');
+                if (thumbCtx) {
+                  thumbCtx.drawImage(pageCanvas, cropX, rowCropY, cropW, rowCropH, 0, 0, cropW, rowCropH);
+                  const visionRes = ChassisVisionService.analyserImageElement(thumbCanvas, { annoter: true });
+
+                  // Filtrer les zones blanches vides sans châssis
+                  if (
+                    visionRes.details !== 'Dimensions d\'image trop faibles pour analyse' &&
+                    visionRes.details !== 'Aucun croquis de châssis net identifié dans l\'image'
+                  ) {
+                    canvasResults.push({
+                      y: pdfY,
+                      hint: {
+                        ...visionRes,
+                        cropDataUrl: thumbCanvas.toDataURL('image/png'),
+                        dataUrlAnnote: visionRes.dataUrlAnnote
+                      }
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          if (canvasResults.length > 0) {
+            return canvasResults;
+          }
+        }
+      } catch (err) {
+        console.warn('Rendu canvas pour extraction visuelle de la page échoué, repli XObject:', err);
+      }
+    }
+
+    // Méthode 2 (Repli) : Scan direct des objets XObject bitmap du PDF
     try {
       const ops = await page.getOperatorList();
       let currentTransform = [1, 0, 0, 1, 0, 0];
@@ -973,15 +1051,12 @@ export class PdfCommandeParserService {
           const y = currentTransform[5];
           const scaleX = Math.abs(currentTransform[0]);
           const scaleY = Math.abs(currentTransform[3]);
-          // Les croquis de châssis sont des vignettes de taille raisonnable (largeur/hauteur 15-380 pt)
-          // et pas les bannières en-tête / pleine page (> 450 pt)
           if (scaleX >= 15 && scaleX <= 380 && scaleY >= 15 && scaleY <= 380) {
             imagePositions.push({ rawName, cleanName, x, y, width: scaleX, height: scaleY });
           }
         }
       }
 
-      // Trier de haut en bas selon Y décroissant
       imagePositions.sort((a, b) => b.y - a.y);
 
       const results: Array<{
@@ -994,6 +1069,8 @@ export class PdfCommandeParserService {
           modeDetecte: ModeDebordementPrecadre;
           figureDetectee: FigurePrecadre;
           details: string;
+          cropDataUrl?: string;
+          dataUrlAnnote?: string;
         };
       }> = [];
 
@@ -1035,12 +1112,7 @@ export class PdfCommandeParserService {
   }
 
   /**
-   * Analyse haute précision des pixels du croquis/photo de châssis pour détecter
-   * formellement les 4 cas de débordements des 2 montants :
-   * 1. FERMÉ (Cadre fermé 4 côtés : 0/0)
-   * 2. HAUT SEUL (Les 2 montants dépassent en haut : +100/0)
-   * 3. BAS SEUL (Les 2 montants dépassent en bas : 0/+300)
-   * 4. HAUT ET BAS (Les 2 montants dépassent en haut ET en bas : +100/+300)
+   * Analyse déterministe déléguée à ChassisVisionService
    */
   public static analyserBitmapChassis(img: any): {
     hasTopStubs: boolean;
@@ -1050,6 +1122,8 @@ export class PdfCommandeParserService {
     modeDetecte: ModeDebordementPrecadre;
     figureDetectee: FigurePrecadre;
     details: string;
+    cropDataUrl?: string;
+    dataUrlAnnote?: string;
   } | null {
     const w = img.width;
     const h = img.height;
@@ -1059,169 +1133,16 @@ export class PdfCommandeParserService {
     const bpp = Math.floor(bytes.length / (w * h));
     if (bpp < 1) return null;
 
-    // 1. Déterminer la luminosité de fond en échantillonnant les 4 coins
-    const getPixelBrightness = (x: number, y: number): number => {
-      const idx = (y * w + x) * bpp;
-      if (bpp >= 3) {
-        return (bytes[idx] + bytes[idx + 1] + bytes[idx + 2]) / 3;
-      }
-      return bytes[idx];
-    };
-
-    const cornerSamples = [
-      getPixelBrightness(1, 1),
-      getPixelBrightness(w - 2, 1),
-      getPixelBrightness(1, h - 2),
-      getPixelBrightness(w - 2, h - 2)
-    ];
-    const avgBg = cornerSamples.reduce((a, b) => a + b, 0) / cornerSamples.length;
-    const isDarkBg = avgBg < 128;
-
-    // Un pixel fait partie d'un trait/profil s'il contraste avec le fond
-    const isStroke = (x: number, y: number): boolean => {
-      if (x < 0 || x >= w || y < 0 || y >= h) return false;
-      const b = getPixelBrightness(x, y);
-      return isDarkBg ? (b > avgBg + 35) : (b < avgBg - 35);
-    };
-
-    // 2. Trouver la boîte englobante exacte du châssis (en ignorant le bruit 1px)
-    let minX = w, maxX = 0, minY = h, maxY = 0;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (isStroke(x, y)) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-
-    if (maxX <= minX || maxY <= minY) return null;
-    const boxW = maxX - minX + 1;
-    const boxH = maxY - minY + 1;
-    if (boxW < 12 || boxH < 12) return null;
-
-    // 3. Délimitation des 2 montants (gauche et droite)
-    // Montant gauche : bande dans les premiers 20%
-    const leftX1 = minX;
-    const leftX2 = minX + Math.max(2, Math.floor(boxW * 0.20));
-    // Montant droit : bande dans les derniers 20%
-    const rightX1 = maxX - Math.max(2, Math.floor(boxW * 0.20));
-    const rightX2 = maxX;
-
-    // Zone intérieure centrale (exclut les 2 montants extérieurs)
-    const midX1 = minX + Math.floor(boxW * 0.22);
-    const midX2 = maxX - Math.floor(boxW * 0.22);
-    const midW = Math.max(1, midX2 - midX1 + 1);
-
-    // Analyse ligne par ligne de la boîte englobante
-    const rowData: Array<{ y: number; hasMontants: boolean; midDensity: number; isStub: boolean }> = [];
-    for (let y = minY; y <= maxY; y++) {
-      let leftCount = 0;
-      for (let x = leftX1; x <= leftX2; x++) if (isStroke(x, y)) leftCount++;
-      let rightCount = 0;
-      for (let x = rightX1; x <= rightX2; x++) if (isStroke(x, y)) rightCount++;
-      let midCount = 0;
-      for (let x = midX1; x <= midX2; x++) if (isStroke(x, y)) midCount++;
-
-      const midDensity = midCount / midW;
-      const hasMontants = leftCount > 0 || rightCount > 0;
-      // Ligne de débordement : les montants existent, mais l'intérieur entre eux est vide (< 10%)
-      const isStub = hasMontants && midDensity < 0.10;
-      rowData.push({ y, hasMontants, midDensity, isStub });
-    }
-
-    // Détection Débordement HAUT (cornes supérieures des montants qui dépassent au-dessus de la traverse haute)
-    let maxTopContig = 0;
-    let curTop = 0;
-    const scanTopLimit = Math.floor(rowData.length * 0.45);
-    for (let i = 0; i < scanTopLimit; i++) {
-      if (rowData[i].isStub) {
-        curTop++;
-        if (curTop > maxTopContig) maxTopContig = curTop;
-      } else {
-        curTop = 0;
-      }
-    }
-
-    // Détection Débordement BAS (pieds inférieurs des montants qui dépassent en-dessous de la traverse basse)
-    let maxBottomContig = 0;
-    let curBottom = 0;
-    const scanBottomStart = Math.floor(rowData.length * 0.55);
-    for (let i = scanBottomStart; i < rowData.length; i++) {
-      if (rowData[i].isStub) {
-        curBottom++;
-        if (curBottom > maxBottomContig) maxBottomContig = curBottom;
-      } else {
-        curBottom = 0;
-      }
-    }
-
-    const minThreshold = Math.max(5, Math.floor(boxH * 0.05));
-    const hasTopStubs = maxTopContig >= minThreshold;
-    const hasBottomStubs = maxBottomContig >= minThreshold;
-
-    // Détermination formelle des 4 cas demandés par l'utilisateur :
-    // 1. Fermé (0 / 0)
-    // 2. Haut seul (+100 / 0)
-    // 3. Bas seul (0 / +300)
-    // 4. Haut et bas (+100 / +300)
-    let modeDetecte: ModeDebordementPrecadre = 'SANS_DEBORDEMENT';
-    let details = 'Cadre fermé 4 côtés (aucun débordement des montants)';
-
-    if (hasTopStubs && hasBottomStubs) {
-      modeDetecte = 'SUPERIEUR_INFERIEUR';
-      details = `Haut et bas détectés (cornes haut: ${maxTopContig}px, pieds bas: ${maxBottomContig}px)`;
-    } else if (hasTopStubs) {
-      modeDetecte = 'SUPERIEUR_SEUL';
-      details = `Haut seul détecté (cornes supérieures: ${maxTopContig}px, bas fermé)`;
-    } else if (hasBottomStubs) {
-      modeDetecte = 'INFERIEUR_SEUL';
-      details = `Bas seul détecté (pieds inférieurs: ${maxBottomContig}px, haut fermé)`;
-    }
-
-    // Analyse des renforts intérieurs (Montant central vertical H1 et Traverse centrale horizontale L1)
-    const centerX = Math.floor((minX + maxX) / 2);
-    let vCount = 0;
-    const yStart = minY + Math.floor(boxH * 0.20);
-    const yEnd = maxY - Math.floor(boxH * 0.20);
-    const scanH = Math.max(1, yEnd - yStart + 1);
-    for (let y = yStart; y <= yEnd; y++) {
-      for (let dx = -3; dx <= 3; dx++) {
-        if (isStroke(centerX + dx, y)) {
-          vCount++;
-          break;
-        }
-      }
-    }
-    const hasInternalV = (vCount / scanH) > 0.35;
-
-    const centerY = Math.floor((minY + maxY) / 2);
-    let hCount = 0;
-    for (let x = midX1; x <= midX2; x++) {
-      for (let dy = -3; dy <= 3; dy++) {
-        if (isStroke(x, centerY + dy)) {
-          hCount++;
-          break;
-        }
-      }
-    }
-    const hasInternalH = (hCount / midW) > 0.40;
-
-    let figureDetectee: FigurePrecadre = 'VIDE';
-    if (hasInternalV && hasInternalH) figureDetectee = 'RENFORT_CROISE';
-    else if (hasInternalV) figureDetectee = 'RENFORT_H1';
-    else if (hasInternalH) figureDetectee = 'RENFORT_L1';
-
+    const res = ChassisVisionService.analyserPixelsChassis(w, h, bytes, bpp);
     return {
-      hasTopStubs,
-      hasBottomStubs,
-      hasInternalV,
-      hasInternalH,
-      modeDetecte,
-      figureDetectee,
-      details
+      hasTopStubs: res.hasTopStubs,
+      hasBottomStubs: res.hasBottomStubs,
+      hasInternalV: res.hasInternalV,
+      hasInternalH: res.hasInternalH,
+      modeDetecte: res.modeDetecte,
+      figureDetectee: res.figureDetectee,
+      details: res.details,
+      dataUrlAnnote: res.dataUrlAnnote
     };
   }
 }

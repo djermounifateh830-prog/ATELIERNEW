@@ -15,7 +15,8 @@ import {
   FileSpreadsheet,
   Palette,
   Lock,
-  MinusCircle
+  MinusCircle,
+  Camera
 } from 'lucide-react';
 import {
   PdfCommandeParserService,
@@ -23,6 +24,7 @@ import {
   ResultatExtractionPDF
 } from '../../services/pdfCommandeParserService';
 import { Article, FigurePrecadre, ModeDebordementPrecadre } from '../../types';
+import { InspecteurVisionChassisModal } from '../modals/InspecteurVisionChassisModal';
 
 interface ChargementLignesPdfModalProps {
   isOpen: boolean;
@@ -77,7 +79,35 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
   const [appliquerProfilCouleur, setAppliquerProfilCouleur] = useState(true); // DEFAULT TRUE : Appliquer profilé et couleur détectés
   const [optionAvecLF, setOptionAvecLF] = useState<boolean>(true); // Option Lame Finale : Détectée ou au choix
   
+  // Inspecteur visuel de châssis / photo
+  const [inspecteurLigne, setInspecteurLigne] = useState<LigneCommandeExtraite | null>(null);
+  const [isInspecteurOpen, setIsInspecteurOpen] = useState<boolean>(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleAppliquerDepuisInspecteur = (
+    mode: ModeDebordementPrecadre,
+    debSup: number,
+    debInf: number,
+    figure?: FigurePrecadre
+  ) => {
+    if (!inspecteurLigne) return;
+    setLignesModifiables(prev => prev.map(l => {
+      if (l.id === inspecteurLigne.id) {
+        return {
+          ...l,
+          modeDebordementPrecadre: mode,
+          debordementSuperieur: debSup,
+          debordementInferieur: debInf,
+          figurePrecadre: figure || l.figurePrecadre,
+          sourceDetectionDebordement: 'PHOTO',
+          detailsDebordement: `Validé via Inspecteur Visuel : ${mode} (${debSup}/${debInf} mm)${figure ? ` • ${figure}` : ''}`
+        };
+      }
+      return l;
+    }));
+    setIsInspecteurOpen(false);
+  };
 
   // Fonction de réinitialisation complète de la modale
   const resetAllState = () => {
@@ -1164,44 +1194,74 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
 
                                 {/* Choix débordements montants */}
                                 <td className="py-2 px-2">
-                                  <select
-                                    value={ligne.modeDebordementPrecadre || 'SUPERIEUR_INFERIEUR'}
-                                    onChange={e => handleChangerModeDebordementLigne(ligne.id, e.target.value as ModeDebordementPrecadre)}
-                                    className={`w-full border rounded px-2 py-1 text-xs font-bold cursor-pointer transition focus:ring-1 focus:ring-emerald-500 ${
-                                      ligne.modeDebordementPrecadre === 'SUPERIEUR_INFERIEUR'
-                                        ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300 font-black'
-                                        : ligne.modeDebordementPrecadre === 'INFERIEUR_SEUL'
-                                        ? 'bg-sky-950/80 border-sky-500/60 text-sky-300 font-black'
-                                        : ligne.modeDebordementPrecadre === 'SUPERIEUR_SEUL'
-                                        ? 'bg-amber-950/80 border-amber-500/60 text-amber-300 font-black'
-                                        : 'bg-slate-900 border-slate-700 text-slate-300 font-bold'
-                                    }`}
-                                  >
-                                    <option value="SANS_DEBORDEMENT">⏹️ Fermé (0 / 0)</option>
-                                    <option value="SUPERIEUR_SEUL">⬆️ Haut seul (+100 / 0)</option>
-                                    <option value="INFERIEUR_SEUL">⬇️ Bas seul (0 / +300)</option>
-                                    <option value="SUPERIEUR_INFERIEUR">⬆️⬇️ Haut et bas (+100 / +300)</option>
-                                  </select>
-                                  {ligne.sourceDetectionDebordement === 'PHOTO' && (
-                                    <div className="text-[9px] text-emerald-400 font-sans mt-0.5 flex items-center gap-1 font-semibold" title={ligne.detailsDebordement}>
-                                      <span>📷 Croquis :</span>
-                                      <span className="truncate">
-                                        {ligne.modeDebordementPrecadre === 'SANS_DEBORDEMENT'
-                                          ? 'Fermé'
-                                          : ligne.modeDebordementPrecadre === 'SUPERIEUR_SEUL'
-                                          ? 'Haut seul'
+                                  <div className="flex items-center gap-1.5">
+                                    <select
+                                      value={ligne.modeDebordementPrecadre || 'SUPERIEUR_INFERIEUR'}
+                                      onChange={e => handleChangerModeDebordementLigne(ligne.id, e.target.value as ModeDebordementPrecadre)}
+                                      className={`flex-1 border rounded px-2 py-1 text-xs font-bold cursor-pointer transition focus:ring-1 focus:ring-emerald-500 ${
+                                        ligne.modeDebordementPrecadre === 'SUPERIEUR_INFERIEUR'
+                                          ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300 font-black'
                                           : ligne.modeDebordementPrecadre === 'INFERIEUR_SEUL'
-                                          ? 'Bas seul'
-                                          : 'Haut et bas'}
+                                          ? 'bg-sky-950/80 border-sky-500/60 text-sky-300 font-black'
+                                          : ligne.modeDebordementPrecadre === 'SUPERIEUR_SEUL'
+                                          ? 'bg-amber-950/80 border-amber-500/60 text-amber-300 font-black'
+                                          : 'bg-slate-900 border-slate-700 text-slate-300 font-bold'
+                                      }`}
+                                    >
+                                      <option value="SANS_DEBORDEMENT">⏹️ Fermé (0 / 0)</option>
+                                      <option value="SUPERIEUR_SEUL">⬆️ Haut seul (+100 / 0)</option>
+                                      <option value="INFERIEUR_SEUL">⬇️ Bas seul (0 / +300)</option>
+                                      <option value="SUPERIEUR_INFERIEUR">⬆️⬇️ Haut et bas (+100 / +300)</option>
+                                    </select>
+
+                                    {/* Bouton d'inspection visuelle immédiate */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setInspecteurLigne(ligne);
+                                        setIsInspecteurOpen(true);
+                                      }}
+                                      className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700 transition cursor-pointer flex-shrink-0"
+                                      title="Ouvrir l'inspecteur visuel (détection géométrique sur croquis/photo)"
+                                    >
+                                      {ligne.chassisImageCropDataUrl ? (
+                                        <img
+                                          src={ligne.chassisImageAnnotatedDataUrl || ligne.chassisImageCropDataUrl}
+                                          alt="Châssis"
+                                          className="w-5 h-5 object-contain bg-white rounded-sm border border-slate-600"
+                                        />
+                                      ) : (
+                                        <Camera className="w-4 h-4 text-amber-400" />
+                                      )}
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 mt-1 text-[9px] font-sans">
+                                    {ligne.sourceDetectionDebordement === 'PHOTO' && (
+                                      <span className="text-emerald-400 font-semibold truncate flex items-center gap-1" title={ligne.detailsDebordement}>
+                                        <span>📷 Croquis :</span>
+                                        <span className="font-bold">
+                                          {ligne.modeDebordementPrecadre === 'SANS_DEBORDEMENT'
+                                            ? 'Fermé (0/0)'
+                                            : ligne.modeDebordementPrecadre === 'SUPERIEUR_SEUL'
+                                            ? 'Haut (+100)'
+                                            : ligne.modeDebordementPrecadre === 'INFERIEUR_SEUL'
+                                            ? 'Bas (+300)'
+                                            : 'Haut & Bas'}
+                                        </span>
                                       </span>
-                                    </div>
-                                  )}
-                                  {ligne.sourceDetectionDebordement === 'TEXTE' && (
-                                    <div className="text-[9px] text-amber-400/90 font-sans mt-0.5 flex items-center gap-1 font-medium" title={ligne.detailsDebordement}>
-                                      <span>📝 Texte :</span>
-                                      <span className="truncate">{ligne.detailsDebordement}</span>
-                                    </div>
-                                  )}
+                                    )}
+                                    {ligne.sourceDetectionDebordement === 'TEXTE' && (
+                                      <span className="text-amber-400 font-medium truncate" title={ligne.detailsDebordement}>
+                                        📝 Texte : {ligne.detailsDebordement}
+                                      </span>
+                                    )}
+                                    {ligne.sourceDetectionDebordement === 'NOMENCLATURE' && (
+                                      <span className="text-slate-400 truncate" title={ligne.detailsDebordement}>
+                                        📐 Règle atelier
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                               </>
                             ) : (
@@ -1312,6 +1372,20 @@ export const ChargementLignesPdfModal: React.FC<ChargementLignesPdfModalProps> =
         </div>
 
       </div>
+
+      {/* Modal d'inspection visuelle et recalibrage géométrique */}
+      {isInspecteurOpen && inspecteurLigne && (
+        <InspecteurVisionChassisModal
+          isOpen={isInspecteurOpen}
+          onClose={() => {
+            setIsInspecteurOpen(false);
+            setInspecteurLigne(null);
+          }}
+          imageInitialeDataUrl={inspecteurLigne.chassisImageCropDataUrl || inspecteurLigne.chassisImageAnnotatedDataUrl}
+          titreLigne={`${inspecteurLigne.repere} (${inspecteurLigne.largeur} x ${inspecteurLigne.hauteur} mm)`}
+          onAppliquerResultat={handleAppliquerDepuisInspecteur}
+        />
+      )}
     </div>
   );
 };
