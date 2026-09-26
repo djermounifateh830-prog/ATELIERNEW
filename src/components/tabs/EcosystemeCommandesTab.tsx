@@ -54,7 +54,7 @@ import { ClientCodificationModal } from '../common/ClientCodificationModal';
 import { ParametresMailleModal } from '../common/ParametresMailleModal';
 import { ValidationDelaiCommandeModal } from '../common/ValidationDelaiCommandeModal';
 import { ChargementLignesPdfModal } from '../common/ChargementLignesPdfModal';
-import { LigneCommandeExtraite } from '../../services/pdfCommandeParserService';
+import { PdfCommandeParserService, LigneCommandeExtraite } from '../../services/pdfCommandeParserService';
 import confetti from 'canvas-confetti';
 import {
   Building2,
@@ -4723,6 +4723,10 @@ const getHauteurLameTablier = (code?: string, desig?: string, fallbackHauteur?: 
     articlePrecadreSuggere?: Article;
     figurePrecadreSuggeree?: FigurePrecadre;
     modeDebordementSuggere?: ModeDebordementPrecadre;
+    typeCaissonSuggere?: string;
+    articleCaissonSuggere?: Article;
+    avecSousFaceSuggeree?: boolean;
+    colorisSousFaceSuggere?: string;
   }) => {
     if (!data.lignes || data.lignes.length === 0) return;
 
